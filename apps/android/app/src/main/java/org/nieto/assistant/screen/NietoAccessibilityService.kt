@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.nieto.assistant.MainActivity
 import org.nieto.assistant.NietoApp
+import org.nieto.assistant.R
 import org.nieto.assistant.flow.*
 import org.nieto.assistant.flow.Target
 
@@ -158,8 +159,8 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
     private val views = mutableListOf<View>()
     private var expanded = false
     private var lastStage = Stage.IDLE
-    private val green = Color.rgb(38, 76, 59)
-    private val cream = Color.rgb(250, 248, 242)
+    private val green = Color.rgb(0, 107, 100)
+    private val cream = Color.rgb(243, 246, 246)
     private fun dp(value: Int) = (value * service.resources.displayMetrics.density).toInt()
     fun clear() { views.forEach { runCatching { manager.removeView(it) } }; views.clear() }
     fun render(guide: GuideState, enabled: Boolean) {
@@ -174,9 +175,12 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT))
         }
-        val bubble = Button(service).apply {
-            text = "N"; textSize = 24f; setTextColor(cream); backgroundTintList = android.content.res.ColorStateList.valueOf(green)
-            contentDescription = "Abrir ayuda de NIETO"
+        val bubble = ImageButton(service).apply {
+            setImageResource(R.drawable.tino_launcher_foreground)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(2), dp(2), dp(2), dp(2))
+            background = android.graphics.drawable.GradientDrawable().apply { setColor(cream); cornerRadius = dp(20).toFloat() }
+            contentDescription = "Abrir ayuda de TINO"
             setOnClickListener { expanded = !expanded; render(app.state.value.guide, true) }
         }
         add(bubble, WindowManager.LayoutParams(dp(60), dp(60), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -188,7 +192,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
             orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)); setBackgroundColor(cream)
             elevation = dp(6).toFloat()
         }
-        panel.addView(TextView(service).apply { text = "NIETO · un paso a la vez"; textSize = 16f; setTextColor(green); typeface = Typeface.DEFAULT_BOLD })
+        panel.addView(TextView(service).apply { text = "TINO · un paso a la vez"; textSize = 16f; setTextColor(green); typeface = Typeface.DEFAULT_BOLD })
         val message = guide.notice ?: guide.instruction
         panel.addView(TextView(service).apply { text = message; textSize = 20f; setTextColor(Color.rgb(35, 41, 37)); setPadding(0, dp(8), 0, dp(6)) })
         fun button(title: String, action: () -> Unit) { panel.addView(Button(service).apply {
@@ -201,15 +205,15 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
         }
         panel.addView(row)
         if (guide.stage == Stage.COMPLETE) button("Practicar sin pistas") { app.startGuide(practice = true) }
-        button("Pedir ayuda a mi familia") { app.requestHelp() }
+        button("Pedir ayuda a mi red") { app.requestHelp() }
         panel.addView(TextView(service).apply { text = app.state.value.status; textSize = 15f; setTextColor(green); setPadding(0, dp(6), 0, dp(6)) })
-        button("Hablar con NIETO") {
+        button("Hablar con TINO") {
             app.requestVoiceFromOverlay()
             service.startActivity(Intent(service, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }
         val controls = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("Abrir NIETO" to {
+        listOf("Abrir TINO" to {
             service.startActivity(Intent(service, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }, "Cerrar guía" to { app.cancel(); expanded = false; render(app.state.value.guide, true) }).forEach { (title, action) ->
             controls.addView(Button(service).apply { text = title; isAllCaps = false; minHeight = dp(48); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -227,7 +231,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
         })
     }
     private fun add(view: View, params: WindowManager.LayoutParams) {
-        runCatching { manager.addView(view, params); views.add(view) }.onFailure { app.status("No pude mostrar la burbuja. Podés seguir desde NIETO.") }
+        runCatching { manager.addView(view, params); views.add(view) }.onFailure { app.status("No pude mostrar la burbuja. Podés seguir desde TINO.") }
     }
 }
 

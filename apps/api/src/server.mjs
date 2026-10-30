@@ -8,6 +8,7 @@ import { JsonStore } from './store.mjs';
 import { OpenArgClient, OpenArgError } from './openarg.mjs';
 import { normalizeSearch, normalizeAnswer } from './normalize.mjs';
 import { getTerritoryIndicators } from './territory.mjs';
+import { institutionDashboard, compareProgram, periodFor, summarize } from './institution.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
@@ -183,6 +184,47 @@ export function createApp({
         const scopedQuestion = `Contexto territorial: ${TERRITORIES[territoryId]}. ${question} Indicá período de los datos, fuentes oficiales y límites de cobertura. No infieras indicadores de descripciones.`;
         respond(200, normalizeAnswer(await openarg.call('consultar_datos_publicos', { pregunta: scopedQuestion }))); return;
       }
+      if (method === 'GET' && ['/institution/analytics', '/institution/territories'].includes(route)) {
+        const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
+        const days = Number(url.searchParams.get('days') ?? '30');
+        required([7, 30, 90].includes(days), 400, 'invalid_period', 'Elegí un período de 7, 30 o 90 días.');
+        const state = await store.read();
+        if (route.endsWith('/analytics')) respond(200, institutionDashboard(state, territoryId, days, minimumCohort, current));
+        else respond(200, { period: periodFor(days, current), minimumCohort,
+          territories: Object.entries(TERRITORIES).map(([id, name]) => {
+            const result = summarize(state, id, periodFor(days, current), minimumCohort);
+            return { territoryId: id, name, suppressed: result.suppressed, participants: result.participants,
+              completedFlows: result.metrics?.completedFlows ?? null, autonomyRate: result.metrics?.autonomyRate ?? null };
+          }) });
+        return;
+      }
+      if (method === 'GET' && route === '/institution/programs') {
+        const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
+        const state = await store.read();
+        respond(200, { programs: (state.programs ?? []).filter((p) => p.territoryId === territoryId)
+          .map((program) => ({ ...program, evaluation: compareProgram(state, program, minimumCohort, current) })) }); return;
+      }
+      if (method === 'POST' && route === '/institution/programs') {
+        keys(body, ['name', 'territoryId', 'startDate', 'endDate', 'goal']);
+        const name = text(body.name, 'name', 100); const territoryId = territory(body.territoryId);
+        const dates = [body.startDate, body.endDate];
+        required(dates.every((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(Date.parse(d)) && new Date(d).toISOString().slice(0, 10) === d), 400, 'invalid_dates', 'Usá fechas válidas con formato AAAA-MM-DD.');
+        required(body.endDate >= body.startDate && Date.parse(body.endDate) - Date.parse(body.startDate) <= 366 * 86_400_000, 400, 'invalid_dates', 'El programa debe durar entre 1 y 367 días.');
+        required(Number.isFinite(body.goal) && body.goal >= 0 && body.goal <= 100, 400, 'invalid_goal', 'La meta de autonomía debe estar entre 0 y 100.');
+        const program = { id: randomUUID(), name, territoryId, startDate: body.startDate, endDate: body.endDate,
+          goal: body.goal, status: 'planned', createdAt: new Date(current).toISOString() };
+        await store.update((s) => { (s.programs ??= []).push(program); audit(s, 'program_created', 'institution', current); });
+        respond(201, { program }); return;
+      }
+      const programMatch = /^\/institution\/programs\/([a-f0-9-]+)$/.exec(route);
+      if (method === 'PATCH' && programMatch) {
+        keys(body, ['status']); required(['planned', 'active', 'completed'].includes(body.status), 400, 'invalid_status', 'Estado de programa inválido.');
+        await store.update((s) => {
+          const program = (s.programs ?? []).find((p) => p.id === programMatch[1]);
+          required(program, 404, 'program_not_found', 'Programa inexistente.'); program.status = body.status;
+          audit(s, 'program_status_changed', 'institution', current);
+        }); respond(200, { ok: true }); return;
+      }
       if (method === 'GET' && route === '/institution/overview') {
         const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
         const state = await store.read();
@@ -201,6 +243,50 @@ export function createApp({
       const group = token ? state.groups.find((g) => same(hash(token), g.tokenHash)) : undefined;
       const needUser = () => required(user, 401, 'unauthorized', 'Token de dispositivo inválido o ausente.');
       const needGroup = () => required(group, 401, 'unauthorized', 'Token familiar inválido o ausente.');
+      if (method === 'POST' && route === '/usage/batch') {
+        needUser(); keys(body, ['consent', 'intervals']);
+        required(body.consent === true, 400, 'consent_required', 'El envío de métricas de uso requiere permiso específico en el dispositivo.');
+        required(Array.isArray(body.intervals) && body.intervals.length > 0 && body.intervals.length <= 50, 400, 'invalid_intervals', 'Enviá de 1 a 50 intervalos.');
+        const entries = body.intervals.map((item) => {
+          keys(item, ['id', 'category', 'startedAt', 'endedAt', 'accompaniedSeconds']);
+          required(typeof item.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(item.id), 400, 'invalid_id', 'Identificador de intervalo inválido.');
+          required(['communication', 'services', 'navigation', 'learning', 'other'].includes(item.category), 400, 'invalid_category', 'Categoría de uso inválida.');
+          const start = Date.parse(item.startedAt); const end = Date.parse(item.endedAt);
+          required(typeof item.startedAt === 'string' && typeof item.endedAt === 'string' && Number.isFinite(start) && Number.isFinite(end) && start < end && end <= current && start >= current - 31 * 86_400_000 && end - start <= 86_400_000, 400, 'invalid_interval', 'El intervalo debe haber terminado y pertenecer a los últimos 31 días, con duración máxima de 24 horas.');
+          const durationSeconds = (end - start) / 1000;
+          required(Number.isFinite(item.accompaniedSeconds) && item.accompaniedSeconds >= 0 && item.accompaniedSeconds <= durationSeconds, 400, 'invalid_duration', 'El tiempo acompañado debe estar dentro del intervalo.');
+          return { id: item.id, userId: user.id, category: item.category, startedAt: new Date(start).toISOString(), endedAt: new Date(end).toISOString(), durationSeconds, accompaniedSeconds: item.accompaniedSeconds };
+        });
+        await store.update((s) => {
+          s.usage ??= [];
+          for (const entry of entries) {
+            const existing = s.usage.find((e) => e.userId === user.id && e.id === entry.id);
+            if (existing) { required(JSON.stringify(existing) === JSON.stringify(entry), 409, 'interval_conflict', 'El identificador ya corresponde a otro intervalo.'); continue; }
+            required(!s.usage.some((e) => e.userId === user.id && Date.parse(e.startedAt) < Date.parse(entry.endedAt) && Date.parse(e.endedAt) > Date.parse(entry.startedAt)), 409, 'overlapping_intervals', 'Los intervalos de uso no pueden superponerse.');
+            s.usage.push(entry);
+          }
+          audit(s, 'usage_consent_confirmed', user.id, current);
+        }); respond(200, { ok: true }); return;
+      }
+      if (method === 'POST' && route === '/safety/events') {
+        needUser(); keys(body, ['id', 'kind', 'category']);
+        required(typeof body.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(body.id), 400, 'invalid_id', 'Identificador de evento inválido.');
+        required(['suspicious_link', 'permission_request', 'sensitive_action'].includes(body.kind), 400, 'invalid_kind', 'Tipo de señal inválido.');
+        required(['messaging', 'browser', 'banking', 'other'].includes(body.category), 400, 'invalid_category', 'Categoría inválida.');
+        await store.update((s) => {
+          s.safety ??= [];
+          const existing = s.safety.find((e) => e.userId === user.id && e.id === body.id);
+          if (existing) { required(existing.kind === body.kind && existing.category === body.category, 409, 'event_conflict', 'El evento ya existe con otros valores.'); return; }
+          s.safety.push({ id: body.id, userId: user.id, kind: body.kind, category: body.category, createdAt: new Date(current).toISOString(), resolvedAt: null });
+        }); respond(200, { ok: true }); return;
+      }
+      const safetyMatch = /^\/safety\/events\/([a-zA-Z0-9_-]{8,80})$/.exec(route);
+      if (method === 'PATCH' && safetyMatch) {
+        needUser(); keys(body, ['resolved']); required(body.resolved === true, 400, 'invalid_resolution', 'La resolución requiere confirmación.');
+        await store.update((s) => { const entry = (s.safety ?? []).find((e) => e.id === safetyMatch[1] && e.userId === user.id);
+          required(entry, 404, 'event_not_found', 'Evento inexistente.'); entry.resolvedAt ??= new Date(current).toISOString(); });
+        respond(200, { ok: true }); return;
+      }
       if (method === 'PATCH' && route === '/devices/me') {
         needUser(); keys(body, ['name', 'territoryId']);
         const name = text(body.name, 'name', 60, true); const territoryId = body.territoryId === undefined ? undefined : territory(body.territoryId);

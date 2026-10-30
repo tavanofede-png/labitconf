@@ -45,6 +45,7 @@ export function TerritoryMap({ territory, indicator }: { territory: Territory; i
   }, []);
 
   useEffect(() => {
+    initial.current = territory;
     marker.current?.setLngLat([...territory.point]);
     map.current?.flyTo({ center: [...territory.point], zoom: territory.id === 'AR-C' ? 10.2 : 8.6, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 900 });
   }, [territory]);

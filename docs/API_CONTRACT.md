@@ -1,5 +1,7 @@
 # NIETO 2.0 — contrato del MVP
 
+Los endpoints adicionales del portal TINO (analytics, territorios, programas, intervalos de uso y eventos de seguridad) están documentados en [TINO-PORTAL.md](TINO-PORTAL.md#rutas-nuevas). Los contratos siguientes siguen siendo compatibles.
+
 Todas las rutas usan JSON y el prefijo `/api`. Los errores tienen `{error:{code,message}}`. Las credenciales se envían como `Authorization: Bearer <token>`. Ninguna captura, árbol accesible ni conversación se guarda en el servidor. Fechas ISO 8601 UTC. Territorio inicial: `AR-C` (Ciudad Autónoma de Buenos Aires).
 
 ## Estado y configuración

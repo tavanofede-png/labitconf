@@ -1,4 +1,10 @@
-# NIETO 2.0
+# TINO
+
+TINO acompaña a cualquier persona que necesite ayuda con su teléfono, incluidas personas con discapacidad, personas mayores y necesidades de apoyo temporales. El nombre y la interfaz se actualizaron con el brand kit de TINO.
+
+El portal institucional tiene seis vistas operativas: resumen, territorio, flujos, uso, seguridad y programas. Usa las APIs reales de este repositorio, con agregación, umbral de cohorte, programas persistidos y contexto OpenARG por territorio. La landing está en `/inicio.html`. Ver el alcance implementado, los contratos nuevos y la configuración en [TINO-PORTAL.md](docs/TINO-PORTAL.md).
+
+La documentación a continuación describe la base técnica recibida, sus comandos y la app Android compatible; conserva nombres de paquetes NIETO para no romper la integración existente.
 
 NIETO acompaña a personas con poca experiencia digital para que puedan aprender a usar su teléfono. Esta versión para LABITCONF reúne una aplicación Android, un portal familiar e institucional y un backend que consulta datos públicos mediante el MCP oficial de OpenArg.
 

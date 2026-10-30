@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -100,12 +102,13 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() { recognizer?.destroy(); recognizer = null; super.onDestroy() }
 }
 
-private val Forest = Color(0xFF264C3B)
-private val WarmWhite = Color(0xFFFAF8F2)
-private val Ink = Color(0xFF242E28)
+private val Forest = Color(0xFF006B64)
+private val WarmWhite = Color(0xFFF3F6F6)
+private val Ink = Color(0xFF101416)
+private val Turquoise = Color(0xFF00D6C9)
 @Composable private fun NietoTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = lightColorScheme(primary = Forest, onPrimary = Color.White, background = WarmWhite,
-        surface = WarmWhite, onBackground = Ink, onSurface = Ink, secondaryContainer = Color(0xFFE8EDDA),
+    MaterialTheme(colorScheme = lightColorScheme(primary = Turquoise, onPrimary = Ink, background = WarmWhite,
+        surface = WarmWhite, onBackground = Ink, onSurface = Ink, secondaryContainer = Color(0xFFE3F9F6),
         onSecondaryContainer = Forest), typography = Typography(
         bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, lineHeight = 29.sp),
         bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, lineHeight = 26.sp),
@@ -122,13 +125,13 @@ private val Ink = Color(0xFF242E28)
     Scaffold(containerColor = WarmWhite,
         topBar = { Column(Modifier.fillMaxWidth().background(WarmWhite).statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("N", color = WarmWhite, fontSize = 29.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.background(Forest, RoundedCornerShape(15.dp)).padding(horizontal = 15.dp, vertical = 7.dp))
-                Spacer(Modifier.width(12.dp))
-                Column { Text("NIETO", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Forest); Text("Acá, con vos.", fontSize = 16.sp) }
+                Image(painter = painterResource(R.drawable.tino_logo), contentDescription = "TINO",
+                    modifier = Modifier.width(128.dp).height(52.dp))
+                Spacer(Modifier.width(20.dp))
+                Text("Tu teléfono,\na tu manera.", fontSize = 15.sp, lineHeight = 21.sp, color = Forest)
             }
         } },
-        bottomBar = { NavigationBar(containerColor = Color(0xFFEEEFE5)) {
+        bottomBar = { NavigationBar(containerColor = Color(0xFFE3F9F6)) {
             listOf("Inicio" to "◎", "Familia" to "♡", "Ajustes" to "☷").forEachIndexed { index, item ->
                 NavigationBarItem(selected = tab == index, onClick = { tab = index; if (index == 1 && app.settings.token.isNotBlank()) app.refreshFamily() },
                     icon = { Text(item.second, fontSize = 26.sp) }, label = { Text(item.first, fontSize = 16.sp) })
@@ -141,18 +144,18 @@ private val Ink = Color(0xFF242E28)
                 1 -> FamilyContent(app, state)
                 else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
             }
-            Surface(color = Color(0xFFEDEFE5), shape = RoundedCornerShape(16.dp)) {
+            Surface(color = Color(0xFFE3F9F6), shape = RoundedCornerShape(16.dp)) {
                 Text(state.status, modifier = Modifier.padding(16.dp), fontSize = 17.sp, lineHeight = 24.sp)
             }
             if (state.telemetryPending > 0) Text("Progreso sin sincronizar: ${state.telemetryPending} evento(s).", fontSize = 15.sp)
-            Text("Hecho para aprender a tu ritmo.\nNIETO · Labitconf 2026", fontSize = 14.sp, color = Forest, modifier = Modifier.padding(top = 12.dp))
+            Text("Hecho para aprender a tu ritmo.\nTINO · Labitconf 2026", fontSize = 14.sp, color = Forest, modifier = Modifier.padding(top = 12.dp))
         }
     }
     if (disclosure) AlertDialog(onDismissRequest = { disclosure = false }, title = { Text("Vos decidís qué puedo ver") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Durante una guía, NIETO identifica controles accesibles de WhatsApp para mostrarte dónde tocar y comprobar tus pasos.")
+            Text("Durante una guía, TINO identifica controles accesibles de WhatsApp para mostrarte dónde tocar y comprobar tus pasos.")
             Text("No toca botones ni escribe por vos. No hace capturas, no envía el árbol de pantalla y no lee campos de contraseña ni teclados. En otras apps detiene la guía.")
-            Text("La burbuja aparece con este permiso. Podés ocultarla o revocar el acceso en cualquier momento. Android te pedirá habilitar NIETO en Accesibilidad.")
+            Text("La burbuja aparece con este permiso. Podés ocultarla o revocar el acceso en cualquier momento. Android te pedirá habilitar TINO en Accesibilidad.")
         } }, confirmButton = { TextButton(onClick = { app.settings.screenConsent = true; app.setOverlay(true); disclosure = false; onAccessibility() }) { Text("Acepto y abrir ajustes") } },
         dismissButton = { TextButton(onClick = { disclosure = false }) { Text("Ahora no") } })
 }
@@ -161,14 +164,14 @@ private val Ink = Color(0xFF242E28)
     var message by remember { mutableStateOf("") }
     Text("Un paso hoy.\nMás confianza mañana.", style = MaterialTheme.typography.headlineLarge, color = Forest, fontWeight = FontWeight.SemiBold)
     Text("Contame qué querés hacer. Lo aprendemos juntos, de a una cosa por vez.")
-    BigButton(if (listening) "Terminar de hablar" else "Hablar con NIETO", onVoice, enabled = !state.busy || listening)
+    BigButton(if (listening) "Terminar de hablar" else "Hablar con TINO", onVoice, enabled = !state.busy || listening)
     Text("El micrófono se activa solo al tocar Hablar. Se usa el reconocimiento de Android; según tu teléfono, puede necesitar el servicio de voz de su proveedor.", fontSize = 15.sp, lineHeight = 21.sp)
     OutlinedTextField(value = message, onValueChange = { message = it.take(1000) }, modifier = Modifier.fillMaxWidth(),
         label = { Text("O escribime acá") }, placeholder = { Text("Quiero compartir mi ubicación") }, minLines = 2)
     OutlinedButton(onClick = { app.sendMessage(message); message = "" }, enabled = message.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Enviar consulta") }
     state.chat.takeLast(6).forEach { line -> Surface(color = if (line.fromUser) Color(0xFFE7ECDB) else Color.White, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(if (line.fromUser) "Vos" else "NIETO", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Forest)
+            Text(if (line.fromUser) "Vos" else "TINO", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Forest)
             Text(line.text, fontSize = 19.sp, lineHeight = 28.sp)
         }
     } }
@@ -198,8 +201,8 @@ private val Ink = Color(0xFF242E28)
         }
     }
     if (!state.accessibilityConnected || !app.settings.screenConsent) OutlinedButton(onClick = onSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Activar guía en pantalla") }
-    OutlinedButton(onClick = { app.requestHelp() }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Pedir ayuda a mi familia") }
-    Text("Perfil experimental: WhatsApp Android 2.26.* en español. Si no reconozco una pantalla, te lo digo. No envío ubicación desde NIETO.", fontSize = 15.sp, lineHeight = 22.sp)
+    OutlinedButton(onClick = { app.requestHelp() }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Pedir ayuda a mi red") }
+    Text("Perfil experimental: WhatsApp Android 2.26.* en español. Si no reconozco una pantalla, te lo digo. No envío ubicación desde TINO.", fontSize = 15.sp, lineHeight = 22.sp)
 }
 
 @Composable private fun FamilyContent(app: NietoApp, state: AppState) {
@@ -211,7 +214,7 @@ private val Ink = Color(0xFF242E28)
     Text("Vos elegís quién te acompaña y qué puede saber. Tus conversaciones y tu pantalla siempre quedan fuera del grupo.")
     if (state.familyName == null) {
         Text("Unite a tu grupo", style = MaterialTheme.typography.titleLarge)
-        Text("Pedile a tu familiar el código que generó en el portal NIETO Familia.")
+        Text("Pedile a una persona de confianza el código que generó en el portal TINO Red.")
         OutlinedTextField(value = code, onValueChange = { code = it.take(40) }, modifier = Modifier.fillMaxWidth(), label = { Text("Código de invitación") }, singleLine = true)
         PermissionRow("Compartir mi progreso", "Tareas completadas, práctica autónoma y tiempo acompañado.", progress) { progress = it }
         PermissionRow("Permitir solicitudes de ayuda", "Tu familia recibe una alerta cuando vos tocás Pedir ayuda.", help) { help = it }
@@ -237,9 +240,9 @@ private val Ink = Color(0xFF242E28)
     val screenConsent = app.settings.screenConsent
     Text("A tu manera.", style = MaterialTheme.typography.headlineLarge, color = Forest)
     Text("Guía en pantalla", style = MaterialTheme.typography.titleLarge)
-    Text(if (state.accessibilityConnected && screenConsent) "Accesibilidad autorizada. La observación ocurre solo durante una guía activa." else "Elegí si querés que NIETO reconozca los controles de WhatsApp mientras te acompaña.")
+    Text(if (state.accessibilityConnected && screenConsent) "Accesibilidad autorizada. La observación ocurre solo durante una guía activa." else "Elegí si querés que TINO reconozca los controles de WhatsApp mientras te acompaña.")
     BigButton(if (screenConsent) "Abrir ajustes de accesibilidad" else "Conocer y activar la guía", if (screenConsent) onAccessibility else onConsent)
-    PermissionRow("Mostrar burbuja NIETO", "Una ayuda a mano mientras usás WhatsApp.", state.overlayEnabled) { if (app.settings.screenConsent) app.setOverlay(it) else onConsent() }
+    PermissionRow("Mostrar burbuja TINO", "Una ayuda a mano mientras usás WhatsApp.", state.overlayEnabled) { if (app.settings.screenConsent) app.setOverlay(it) else onConsent() }
     if (screenConsent) OutlinedButton(onClick = { app.cancel(); app.settings.screenConsent = false; app.setOverlay(false); app.status("Consentimiento revocado. Dejé de observar la pantalla. Podés deshabilitar también el servicio en los ajustes de Android.") }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Revocar observación de pantalla") }
     HorizontalDivider()
     Text("Conexión del prototipo", style = MaterialTheme.typography.titleLarge)

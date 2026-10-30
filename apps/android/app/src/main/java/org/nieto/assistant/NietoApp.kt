@@ -18,7 +18,7 @@ import java.util.Locale
 data class ChatLine(val fromUser: Boolean, val text: String)
 data class AppState(
     val guide: GuideState = GuideState(),
-    val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy NIETO. Te acompaño a aprender a usar tu teléfono, de a un paso.")),
+    val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy TINO. Te acompaño a aprender a usar tu teléfono, de a un paso.")),
     val status: String = "Tu ritmo. Tus decisiones.",
     val busy: Boolean = false,
     val accessibilityConnected: Boolean = false,

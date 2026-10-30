@@ -1,119 +1,96 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDownIcon, ArrowRightIcon, ArrowUpRightIcon, BookOpenIcon, ChartBarIcon, CheckCircleIcon, ClockIcon, DatabaseIcon, DownloadSimpleIcon, GlobeHemisphereWestIcon, LockKeyIcon, MagnifyingGlassIcon, MapPinIcon, PaperPlaneTiltIcon, ShieldCheckIcon, UsersThreeIcon } from '@phosphor-icons/react';
+import type { KeyboardEvent, ReactNode } from 'react';
+import { ArrowClockwiseIcon, ArrowRightIcon, BookOpenIcon, ChartBarIcon, ClockIcon, DownloadSimpleIcon, FlagIcon, GlobeHemisphereWestIcon, LockKeyIcon, MapPinIcon, ShieldCheckIcon, UsersThreeIcon } from '@phosphor-icons/react';
 import { api, errorText, localDate } from './api';
-import type { Dataset, Health, Overview, PublicAnswer, PublicContext } from './api';
+import type { Analytics, Health, Program, PublicContext, TerritorySummary } from './api';
 import { territories } from './territories';
 import { TerritoryMap } from './TerritoryMap';
-import { EmptyState, Notice, SourceLink, Spinner } from './ui';
+import { PublicData } from './PublicData';
+import { Programs } from './Programs';
+import { EmptyState, Notice, Spinner } from './ui';
+
+const sections = [
+  { id: 'resumen', label: 'Resumen', icon: ChartBarIcon }, { id: 'territorio', label: 'Territorio', icon: MapPinIcon },
+  { id: 'flujos', label: 'Flujos', icon: BookOpenIcon }, { id: 'uso', label: 'Uso', icon: ClockIcon },
+  { id: 'seguridad', label: 'Seguridad', icon: ShieldCheckIcon }, { id: 'programas', label: 'Programas', icon: FlagIcon },
+] as const;
+type Section = typeof sections[number]['id'];
+export const format = (value: number | null | undefined, unit = '') => value == null ? '—' : `${new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 }).format(value)}${unit}`;
+const categories: Record<string, string> = { communication: 'Comunicación', services: 'Servicios y trámites', navigation: 'Navegación y mapas', learning: 'Aprendizaje', other: 'Otras categorías', suspicious_link: 'Enlaces sospechosos', permission_request: 'Permisos que requieren atención', sensitive_action: 'Acciones sensibles' };
 
 export function Institution({ token, health, connect }: { token: string; health: Health | null; connect: () => void }) {
-  const [territoryId, setTerritoryId] = useState('AR-C');
-  const territory = territories.find(t => t.id === territoryId) ?? territories[0];
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [territoryId, setTerritoryId] = useState('AR-C'); const [days, setDays] = useState(30);
+  const [section, setSection] = useState<Section>('resumen');
+  const [analyticsResponse, setAnalytics] = useState<Analytics | null>(null);
+  const [territorial, setTerritorial] = useState<TerritorySummary[]>([]); const [programs, setPrograms] = useState<Program[]>([]);
   const [context, setContext] = useState<PublicContext | null>(null);
-  const [query, setQuery] = useState('personas mayores, hogares unipersonales y conectividad');
-  const [dataBusy, setDataBusy] = useState(false);
-  const [dataError, setDataError] = useState('');
-  const [question, setQuestion] = useState('');
-  const [answer, setAnswer] = useState<PublicAnswer | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [askError, setAskError] = useState('');
-  const [refresh, setRefresh] = useState(0);
-  const dataRequest = useRef<AbortController | null>(null);
-  const askRequest = useRef<AbortController | null>(null);
-
+  const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [tick, setTick] = useState(0);
+  const tabs = useRef<HTMLDivElement>(null);
+  const territory = territories.find(t => t.id === territoryId) ?? territories[0];
+  const analytics = analyticsResponse?.territoryId === territoryId && analyticsResponse.period.days === days ? analyticsResponse : null;
+  const minimum = analytics?.minimumCohort ?? health?.privacy.minimumCohort ?? 5;
+  useEffect(() => { setContext(null); }, [territoryId, token]);
   useEffect(() => {
-    setOverview(null); setError('');
+    setAnalytics(null); setTerritorial([]); setPrograms([]); setError(''); setLoading(false);
     if (!token) return;
-    const controller = new AbortController();
-    setLoading(true);
-    api<Overview>(`/institution/overview?territoryId=${encodeURIComponent(territoryId)}`, { token, signal: controller.signal })
-      .then(setOverview).catch(e => { if (!controller.signal.aborted) setError(errorText(e)); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [token, territoryId, refresh]);
-
-  useEffect(() => {
-    dataRequest.current?.abort(); askRequest.current?.abort();
-    setContext(null); setAnswer(null); setDataError(''); setAskError(''); setDataBusy(false); setAsking(false);
-    return () => { dataRequest.current?.abort(); askRequest.current?.abort(); };
-  }, [territoryId, token]);
-
-  async function searchContext() {
-    dataRequest.current?.abort();
-    const controller = new AbortController(); dataRequest.current = controller;
-    setDataBusy(true); setDataError(''); setContext(null);
-    try {
-      const result = await api<PublicContext>(`/openarg/territory?q=${encodeURIComponent(query.trim())}&territoryId=${territory.id}`, { token, signal: controller.signal });
-      if (!controller.signal.aborted) setContext(result);
-    } catch (e) { if (!controller.signal.aborted) setDataError(errorText(e)); }
-    finally { if (!controller.signal.aborted) setDataBusy(false); }
-  }
-
-  async function askPublic() {
-    askRequest.current?.abort();
-    const controller = new AbortController(); askRequest.current = controller;
-    setAsking(true); setAskError(''); setAnswer(null);
-    try {
-      const result = await api<PublicAnswer>('/openarg/ask', { token, method: 'POST', body: { question: question.trim(), territoryId }, signal: controller.signal });
-      if (!controller.signal.aborted) setAnswer(result);
-    } catch (e) { if (!controller.signal.aborted) setAskError(errorText(e)); }
-    finally { if (!controller.signal.aborted) setAsking(false); }
-  }
-
+    const controller = new AbortController(); let inFlight = false;
+    async function load(initial = false) {
+      if (inFlight) return; inFlight = true; if (initial) setLoading(true);
+      try {
+        const options = { token, signal: controller.signal };
+        const [data, map, interventions] = await Promise.all([
+          api<Analytics>(`/institution/analytics?territoryId=${territoryId}&days=${days}`, options),
+          api<{ territories: TerritorySummary[] }>(`/institution/territories?days=${days}`, options),
+          api<{ programs: Program[] }>(`/institution/programs?territoryId=${territoryId}`, options),
+        ]);
+        if (!controller.signal.aborted) { setAnalytics(data); setTerritorial(map.territories); setPrograms(interventions.programs); setError(''); }
+      } catch (e) { if (!controller.signal.aborted) setError(errorText(e)); }
+      finally { inFlight = false; if (!controller.signal.aborted) setLoading(false); }
+    }
+    void load(true);
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, 30_000);
+    return () => { controller.abort(); clearInterval(timer); };
+  }, [token, territoryId, days, tick]);
   function exportSummary() {
-    const blob = new Blob([JSON.stringify({ title: 'NIETO · Resumen territorial', territory: territory.name, exportedAt: new Date().toISOString(), overview, publicContext: context, note: 'Las celdas suprimidas no representan cero. No contiene datos individuales.' }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob); const link = document.createElement('a');
-    link.href = url; link.download = `nieto-${territory.id}-resumen.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const report = { title: 'TINO · Inteligencia territorial', territory: territory.name, exportedAt: new Date().toISOString(), analytics, territories: territorial, programs, publicContext: context, methodology: 'Solo agregados publicables. Una celda omitida no representa cero. Contexto público y uso conservan períodos independientes.' };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = `tino-${territoryId}-${days}dias.json`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-
-  const metrics = overview?.metrics;
-  const minimum = overview?.minimumCohort ?? health?.privacy?.minimumCohort ?? 5;
-  const statItems = [
-    { label: 'Tareas completadas', value: metrics?.completedFlows, icon: CheckCircleIcon, hint: 'Un paso más de independencia' },
-    { label: 'Prácticas autónomas', value: metrics?.autonomyChecks, icon: BookOpenIcon, hint: 'Logros repetidos sin ayuda' },
-    { label: 'Minutos acompañados', value: metrics?.accompaniedMinutes, icon: ClockIcon, hint: 'Tiempo de las sesiones guiadas' },
-    { label: 'Pedidos de ayuda', value: metrics?.helpRequests, icon: UsersThreeIcon, hint: 'Acompañamiento solicitado' },
-  ];
-
+  function tabKey(event: KeyboardEvent, index: number) {
+    const next = event.key === 'ArrowRight' ? (index + 1) % sections.length : event.key === 'ArrowLeft' ? (index + sections.length - 1) % sections.length : event.key === 'Home' ? 0 : event.key === 'End' ? sections.length - 1 : -1;
+    if (next < 0) return; event.preventDefault(); setSection(sections[next].id); tabs.current?.querySelectorAll<HTMLButtonElement>('button')[next].focus();
+  }
+  const metrics = analytics?.metrics;
+  const publicData = <PublicData key={territoryId} token={token} health={health} territory={territory} analytics={analytics} context={context?.territoryId === territoryId ? context : null} setContext={setContext} />;
+  const map = <article className="panel summary-map"><PanelTitle eyebrow="CONTEXTO TERRITORIAL" title={territory.name} /><TerritoryMap territory={territory} indicator={context?.territoryId === territoryId ? context.indicators?.find(i => i.id.includes('total')) : undefined} /><div className="map-footer"><GlobeHemisphereWestIcon size={17} />Cartografía de referencia. Los marcadores no representan personas.</div></article>;
   return <>
-    <header className="page-heading"><div><div className="eyebrow"><span className="tiny-line" />PORTAL INSTITUCIONAL</div><h1>Acompañar mejor.<br /><span>Conocer el contexto.</span></h1><p>Autonomía digital y datos públicos para llegar a quienes necesitan una mano.</p></div><button className="button secondary export-button" onClick={exportSummary} disabled={!overview}><DownloadSimpleIcon size={18} />Exportar resumen</button></header>
-
-    <div className="view-toolbar"><div className="view-label"><ChartBarIcon size={19} weight="bold" /><strong>Panorama territorial</strong><span className="badge">MVP · LABITCONF</span></div><label className="territory-select"><MapPinIcon size={18} /><span className="sr-only">Territorio</span><select aria-label="Territorio" value={territoryId} onChange={e => { dataRequest.current?.abort(); askRequest.current?.abort(); setContext(null); setAnswer(null); setTerritoryId(e.target.value); }}>{territories.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>
-
-    <section className="stats-grid" aria-label="Indicadores de acompañamiento">{statItems.map(({ label, value, icon: Icon, hint }) => <article className="stat" key={label}><div className="stat-label">{label}<Icon size={19} /></div><div className="stat-value">{loading ? <span className="skeleton-number" /> : value === undefined || value === null ? '—' : new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 }).format(value)}</div><div className="stat-hint">{value === undefined || value === null ? <LockKeyIcon size={13} /> : <ArrowUpRightIcon size={13} />}{value === undefined || value === null ? 'Esperando una cohorte publicable' : hint}</div></article>)}</section>
-
-    {!token && <Notice>Conectá el acceso institucional para ver métricas y consultar OpenArg. <button className="text-button" onClick={connect}>Configurar acceso <ArrowRightIcon /></button></Notice>}
-    {error && <Notice kind="error">{error} <button className="text-button" onClick={() => setRefresh(n => n + 1)}>Reintentar</button></Notice>}
-    {overview?.suppressed && <div className="privacy-line"><ShieldCheckIcon size={17} />Los indicadores se publican a partir de {minimum} personas por territorio. Las cohortes pequeñas permanecen protegidas.</div>}
-
-    <section className="territory-grid">
-      <article className="panel map-panel"><div className="panel-heading"><div><div className="eyebrow">01 / TERRITORIO</div><h2>El lugar importa.</h2></div><span className="small-status"><span className="status-dot" />Cartografía de referencia</span></div><TerritoryMap territory={territory} indicator={context?.territoryId === territoryId ? context.indicators?.[0] : undefined} /><div className="map-footer"><GlobeHemisphereWestIcon size={17} /><span>Contexto público por provincia. El marcador orienta la consulta y no representa personas.</span></div></article>
-      <article className="panel public-panel"><div className="panel-heading"><div><div className="eyebrow">02 / CONTEXTO PÚBLICO</div><h2>Datos con origen.</h2></div><span className="openarg-mark">OpenArg <ArrowUpRightIcon size={14} /></span></div><p className="panel-description">Buscá información sobre personas mayores, conectividad y acceso a servicios en <strong>{territory.short}</strong>.</p><div className="source-principles"><div><DatabaseIcon weight="duotone" /><span>Consulta al catálogo oficial</span></div><div><ClockIcon weight="duotone" /><span>Período y vigencia visibles</span></div><div><ShieldCheckIcon weight="duotone" /><span>Sin datos personales de NIETO</span></div></div>
-        <form className="public-search" onSubmit={e => { e.preventDefault(); void searchContext(); }}><label htmlFor="dataset-query">¿Qué datos querés buscar?</label><textarea id="dataset-query" value={query} onChange={e => setQuery(e.target.value)} maxLength={300} rows={2} required minLength={3} /><button className="button primary full" disabled={!token || !health?.openarg?.configured || dataBusy || query.trim().length < 3}>{dataBusy ? <Spinner /> : <MagnifyingGlassIcon size={18} />}{dataBusy ? 'Consultando OpenArg…' : 'Consultar datos del territorio'}{!dataBusy && <ArrowRightIcon size={18} />}</button></form>
-        <p className="fine-print">{!health?.openarg?.configured ? 'La consulta se habilita al configurar la clave de OpenArg en el servidor.' : 'Cada búsqueda usa el MCP real. Los resultados se cachean para cuidar la cuota.'}</p>
-      </article>
+    <header className="page-heading institution-heading"><div><div className="eyebrow"><span className="tiny-line" />TINO INSTITUCIONES</div><h1>Datos para cerrar<br /><span>la brecha digital.</span></h1><p>Uso agregado de TINO + contexto público de OpenARG. Entendé las barreras y acompañá con mejores decisiones.</p></div><button className="button secondary export-button" onClick={exportSummary} disabled={!analytics}><DownloadSimpleIcon size={18} />Exportar informe</button></header>
+    <div className="institution-toolbar"><div className="live-label"><span className="status-dot" />Inteligencia territorial</div><div className="filters"><label className="territory-select"><MapPinIcon size={18} /><span className="sr-only">Territorio</span><select aria-label="Territorio" value={territoryId} onChange={e => setTerritoryId(e.target.value)}>{territories.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label><label className="territory-select"><ClockIcon size={18} /><span className="sr-only">Período</span><select aria-label="Período" value={days} onChange={e => setDays(Number(e.target.value))}><option value={7}>Últimos 7 días</option><option value={30}>Últimos 30 días</option><option value={90}>Últimos 90 días</option></select></label><button className="icon-button" aria-label="Actualizar métricas" disabled={loading || !token} onClick={() => setTick(n => n + 1)}><ArrowClockwiseIcon /></button></div></div>
+    <div className="institution-tabs" role="tablist" aria-label="Vistas institucionales" ref={tabs}>{sections.map(({ id, label, icon: Icon }, index) => <button type="button" key={id} id={`institution-tab-${id}`} role="tab" aria-selected={section === id} tabIndex={section === id ? 0 : -1} aria-controls={`institution-panel-${id}`} onKeyDown={event => tabKey(event, index)} onClick={() => setSection(id)}><Icon size={18} weight={section === id ? 'fill' : 'regular'} />{label}</button>)}</div>
+    {!token && <Notice>Conectá tu acceso institucional para consultar datos del portal. <button className="text-button" onClick={connect}>Conectar acceso <ArrowRightIcon size={16} /></button></Notice>}
+    {error && <Notice kind="error">{error} <button className="text-button" onClick={() => setTick(n => n + 1)}>Reintentar</button></Notice>}
+    {loading && <div className="loading-inline" role="status"><Spinner />Actualizando datos de la API…</div>}
+    {analytics?.suppressed && <div className="privacy-line"><LockKeyIcon size={17} />Se necesitan al menos {minimum} personas activas por grupo para mostrar resultados. Los datos no publicables aparecen como «—».</div>}
+    <section id={`institution-panel-${section}`} role="tabpanel" aria-labelledby={`institution-tab-${section}`} tabIndex={0} className="institution-view" aria-busy={loading}>
+      {section === 'resumen' && <>
+        <div className="stats-grid"><Metric label="Personas activas" value={format(analytics?.participants)} hint="Actividad en el período seleccionado" icon={<UsersThreeIcon />} /><Metric label="Tareas completadas" value={format(metrics?.completedFlows)} hint="Recorridos guiados finalizados" icon={<BookOpenIcon />} /><Metric label="Autonomía digital" value={format(metrics?.autonomyRate, '%')} hint="Prácticas sin ayuda / tareas completadas" icon={<ShieldCheckIcon />} /><Metric label="Tiempo acompañado" value={format(metrics?.accompaniedMinutes, ' min')} hint="Tiempo registrado en sesiones TINO" icon={<ClockIcon />} /></div>
+        <div className="institution-grid">{map}<article className="panel padded"><PanelTitle eyebrow="APRENDIZAJE" title="Los recorridos más pedidos" />{analytics?.flows.length ? <div className="ranking-list">{[...analytics.flows].sort((a, b) => b.started - a.started).map((flow, index) => <div key={flow.flowId}><span className="ranking-number">{String(index + 1).padStart(2, '0')}</span><div><strong>{flow.name}</strong><div className="data-bar"><span style={{ width: `${flow.completed * 100 / flow.started}%` }} /></div><small>{flow.completed} completados de {flow.started} iniciados</small></div></div>)}</div> : <Unavailable title="Sin recorridos publicables" minimum={minimum} />}<button className="text-button" onClick={() => setSection('flujos')}>Explorar los flujos <ArrowRightIcon size={16} /></button></article></div>
+        <Trend analytics={analytics} minimum={minimum} />{publicData}
+      </>}
+      {section === 'territorio' && <><div className="institution-grid">{map}<article className="panel padded"><PanelTitle eyebrow="24 JURISDICCIONES" title="Actividad por territorio" /><div className="territory-list">{territories.map(item => { const data = territorial.find(row => row.territoryId === item.id); return <button key={item.id} className={item.id === territoryId ? 'selected' : ''} aria-pressed={item.id === territoryId} onClick={() => setTerritoryId(item.id)}><span>{item.name}</span><strong>{format(data?.participants)}</strong><span className="sr-only">personas activas</span></button>; })}</div><p className="fine-print">Cada jurisdicción tiene su propio umbral. «—» no equivale a cero.</p></article></div>{publicData}</>}
+      {section === 'flujos' && <article className="panel padded"><PanelTitle eyebrow="DEMANDA Y APRENDIZAJE" title="Dónde avanzamos. Dónde cuesta." />{analytics?.flows.length ? <><div className="table-scroll"><table><thead><tr>{['Recorrido', 'Inicios', 'Completados', 'Cancelados', 'Autónomos', 'Min. promedio', 'Repeticiones', '«Me perdí»'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead><tbody>{analytics.flows.map(flow => <tr key={flow.flowId}><th scope="row">{flow.name}</th><td>{flow.started}</td><td>{flow.completed}</td><td>{flow.cancelled}</td><td>{flow.autonomyChecks}</td><td>{format(flow.averageMinutes)}</td><td>{flow.repeatedSteps}</td><td>{flow.lostEvents}</td></tr>)}</tbody></table></div>{analytics.flows.map(flow => <details key={flow.flowId} className="sources-details"><summary>Pasos completados · {flow.name}</summary>{flow.steps.length ? <Bars rows={flow.steps.map(step => ({ label: step.stepId, value: step.completed }))} unit="finalizaciones" /> : <Unavailable title="Desglose de pasos protegido" minimum={minimum} />}</details>)}</> : <Unavailable title="Todavía no hay flujos publicables" minimum={minimum} />}<p className="method-note">La finalización y la práctica autónoma son eventos distintos. Una sesión en curso no se cuenta como abandono; las cancelaciones se muestran por separado.</p></article>}
+      {section === 'uso' && <><div className="stats-grid"><Metric label="Tiempo de pantalla" value={format(analytics?.usage?.screenMinutes, ' min')} hint="Intervalos de uso enviados con permiso" icon={<ClockIcon />} /><Metric label="Con acompañamiento" value={format(analytics?.usage?.accompaniedMinutes, ' min')} hint="Dentro de esos intervalos de uso" icon={<UsersThreeIcon />} /><Metric label="Sin acompañamiento" value={format(analytics?.usage?.unaccompaniedMinutes, ' min')} hint="No equivale a autonomía validada" icon={<ShieldCheckIcon />} /><Metric label="Sesión guiada promedio" value={format(metrics?.averageMinutes, ' min')} hint="Duración de sesiones TINO" icon={<BookOpenIcon />} /></div><article className="panel padded"><PanelTitle eyebrow="USO DEL TELÉFONO" title="Diferentes formas de usar la tecnología." />{analytics?.usage?.categories.length ? <Bars rows={analytics.usage.categories.map(row => ({ label: categories[row.category] ?? row.category, value: row.minutes }))} unit="min" /> : <Unavailable title="Sin categorías de uso publicables" minimum={minimum} />}<p className="method-note">El tiempo de pantalla requiere intervalos enviados con permiso desde el teléfono. No se estima a partir de la duración de las sesiones guiadas.</p></article></>}
+      {section === 'seguridad' && <><div className="stats-grid"><Metric label="Señales registradas" value={format(analytics?.safety?.total)} hint="Eventos de seguridad del dispositivo" icon={<ShieldCheckIcon />} /><Metric label="Pendientes" value={format(analytics?.safety?.pending)} hint="Sin resolución registrada" icon={<ClockIcon />} /><Metric label="Resueltas" value={format(analytics?.safety?.resolved)} hint="Confirmadas desde el teléfono" icon={<ShieldCheckIcon />} /><Metric label="Pedidos de ayuda" value={format(analytics?.help?.total)} hint="Solicitudes a la red; no detecciones de fraude" icon={<UsersThreeIcon />} /></div><article className="panel padded"><PanelTitle eyebrow="SEÑALES PARA ACOMPAÑAR" title="Entender el riesgo, sin exponer a nadie." />{analytics?.safety?.categories.length ? <Bars rows={analytics.safety.categories.map(row => ({ label: categories[row.kind] ?? row.kind, value: row.count }))} unit="señales" /> : <Unavailable title="Sin categorías de seguridad publicables" minimum={minimum} />}<p className="method-note">Este portal muestra categorías agregadas, sin enlaces visitados, identidades, diagnósticos, mensajes ni capturas. Una señal no confirma fraude.</p></article></>}
+      {section === 'programas' && <Programs key={`${territoryId}-${token ? 'connected' : 'disconnected'}`} territoryId={territoryId} territoryName={territory.name} programs={programs.filter(p => p.territoryId === territoryId)} token={token} refresh={() => setTick(n => n + 1)} />}
     </section>
-
-    {dataError && <Notice kind="error">{dataError}</Notice>}
-    {context && context.territoryId === territoryId && <section className="panel results-panel"><div className="panel-heading"><div><div className="eyebrow">RESULTADO DE OPENARG</div><h2>Fuentes para {territory.short}</h2></div><span className="meta">{context.cached ? 'Desde caché · ' : ''}{localDate(context.fetchedAt, true)}</span></div>
-      {context.warnings?.map((warning, i) => <Notice key={i}>{warning}</Notice>)}
-      {!!context.indicators?.length && <div className="public-indicators">{context.indicators.map(indicator => <article key={indicator.id}><span>{indicator.label}</span><strong>{typeof indicator.value === 'number' ? new Intl.NumberFormat('es-AR', { maximumFractionDigits: 1 }).format(indicator.value) : indicator.value} <small>{indicator.unit}</small></strong><span>Período: {indicator.period || 'No informado'} · dato histórico</span><SourceLink url={indicator.sourceUrl}>{indicator.sourceTitle}</SourceLink></article>)}</div>}
-      {context.datasets?.length ? <div className="dataset-list">{context.datasets.map((dataset, index) => <DatasetItem dataset={dataset} index={index} key={`${dataset.id}-${index}`} />)}</div> : <EmptyState icon={<DatabaseIcon size={27} />} title="Sin datasets disponibles para esta búsqueda">Podés probar con otro tema o una jurisdicción más amplia. No se completan resultados con datos inventados.</EmptyState>}
-      {!!context.sources?.length && <div className="sources-footer"><strong>Fuentes devueltas por OpenArg</strong>{context.sources.map((source, index) => <SourceLink key={index} url={source.url}>{source.title}</SourceLink>)}</div>}
-      {!!context.rawText && !context.datasets?.length && <details className="raw-result"><summary>Ver respuesta original del MCP</summary><pre>{context.rawText}</pre></details>}
-    </section>}
-
-    <section className="bottom-grid"><article className="panel learning-panel"><div className="panel-heading"><div><div className="eyebrow">03 / APRENDIZAJE</div><h2>Pequeños pasos, autonomía real.</h2></div><BookOpenIcon size={23} /></div><div className="flow-row"><span className="flow-icon"><PaperPlaneTiltIcon size={25} weight="duotone" /></span><div><strong>Compartir ubicación por WhatsApp</strong><p>Guía en Android · verificación en el teléfono</p></div><span className="badge green">Primer recorrido</span></div><div className="flow-columns"><div><span>Iniciadas</span><strong>{overview && !overview.suppressed ? overview.flows?.find(f => f.flowId === 'whatsapp-location')?.started ?? 0 : '—'}</strong></div><ArrowRightIcon size={18} /><div><span>Completadas</span><strong>{overview && !overview.suppressed ? overview.flows?.find(f => f.flowId === 'whatsapp-location')?.completed ?? 0 : '—'}</strong></div></div><p className="fine-print">Completar un recorrido requiere verificar la pantalla. Una práctica autónoma se registra por separado.</p></article>
-      <article className="panel public-question"><div className="eyebrow">PREGUNTA A LOS DATOS PÚBLICOS</div><h2>Una pregunta puede<br />orientar un taller.</h2><form onSubmit={e => { e.preventDefault(); void askPublic(); }}><label className="sr-only" htmlFor="public-question">Pregunta para OpenArg</label><textarea id="public-question" placeholder="¿Qué datos hay sobre conectividad de personas mayores en este territorio?" value={question} onChange={e => setQuestion(e.target.value)} maxLength={500} minLength={5} required rows={3} /><button className="button secondary" disabled={!token || !health?.openarg?.configured || asking || question.trim().length < 5}>{asking ? <Spinner /> : <ArrowUpRightIcon size={18} />}{asking ? 'Analizando fuentes…' : 'Preguntar a OpenArg'}</button></form><p className="fine-print">Consulta pública con IA de OpenArg. Consume una pregunta de su cuota. OpenArg puede registrar la consulta asociada a la clave. No incluyas datos personales.</p></article></section>
-    {askError && <Notice kind="error">{askError}</Notice>}
-    {answer && <article className="panel answer-panel"><div className="panel-heading"><h2>Respuesta de OpenArg</h2><span className="meta">{localDate(answer.fetchedAt, true)}</span></div><div className="answer-text">{answer.answer}</div>{answer.warnings?.map((w, i) => <Notice key={i}>{w}</Notice>)}<div className="sources-footer">{answer.sources?.map((s, i) => <SourceLink url={s.url} key={i}>{s.title}</SourceLink>)}</div></article>}
-    <div className="page-footnote"><ShieldCheckIcon size={17} /><p>Las instituciones ven resultados agregados. Los mensajes, las capturas y la ubicación individual permanecen fuera de este portal.</p><a href="https://mcp.openarg.org" target="_blank" rel="noreferrer">Acerca del MCP <ArrowUpRightIcon /></a></div>
+    <div className="page-footnote"><ShieldCheckIcon size={18} /><p>Datos agregados, nunca personas. Mínimo de {minimum} participantes por grupo. {analytics?.updatedAt ? `Actualizado: ${localDate(analytics.updatedAt, true)}.` : ''}</p></div>
   </>;
 }
-
-function DatasetItem({ dataset, index }: { dataset: Dataset; index: number }) {
-  return <article className="dataset-row"><span className="dataset-number">{String(index + 1).padStart(2, '0')}</span><div><div className="dataset-title"><h3>{dataset.title}</h3>{dataset.organization && <span className="badge">{dataset.organization}</span>}</div><p>{dataset.description}</p><div className="dataset-meta"><span>Período: {dataset.period || 'no informado por la fuente'}</span><span>Actualización: {dataset.updatedAt ? localDate(dataset.updatedAt) : 'no informada'}</span></div><div className="dataset-resources"><SourceLink url={dataset.sourceUrl}>Consultar fuente oficial</SourceLink>{dataset.resources?.map((resource, i) => <SourceLink url={resource.url} key={`${resource.id}-${i}`}>{resource.name}{resource.format ? ` · ${resource.format}` : ''}<ArrowDownIcon size={12} /></SourceLink>)}</div></div></article>;
+export function PanelTitle({ eyebrow, title }: { eyebrow: string; title: string }) { return <div className="panel-heading"><div><div className="eyebrow">{eyebrow}</div><h2>{title}</h2></div></div>; }
+function Metric({ label, value, hint, icon }: { label: string; value: string; hint: string; icon: ReactNode }) { return <article className="stat"><div className="stat-label">{label}{icon}</div><div className="stat-value">{value}</div><p className="stat-hint">{hint}</p></article>; }
+function Unavailable({ title, minimum }: { title: string; minimum: number }) { return <EmptyState icon={<LockKeyIcon size={25} />} title={title}>Se muestra información cuando existe una medición y cada grupo alcanza {minimum} personas. Una celda protegida o no medida no representa cero.</EmptyState>; }
+function Bars({ rows, unit }: { rows: { label: string; value: number }[]; unit: string }) { const maximum = Math.max(1, ...rows.map(row => row.value)); return <div className="bars">{rows.map(row => <div className="bar-row" key={row.label}><div><strong>{row.label}</strong><span>{format(row.value)} {unit}</span></div><div className="data-bar"><span style={{ width: `${row.value * 100 / maximum}%` }} /></div></div>)}</div>; }
+function Trend({ analytics, minimum }: { analytics: Analytics | null; minimum: number }) {
+  const rows = analytics?.trend ?? []; const max = Math.max(1, ...rows.map(row => row.sessions));
+  return <article className="panel padded"><PanelTitle eyebrow="EVOLUCIÓN" title="Más práctica, más autonomía." />{rows.length ? <><div className="trend-chart" role="img" aria-label="Sesiones diarias y prácticas autónomas. Valores exactos en la tabla inferior.">{rows.map(day => <div key={day.date}><div className="trend-track"><span style={{ height: `${day.sessions * 100 / max}%` }} /><i style={{ height: `${day.autonomyChecks * 100 / max}%` }} /></div><span>{day.date.slice(5).split('-').reverse().join('/')}</span></div>)}</div><div className="chart-legend"><span>● Sesiones iniciadas</span><span>● Prácticas autónomas</span></div><details className="sources-details"><summary>Ver valores de la evolución</summary><div className="table-scroll"><table><thead><tr><th>Fecha UTC</th><th>Sesiones</th><th>Completadas</th><th>Autónomas</th></tr></thead><tbody>{rows.map(day => <tr key={day.date}><td>{day.date}</td><td>{day.sessions}</td><td>{day.completed}</td><td>{day.autonomyChecks}</td></tr>)}</tbody></table></div></details></> : <Unavailable title="La evolución aparece con una cohorte suficiente" minimum={minimum} />}</article>;
 }

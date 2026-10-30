@@ -1,0 +1,15 @@
+{
+  "id": "/",
+  "name": "TINO — Tu teléfono, a tu manera",
+  "short_name": "TINO",
+  "lang": "es-AR",
+  "start_url": "/app/#bienvenida",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F3F6F6",
+  "theme_color": "#00D6C9",
+  "icons": [
+    { "src": "/brand/tino-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/brand/tino-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
