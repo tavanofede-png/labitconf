@@ -22,6 +22,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.nieto.assistant.R
@@ -87,7 +88,7 @@ private val WelcomeSecondary = Color(0xFF4C5B61)
                 }
                 Spacer(Modifier.height(if (tablet) 18.dp else 12.dp))
                 TextButton(onClick = onLogin, enabled = !state.busy, modifier = Modifier.heightIn(min = 52.dp), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 14.dp)) {
-                    Text("Ya tengo cuenta", color = WelcomeInk, fontSize = if (tablet) 19.sp else 17.sp, fontWeight = FontWeight.Medium)
+                    Text("Ya tengo cuenta", color = WelcomeInk, fontSize = if (tablet) 19.sp else 17.sp, fontWeight = FontWeight.Medium, textDecoration = TextDecoration.Underline)
                 }
                 if (state.busy) CircularProgressIndicator(Modifier.padding(top = 12.dp).size(26.dp), color = WelcomeInk, strokeWidth = 2.dp)
                 state.error?.let { message ->
