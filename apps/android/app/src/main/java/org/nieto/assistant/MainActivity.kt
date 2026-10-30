@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import org.nieto.assistant.flow.GuidanceEngine
 import org.nieto.assistant.flow.Stage
 import org.nieto.assistant.entry.TinoEntryRoot
+import org.nieto.assistant.ui.TinoTypography
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as NietoApp
@@ -110,12 +111,7 @@ private val Turquoise = Color(0xFF00D6C9)
 @Composable private fun NietoTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = lightColorScheme(primary = Turquoise, onPrimary = Ink, background = WarmWhite,
         surface = WarmWhite, onBackground = Ink, onSurface = Ink, secondaryContainer = Color(0xFFE3F9F6),
-        onSecondaryContainer = Forest), typography = Typography(
-        bodyLarge = androidx.compose.ui.text.TextStyle(fontSize = 20.sp, lineHeight = 29.sp),
-        bodyMedium = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, lineHeight = 26.sp),
-        titleLarge = androidx.compose.ui.text.TextStyle(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.SemiBold),
-        labelLarge = androidx.compose.ui.text.TextStyle(fontSize = 18.sp, fontWeight = FontWeight.SemiBold),
-    ), content = content)
+        onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

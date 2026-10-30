@@ -77,6 +77,10 @@ private val Background = Color(0xFFF3F6F6)
         if (uri != null) runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); vm.photo(uri.toString()) }.onFailure { vm.message("No pude conservar esa foto. Podés elegir otra o continuar sin foto.") }
     }
     BackHandler(enabled = s.page != EntryPage.WELCOME) { vm.back() }
+    if (s.page == EntryPage.WELCOME) {
+        TinoWelcomeScreen(s, vm::start, vm::login, onConnection = { vm.move(EntryPage.CONNECTION) })
+        return
+    }
     if (s.page == EntryPage.HOME && s.role == AccountRole.USER) {
         Column(Modifier.fillMaxSize().background(Background).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -105,21 +109,7 @@ private val Background = Color(0xFFF3F6F6)
                 if (s.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Teal)
                 s.error?.let { Banner(it, true) }; s.message?.let { Banner(it) }
                 when (s.page) {
-                    EntryPage.WELCOME -> {
-                        Title("Tu teléfono,\na tu manera.", "Elegí cómo querés usar TINO. Una ayuda que se adapta a vos.")
-                        AccountRole.entries.forEachIndexed { index, role ->
-                            Surface(onClick = { vm.start(role) }, enabled = !s.busy, color = Color.White, shape = RoundedCornerShape(24.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFDCE5E4)), modifier = Modifier.fillMaxWidth()) {
-                                Row(Modifier.padding(20.dp).heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    Surface(shape = RoundedCornerShape(16.dp), color = Mint) { Text("0${index + 1}", Modifier.padding(13.dp), color = Teal, fontWeight = FontWeight.Bold) }
-                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(role.label, color = Ink, fontSize = 23.sp, fontWeight = FontWeight.Bold); Text(role.subtitle, color = Muted, fontSize = 16.sp, lineHeight = 23.sp) }
-                                    Text("→", color = Teal, fontSize = 24.sp)
-                                }
-                            }
-                        }
-                        TextButton(onClick = vm::login, enabled = !s.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Ya tengo cuenta · Ingresar", color = Teal) }
-                        OutlinedButton(onClick = vm::guest, enabled = !s.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = RoundedCornerShape(16.dp)) { Text("Usar el asistente sin cuenta", color = Teal) }
-                        Text("Ayuda sin etiquetas. Acceso sin barreras.", color = Muted, fontSize = 14.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
-                    }
+                    EntryPage.WELCOME -> Unit // Dedicated native welcome follows the team's sketch.
                     EntryPage.FAMILY_CHOICE -> {
                         Title("Tu red, más cerca.", "Elegí si querés sumarte a un grupo o empezar uno nuevo.")
                         ChoiceCard("Ingresar a un grupo familiar", "Identificá el grupo por el correo del administrador. Verificamos tu propio correo para ingresar.") { vm.family("join") }
