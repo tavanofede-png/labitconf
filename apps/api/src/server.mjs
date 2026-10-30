@@ -1,0 +1,328 @@
+import http from 'node:http';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+import { stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { JsonStore } from './store.mjs';
+import { OpenArgClient, OpenArgError } from './openarg.mjs';
+import { normalizeSearch, normalizeAnswer } from './normalize.mjs';
+import { getTerritoryIndicators } from './territory.mjs';
+
+const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
+const STEPS = new Set(['idle', 'open_chat', 'attach', 'location', 'confirm', 'share', 'verify', 'complete', 'cancelled', 'send_location']);
+const TERRITORIES = {
+  'AR-C': 'Ciudad Autónoma de Buenos Aires', 'AR-B': 'Provincia de Buenos Aires', 'AR-X': 'Córdoba',
+  'AR-S': 'Santa Fe', 'AR-M': 'Mendoza', 'AR-T': 'Tucumán', 'AR-A': 'Salta', 'AR-E': 'Entre Ríos',
+  'AR-H': 'Chaco', 'AR-U': 'Chubut', 'AR-K': 'Catamarca', 'AR-W': 'Corrientes', 'AR-P': 'Formosa',
+  'AR-Y': 'Jujuy', 'AR-L': 'La Pampa', 'AR-F': 'La Rioja', 'AR-N': 'Misiones', 'AR-Q': 'Neuquén',
+  'AR-R': 'Río Negro', 'AR-J': 'San Juan', 'AR-D': 'San Luis', 'AR-Z': 'Santa Cruz',
+  'AR-G': 'Santiago del Estero', 'AR-V': 'Tierra del Fuego, Antártida e Islas del Atlántico Sur',
+};
+const hash = (text) => createHash('sha256').update(text).digest('hex');
+const secret = () => randomBytes(32).toString('base64url');
+const same = (left, right) => typeof left === 'string' && typeof right === 'string' && timingSafeEqual(Buffer.from(hash(left)), Buffer.from(hash(right)));
+const publicGroup = (group) => ({ id: group.id, name: group.name });
+const APK_PATHS = [resolve(API_ROOT, '../../artifacts/nieto-debug.apk'), resolve(API_ROOT, '../android/app/build/outputs/apk/debug/app-debug.apk')];
+async function apkFile() {
+  for (const path of APK_PATHS) { try { const info = await stat(path); if (info.isFile() && info.size > 0) return { path, size: info.size }; } catch { /* build may not exist */ } }
+  return null;
+}
+
+class ApiError extends Error {
+  constructor(status, code, message) { super(message); this.status = status; this.code = code; }
+}
+const required = (test, status, code, message) => { if (!test) throw new ApiError(status, code, message); };
+function text(value, key, max = 100, optional = false) {
+  if (optional && value === undefined) return undefined;
+  required(typeof value === 'string' && value.trim().length > 0 && value.length <= max, 400, 'invalid_input', `${key} debe ser un texto de 1 a ${max} caracteres.`);
+  return value.trim();
+}
+function keys(body, allowed) {
+  required(body && typeof body === 'object' && !Array.isArray(body), 400, 'invalid_input', 'Se esperaba un objeto JSON.');
+  required(Object.keys(body).every((key) => allowed.includes(key)), 400, 'unexpected_field', 'El pedido contiene campos no permitidos.');
+}
+function territory(value = 'AR-C') {
+  required(Object.hasOwn(TERRITORIES, value), 400, 'unsupported_territory', 'Elegí una provincia argentina o Ciudad Autónoma de Buenos Aires con su código ISO 3166-2.');
+  return value;
+}
+function sessionsFor(state, userId) { return state.sessions.filter((s) => s.userId === userId); }
+function metricsFor(sessions) {
+  return { completedFlows: sessions.filter((s) => s.state === 'completed').length,
+    autonomyChecks: sessions.filter((s) => s.autonomyCompleted).length,
+    accompaniedSeconds: sessions.reduce((sum, s) => sum + s.durationSeconds, 0) };
+}
+function inviteFor(state, groupId, now) {
+  const invitationCode = randomBytes(5).toString('hex').toUpperCase();
+  const expiresAt = new Date(now + 15 * 60 * 1000).toISOString();
+  state.invitations = state.invitations.filter((i) => !i.usedAt && Date.parse(i.expiresAt) > now);
+  state.invitations.push({ id: randomUUID(), groupId, codeHash: hash(invitationCode), expiresAt });
+  return { invitationCode, expiresAt };
+}
+function audit(state, action, actorId, now) {
+  state.audit.push({ id: randomUUID(), action, actorId, at: new Date(now).toISOString() });
+  if (state.audit.length > 5000) state.audit.splice(0, state.audit.length - 5000);
+}
+
+async function bodyOf(req, maxBytes) {
+  if (!['POST', 'PATCH'].includes(req.method)) return {};
+  required((req.headers['content-type'] ?? '').split(';')[0].trim() === 'application/json', 415, 'content_type', 'Usá Content-Type: application/json.');
+  required(Number(req.headers['content-length'] ?? 0) <= maxBytes, 413, 'body_too_large', 'El pedido excede el tamaño permitido.');
+  let size = 0; const chunks = [];
+  for await (const chunk of req) {
+    size += chunk.length;
+    required(size <= maxBytes, 413, 'body_too_large', 'El pedido excede el tamaño permitido.'); chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); }
+  catch { throw new ApiError(400, 'invalid_json', 'JSON inválido.'); }
+}
+
+export function createApp({
+  dataFile = process.env.DATA_FILE ? resolve(process.env.DATA_FILE) : resolve(API_ROOT, 'data/nieto.json'),
+  store = new JsonStore(dataFile), openarg = new OpenArgClient({ timeoutMs: Number(process.env.OPENARG_TIMEOUT_MS) || 25_000 }),
+  institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
+  corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
+  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000,
+} = {}) {
+  minimumCohort = Math.max(5, Math.trunc(minimumCohort));
+  const rates = new Map();
+  const handler = async (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('Vary', 'Origin');
+    const respond = (status, data) => { res.writeHead(status); res.end(JSON.stringify(data)); };
+    try {
+      const origin = req.headers.origin;
+      if (origin) {
+        required(corsOrigins.includes(origin), 403, 'origin_not_allowed', 'Origen no permitido.');
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+      }
+      if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+      const url = new URL(req.url, 'http://localhost');
+      if (req.method === 'GET' && ['/downloads/nieto-debug.apk', '/api/downloads/nieto-debug.apk'].includes(url.pathname)) {
+        const apk = await apkFile(); required(apk, 404, 'apk_not_built', 'El APK todavía no está compilado.');
+        res.setHeader('Content-Type', 'application/vnd.android.package-archive'); res.setHeader('Content-Length', apk.size);
+        res.setHeader('Content-Disposition', 'attachment; filename="nieto-debug.apk"');
+        createReadStream(apk.path).on('error', () => res.destroy()).pipe(res); return;
+      }
+      required(url.pathname.startsWith('/api/'), 404, 'not_found', 'Ruta inexistente.');
+      const route = url.pathname.slice(4).replace(/\/$/, '') || '/';
+      const token = /^Bearer ([A-Za-z0-9_\-.]+)$/i.exec(req.headers.authorization ?? '')?.[1] ?? '';
+      const current = now();
+      // Do not trust X-Forwarded-For without a configured reverse proxy.
+      if (rates.size > 5000) for (const [key, value] of rates) if (value.resetAt <= current) rates.delete(key);
+      for (const rateKey of [`ip:${req.socket.remoteAddress}`, ...(token ? [`token:${hash(token)}`] : [])]) {
+        let rate = rates.get(rateKey);
+        if (!rate || rate.resetAt <= current) { rate = { count: 0, resetAt: current + rateWindowMs }; rates.set(rateKey, rate); }
+        required(++rate.count <= rateLimit, 429, 'rate_limited', 'Demasiados pedidos. Esperá un minuto.');
+      }
+      const body = await bodyOf(req, maxBodyBytes);
+      const method = req.method;
+
+      if (method === 'GET' && route === '/health') {
+        const status = openarg.status();
+        const apk = await apkFile();
+        respond(200, { status: 'ok', version: '2.0.0', openarg: { configured: status.configured, connected: Boolean(status.lastSuccessAt), endpoint: status.endpoint },
+          privacy: { minimumCohort, screenStorage: false, conversationStorage: false }, institutionConfigured: Boolean(institutionToken),
+          android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null },
+          assistant: { mode: 'verified_local_flows', generalConversation: false }, storage: 'local_json_single_process' }); return;
+      }
+      if (method === 'POST' && route === '/devices') {
+        keys(body, ['name', 'territoryId']);
+        const name = text(body.name, 'name', 60); const territoryId = territory(body.territoryId);
+        const deviceId = randomUUID(); const newToken = secret();
+        await store.update((state) => { state.users.push({ id: deviceId, name, territoryId, tokenHash: hash(newToken), createdAt: new Date(current).toISOString() }); });
+        respond(201, { deviceId, token: newToken }); return;
+      }
+      if (method === 'POST' && route === '/family/groups') {
+        keys(body, ['name']); const name = text(body.name, 'name', 60); const caregiverToken = secret();
+        const result = await store.update((state) => {
+          const group = { id: randomUUID(), name, tokenHash: hash(caregiverToken), createdAt: new Date(current).toISOString() };
+          state.groups.push(group); audit(state, 'group_created', group.id, current);
+          return { group: publicGroup(group), caregiverToken, ...inviteFor(state, group.id, current) };
+        }); respond(201, result); return;
+      }
+
+      const institutional = route.startsWith('/institution/') || route.startsWith('/openarg/');
+      if (institutional) {
+        required(institutionToken, 503, 'institution_not_configured', 'Configurá INSTITUTION_TOKEN en el backend para habilitar el portal institucional.');
+        required(same(token, institutionToken), 401, 'unauthorized', 'Token institucional inválido o ausente.');
+      }
+
+      if (method === 'GET' && route === '/openarg/status') {
+        const status = await openarg.discover();
+        respond(200, { configured: status.configured, connected: Boolean(status.serverInfo) && !status.lastError && status.configured, endpoint: status.endpoint,
+          tools: status.tools.map(({ name, description }) => ({ name, description })), error: !status.configured ? { code: 'credentials_required', message: 'Configurá OPENARG_API_KEY en el backend.' } : status.lastError,
+          transport: status.transport, lastSuccessAt: status.lastSuccessAt, serverInfo: status.serverInfo }); return;
+      }
+      if (method === 'GET' && ['/openarg/search', '/openarg/territory'].includes(route)) {
+        const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
+        const isTerritory = route.endsWith('territory'); const suppliedQuery = url.searchParams.get('q');
+        if (isTerritory && suppliedQuery !== null) required(suppliedQuery.length <= 300, 400, 'invalid_input', 'q admite hasta 300 caracteres.');
+        const query = isTerritory ? (suppliedQuery?.trim() ? text(suppliedQuery, 'q', 300) : `personas mayores población acceso internet ${TERRITORIES[territoryId]}`)
+          : text(suppliedQuery, 'q', 500);
+        if (!openarg.status().configured) {
+          const base = { query, datasets: [], sources: [], warnings: ['OpenArg pendiente: configurá OPENARG_API_KEY en el backend. No se muestran datos de reemplazo.'], cached: false, fetchedAt: null, status: 'credentials_required' };
+          respond(200, isTerritory ? { ...base, territoryId, indicators: [] } : base); return;
+        }
+        const scope = `Territorio: ${TERRITORIES[territoryId]}. ${query}`;
+        const result = normalizeSearch(await openarg.call('buscar_datasets', { texto: scope, limite: 8 }), query);
+        if (isTerritory) {
+          const context = await getTerritoryIndicators(openarg, territoryId);
+          const sources = [...result.sources, ...context.sources].filter((source, index, all) => all.findIndex((entry) => entry.url === source.url) === index);
+          respond(200, { ...result, territoryId, indicators: context.indicators, sources,
+            warnings: [...result.warnings, ...context.warnings], cached: result.cached && context.cached });
+        }
+        else respond(200, result); return;
+      }
+      if (method === 'POST' && route === '/openarg/ask') {
+        keys(body, ['question', 'territoryId']); const question = text(body.question, 'question', 1600); const territoryId = territory(body.territoryId);
+        const scopedQuestion = `Contexto territorial: ${TERRITORIES[territoryId]}. ${question} Indicá período de los datos, fuentes oficiales y límites de cobertura. No infieras indicadores de descripciones.`;
+        respond(200, normalizeAnswer(await openarg.call('consultar_datos_publicos', { pregunta: scopedQuestion }))); return;
+      }
+      if (method === 'GET' && route === '/institution/overview') {
+        const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
+        const state = await store.read();
+        const users = state.users.filter((u) => u.territoryId === territoryId);
+        const suppressed = users.length < minimumCohort;
+        if (suppressed) { respond(200, { territoryId, minimumCohort, suppressed, participants: null, metrics: null, flows: [], updatedAt: new Date(current).toISOString() }); return; }
+        const ids = new Set(users.map((u) => u.id)); const sessions = state.sessions.filter((s) => ids.has(s.userId));
+        const metrics = metricsFor(sessions);
+        respond(200, { territoryId, minimumCohort, suppressed, participants: users.length,
+          metrics: { completedFlows: metrics.completedFlows, autonomyChecks: metrics.autonomyChecks, accompaniedMinutes: Math.round(metrics.accompaniedSeconds / 60), helpRequests: state.alerts.filter((a) => ids.has(a.userId)).length },
+          flows: [{ flowId: 'whatsapp-location', started: sessions.length, completed: metrics.completedFlows }], updatedAt: new Date(current).toISOString() }); return;
+      }
+
+      const state = await store.read();
+      const user = token ? state.users.find((u) => same(hash(token), u.tokenHash)) : undefined;
+      const group = token ? state.groups.find((g) => same(hash(token), g.tokenHash)) : undefined;
+      const needUser = () => required(user, 401, 'unauthorized', 'Token de dispositivo inválido o ausente.');
+      const needGroup = () => required(group, 401, 'unauthorized', 'Token familiar inválido o ausente.');
+      if (method === 'PATCH' && route === '/devices/me') {
+        needUser(); keys(body, ['name', 'territoryId']);
+        const name = text(body.name, 'name', 60, true); const territoryId = body.territoryId === undefined ? undefined : territory(body.territoryId);
+        await store.update((s) => { const u = s.users.find((u) => u.id === user.id); if (name) u.name = name; if (territoryId) u.territoryId = territoryId; });
+        respond(200, { ok: true }); return;
+      }
+      if (method === 'POST' && route === '/assistant/sessions') {
+        needUser(); keys(body, ['flowId']); required(body.flowId === 'whatsapp-location', 400, 'unsupported_flow', 'Flujo no disponible.');
+        const session = { id: randomUUID(), flowId: body.flowId, userId: user.id, state: 'created', createdAt: new Date(current).toISOString(), durationSeconds: 0, completedSteps: [], autonomyCompleted: false, eventCounts: {} };
+        await store.update((s) => { s.sessions.push(session); });
+        respond(201, { id: session.id, flowId: session.flowId, createdAt: session.createdAt }); return;
+      }
+      if (method === 'POST' && route === '/assistant/message') {
+        needUser(); keys(body, ['sessionId', 'text']); const message = text(body.text, 'text', 1000);
+        if (body.sessionId) required(state.sessions.some((s) => s.id === body.sessionId && s.userId === user.id), 404, 'session_not_found', 'Sesión inexistente.');
+        const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        if (/ubicacion|donde estoy|whatsapp|como llegar/.test(normalized)) {
+          respond(200, { mode: 'guided', flowId: 'whatsapp-location', instruction: 'Vamos paso a paso. Abrí WhatsApp y elegí la conversación de confianza. Nieto marcará el siguiente botón solo si reconoce tu pantalla. Vos hacés cada toque; antes de compartir tu ubicación te pedirá confirmación.', sources: [] });
+        } else {
+          respond(200, { mode: 'limited', instruction: 'En esta versión puedo acompañarte a compartir tu ubicación por WhatsApp y pedir ayuda a tu familia. Decime “quiero compartir mi ubicación” para empezar.', sources: [] });
+        } return;
+      }
+      const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
+      if (method === 'POST' && eventMatch) {
+        needUser(); keys(body, ['type', 'stepId', 'durationSeconds']);
+        required(TYPES.has(body.type), 400, 'invalid_event', 'Tipo de evento no permitido.');
+        if (body.stepId !== undefined) required(STEPS.has(body.stepId), 400, 'invalid_step', 'stepId no pertenece al flujo verificado.');
+        if (['step_shown', 'step_completed', 'step_repeated'].includes(body.type)) required(body.stepId, 400, 'missing_step', 'Este evento requiere stepId.');
+        if (body.durationSeconds !== undefined) required(Number.isFinite(body.durationSeconds) && body.durationSeconds >= 0 && body.durationSeconds <= 14_400, 400, 'invalid_duration', 'Duración fuera del intervalo permitido (0–14400).');
+        await store.update((s) => {
+          const session = s.sessions.find((entry) => entry.id === eventMatch[1] && entry.userId === user.id);
+          required(session, 404, 'session_not_found', 'Sesión inexistente.');
+          required(session.state !== 'cancelled', 409, 'session_closed', 'La sesión fue cancelada.');
+          if (body.type === 'autonomy_completed') required(session.state === 'completed', 409, 'flow_incomplete', 'Completá el flujo antes de registrar autonomía.');
+          session.eventCounts[body.type] = (session.eventCounts[body.type] ?? 0) + 1;
+          if (body.type === 'flow_started' && session.state !== 'completed') session.state = 'active';
+          if (body.type === 'step_completed' && !session.completedSteps.includes(body.stepId)) session.completedSteps.push(body.stepId);
+          if (body.type === 'flow_completed') { session.state = 'completed'; session.completedAt ??= new Date(current).toISOString(); }
+          if (body.type === 'autonomy_completed') session.autonomyCompleted = true;
+          if (body.type === 'cancelled' && session.state !== 'completed') session.state = 'cancelled';
+          if (body.durationSeconds !== undefined) session.durationSeconds = Math.max(session.durationSeconds, Math.round(body.durationSeconds));
+        }); respond(200, { ok: true }); return;
+      }
+      if (method === 'GET' && route === '/assistant/history') {
+        needUser(); respond(200, { sessions: sessionsFor(state, user.id).map(({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted }) =>
+          ({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted })).reverse() }); return;
+      }
+      if (method === 'POST' && route === '/family/link') {
+        needUser(); keys(body, ['invitationCode', 'permissions']); const code = text(body.invitationCode, 'invitationCode', 32).toUpperCase();
+        keys(body.permissions, ['progress', 'help']);
+        required(typeof body.permissions.progress === 'boolean' && typeof body.permissions.help === 'boolean', 400, 'invalid_permissions', 'Elegí permisos explícitos de progreso y ayuda.');
+        const permissions = { progress: body.permissions.progress, help: body.permissions.help };
+        const result = await store.update((s) => {
+          required(!s.relationships.some((r) => r.userId === user.id), 409, 'already_linked', 'El dispositivo ya tiene un grupo. Revocá la vinculación anterior.');
+          const invitation = s.invitations.find((i) => same(hash(code), i.codeHash) && !i.usedAt && Date.parse(i.expiresAt) > current);
+          required(invitation, 400, 'invalid_invitation', 'El código no existe, ya se usó o venció.');
+          invitation.usedAt = new Date(current).toISOString();
+          s.relationships.push({ id: randomUUID(), userId: user.id, groupId: invitation.groupId, permissions, createdAt: new Date(current).toISOString() });
+          s.consents.push({ id: randomUUID(), userId: user.id, groupId: invitation.groupId, permissions, acceptedAt: new Date(current).toISOString() });
+          audit(s, 'family_link_accepted', user.id, current);
+          return { group: publicGroup(s.groups.find((g) => g.id === invitation.groupId)), permissions };
+        }); respond(200, result); return;
+      }
+      if (method === 'GET' && route === '/family/me') {
+        needUser(); const relationship = state.relationships.find((r) => r.userId === user.id);
+        respond(200, { group: relationship ? publicGroup(state.groups.find((g) => g.id === relationship.groupId)) : null, permissions: relationship?.permissions ?? { progress: false, help: false } }); return;
+      }
+      if (method === 'DELETE' && route === '/family/link') {
+        needUser(); await store.update((s) => {
+          s.relationships = s.relationships.filter((r) => r.userId !== user.id);
+          for (const consent of s.consents) if (consent.userId === user.id && !consent.revokedAt) consent.revokedAt = new Date(current).toISOString();
+          for (const alert of s.alerts) if (alert.userId === user.id) alert.revokedAt = new Date(current).toISOString();
+          audit(s, 'family_link_revoked', user.id, current);
+        }); respond(200, { ok: true }); return;
+      }
+      if (method === 'POST' && route === '/family/help') {
+        needUser(); keys(body, []);
+        const alertId = await store.update((s) => {
+          const relation = s.relationships.find((r) => r.userId === user.id && r.permissions.help);
+          required(relation, 403, 'help_not_consented', 'Vinculá un familiar y autorizá las solicitudes de ayuda.');
+          const pending = s.alerts.find((a) => a.userId === user.id && a.groupId === relation.groupId && !a.resolvedAt && !a.revokedAt);
+          if (pending) return pending.id;
+          const alert = { id: randomUUID(), userId: user.id, groupId: relation.groupId, type: 'help_requested', message: 'Solicitó acompañamiento desde Nieto.', createdAt: new Date(current).toISOString() };
+          s.alerts.push(alert); return alert.id;
+        }); respond(200, { ok: true, alertId }); return;
+      }
+      if (method === 'GET' && route === '/family/summary') {
+        needGroup(); const relations = state.relationships.filter((r) => r.groupId === group.id);
+        const members = relations.map((r) => { const u = state.users.find((u) => u.id === r.userId); return { id: u.id, name: u.name, permissions: r.permissions, ...(r.permissions.progress ? metricsFor(sessionsFor(state, u.id)) : {}) }; });
+        const helpIds = new Set(relations.filter((r) => r.permissions.help).map((r) => r.userId));
+        const alerts = state.alerts.filter((a) => a.groupId === group.id && !a.revokedAt && helpIds.has(a.userId))
+          .map(({ id, type, message, createdAt, resolvedAt, userId }) => ({ id, type, message, createdAt, resolvedAt,
+            memberId: userId, requesterName: state.users.find((u) => u.id === userId)?.name }));
+        respond(200, { group: publicGroup(group), members, alerts }); return;
+      }
+      const resolveMatch = /^\/family\/alerts\/([a-f0-9-]+)\/resolve$/.exec(route);
+      if (method === 'POST' && resolveMatch) {
+        needGroup(); keys(body, []);
+        await store.update((s) => {
+          const alert = s.alerts.find((a) => a.id === resolveMatch[1] && a.groupId === group.id && !a.revokedAt);
+          required(alert, 404, 'alert_not_found', 'Alerta inexistente.'); alert.resolvedAt ??= new Date(current).toISOString();
+        }); respond(200, { ok: true }); return;
+      }
+      if (method === 'POST' && route === '/family/invitations') {
+        needGroup(); keys(body, []); respond(201, await store.update((s) => inviteFor(s, group.id, current))); return;
+      }
+      throw new ApiError(404, 'not_found', 'Ruta inexistente.');
+    } catch (error) {
+      if (res.headersSent) { res.end(); return; }
+      const known = error instanceof ApiError || error instanceof OpenArgError;
+      if (error.retryAfter !== null && error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
+      respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
+    }
+  };
+  handler.store = store; handler.openarg = openarg; return handler;
+}
+
+export function createServer(options) { return http.createServer(createApp(options)); }
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const port = Number(process.env.API_PORT ?? process.env.PORT) || 8787; const host = process.env.HOST ?? '0.0.0.0';
+  const app = createApp(); await app.store.init(); const server = http.createServer(app);
+  server.listen(port, host, () => console.log(`NIETO API 2.0 en http://${host}:${port} — OpenArg ${app.openarg.status().configured ? 'configurado, pendiente de consulta' : 'pendiente de OPENARG_API_KEY'}`));
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => process.exit(0)));
+}

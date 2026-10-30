@@ -1,0 +1,28 @@
+// Points are approximate provincial-capital references for navigation, not user locations or statistical data.
+export const territories = [
+  { id: 'AR-C', name: 'Ciudad de Buenos Aires', short: 'CABA', point: [-58.44, -34.61] },
+  { id: 'AR-B', name: 'Buenos Aires', short: 'Buenos Aires', point: [-57.95, -34.92] },
+  { id: 'AR-X', name: 'Córdoba', short: 'Córdoba', point: [-64.18, -31.42] },
+  { id: 'AR-S', name: 'Santa Fe', short: 'Santa Fe', point: [-60.70, -31.63] },
+  { id: 'AR-M', name: 'Mendoza', short: 'Mendoza', point: [-68.84, -32.89] },
+  { id: 'AR-T', name: 'Tucumán', short: 'Tucumán', point: [-65.22, -26.83] },
+  { id: 'AR-A', name: 'Salta', short: 'Salta', point: [-65.41, -24.79] },
+  { id: 'AR-E', name: 'Entre Ríos', short: 'Entre Ríos', point: [-60.53, -31.74] },
+  { id: 'AR-H', name: 'Chaco', short: 'Chaco', point: [-58.99, -27.45] },
+  { id: 'AR-U', name: 'Chubut', short: 'Chubut', point: [-65.10, -43.30] },
+  { id: 'AR-K', name: 'Catamarca', short: 'Catamarca', point: [-65.78, -28.47] },
+  { id: 'AR-W', name: 'Corrientes', short: 'Corrientes', point: [-58.83, -27.47] },
+  { id: 'AR-P', name: 'Formosa', short: 'Formosa', point: [-58.18, -26.18] },
+  { id: 'AR-Y', name: 'Jujuy', short: 'Jujuy', point: [-65.30, -24.18] },
+  { id: 'AR-L', name: 'La Pampa', short: 'La Pampa', point: [-64.28, -36.62] },
+  { id: 'AR-F', name: 'La Rioja', short: 'La Rioja', point: [-66.86, -29.41] },
+  { id: 'AR-N', name: 'Misiones', short: 'Misiones', point: [-55.90, -27.37] },
+  { id: 'AR-Q', name: 'Neuquén', short: 'Neuquén', point: [-68.06, -38.95] },
+  { id: 'AR-R', name: 'Río Negro', short: 'Río Negro', point: [-62.99, -40.81] },
+  { id: 'AR-J', name: 'San Juan', short: 'San Juan', point: [-68.53, -31.54] },
+  { id: 'AR-D', name: 'San Luis', short: 'San Luis', point: [-66.34, -33.30] },
+  { id: 'AR-Z', name: 'Santa Cruz', short: 'Santa Cruz', point: [-69.22, -51.62] },
+  { id: 'AR-G', name: 'Santiago del Estero', short: 'Santiago del Estero', point: [-64.26, -27.78] },
+  { id: 'AR-V', name: 'Tierra del Fuego', short: 'Tierra del Fuego', point: [-68.30, -54.80] },
+] as const;
+export type Territory = typeof territories[number];
