@@ -23,6 +23,6 @@ Extracción: «Use case: background-extraction. Remove ONLY the white background
 
 ## Verificación Android
 
-Los recursos se instalaron en el código fuente. Este workspace no tiene JDK ni Android SDK, por lo que no se generó un APK nuevo ni se instaló en un teléfono. El APK existente del compañero no se modifica al cambiar los recursos del repositorio: hay que recompilarlo e instalarlo para ver la nueva identidad en el dispositivo.
+Los recursos se instalaron en el código fuente. Después se preparó un JDK y SDK aislado en `.cache`, se compiló una APK debug y se instaló correctamente en la tablet Samsung SM-X820 del equipo. La identidad TINO se verificó en la bienvenida nativa.
 
-Además, el checkout recibido referencia `org.nieto.assistant.data.LocalSettings` y `org.nieto.assistant.data.NietoApi`, pero no contiene sus archivos fuente. El patrón `data/` del `.gitignore` coincidía con ese paquete; se agregó una excepción limitada al código Android para que no vuelva a omitirlo. El compañero debe incluir esas clases antes de compilar; no se sustituyeron por implementaciones inventadas en este cambio visual.
+El checkout recibido no contenía las clases referenciadas `org.nieto.assistant.data.LocalSettings` y `org.nieto.assistant.data.NietoApi`. Ahora están implementadas con Android Keystore y el contrato real de la API. La excepción limitada de `.gitignore` conserva ese paquete en Git. Ver `docs/TINO-ANDROID.md` para compilación y límites de validación física.

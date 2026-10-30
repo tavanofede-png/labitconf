@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.nieto.assistant.flow.GuidanceEngine
 import org.nieto.assistant.flow.Stage
+import org.nieto.assistant.entry.TinoEntryRoot
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as NietoApp
@@ -41,7 +42,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openAccessibility) } }
+        setContent { NietoTheme { TinoEntryRoot(app) { NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openAccessibility) } } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
     override fun onResume() {

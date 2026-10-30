@@ -9,6 +9,7 @@ import { OpenArgClient, OpenArgError } from './openarg.mjs';
 import { normalizeSearch, normalizeAnswer } from './normalize.mjs';
 import { getTerritoryIndicators } from './territory.mjs';
 import { institutionDashboard, compareProgram, periodFor, summarize } from './institution.mjs';
+import { createAccounts, AccountError } from './accounts.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
@@ -84,10 +85,11 @@ export function createApp({
   store = new JsonStore(dataFile), openarg = new OpenArgClient({ timeoutMs: Number(process.env.OPENARG_TIMEOUT_MS) || 25_000 }),
   institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
   corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
-  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000,
+  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000, accountOptions = {},
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
   const rates = new Map();
+  const accounts = createAccounts({ store, now, ...accountOptions });
   const handler = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -122,6 +124,9 @@ export function createApp({
       }
       const body = await bodyOf(req, maxBodyBytes);
       const method = req.method;
+      const accountResponse = await accounts.handle({ route, method, body, bearer: token, remoteAddress: req.socket.remoteAddress });
+      if (accountResponse) { respond(...accountResponse); return; }
+      const account = token ? await accounts.principal(token) : null;
 
       if (method === 'GET' && route === '/health') {
         const status = openarg.status();
@@ -149,8 +154,8 @@ export function createApp({
 
       const institutional = route.startsWith('/institution/') || route.startsWith('/openarg/');
       if (institutional) {
-        required(institutionToken, 503, 'institution_not_configured', 'Configurá INSTITUTION_TOKEN en el backend para habilitar el portal institucional.');
-        required(same(token, institutionToken), 401, 'unauthorized', 'Token institucional inválido o ausente.');
+        required(institutionToken || account?.institutionApproved, 503, 'institution_not_configured', 'Configurá el acceso institucional autorizado en el backend.');
+        required((institutionToken && same(token, institutionToken)) || account?.institutionApproved, 401, 'unauthorized', 'Acceso institucional inválido o ausente.');
       }
 
       if (method === 'GET' && route === '/openarg/status') {
@@ -239,8 +244,8 @@ export function createApp({
       }
 
       const state = await store.read();
-      const user = token ? state.users.find((u) => same(hash(token), u.tokenHash)) : undefined;
-      const group = token ? state.groups.find((g) => same(hash(token), g.tokenHash)) : undefined;
+      const user = token ? state.users.find((u) => same(hash(token), u.tokenHash) || (account?.role === 'user' && account.deviceId === u.id)) : undefined;
+      const group = token ? state.groups.find((g) => same(hash(token), g.tokenHash) || (account?.role === 'family' && account.groupId === g.id)) : undefined;
       const needUser = () => required(user, 401, 'unauthorized', 'Token de dispositivo inválido o ausente.');
       const needGroup = () => required(group, 401, 'unauthorized', 'Token familiar inválido o ausente.');
       if (method === 'POST' && route === '/usage/batch') {
@@ -304,7 +309,7 @@ export function createApp({
         if (body.sessionId) required(state.sessions.some((s) => s.id === body.sessionId && s.userId === user.id), 404, 'session_not_found', 'Sesión inexistente.');
         const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
         if (/ubicacion|donde estoy|whatsapp|como llegar/.test(normalized)) {
-          respond(200, { mode: 'guided', flowId: 'whatsapp-location', instruction: 'Vamos paso a paso. Abrí WhatsApp y elegí la conversación de confianza. Nieto marcará el siguiente botón solo si reconoce tu pantalla. Vos hacés cada toque; antes de compartir tu ubicación te pedirá confirmación.', sources: [] });
+          respond(200, { mode: 'guided', flowId: 'whatsapp-location', instruction: 'Vamos paso a paso. Abrí WhatsApp y elegí la conversación de confianza. TINO marcará el siguiente botón solo si reconoce tu pantalla. Vos hacés cada toque; antes de compartir tu ubicación te pedirá confirmación.', sources: [] });
         } else {
           respond(200, { mode: 'limited', instruction: 'En esta versión puedo acompañarte a compartir tu ubicación por WhatsApp y pedir ayuda a tu familia. Decime “quiero compartir mi ubicación” para empezar.', sources: [] });
         } return;
@@ -369,7 +374,7 @@ export function createApp({
           required(relation, 403, 'help_not_consented', 'Vinculá un familiar y autorizá las solicitudes de ayuda.');
           const pending = s.alerts.find((a) => a.userId === user.id && a.groupId === relation.groupId && !a.resolvedAt && !a.revokedAt);
           if (pending) return pending.id;
-          const alert = { id: randomUUID(), userId: user.id, groupId: relation.groupId, type: 'help_requested', message: 'Solicitó acompañamiento desde Nieto.', createdAt: new Date(current).toISOString() };
+          const alert = { id: randomUUID(), userId: user.id, groupId: relation.groupId, type: 'help_requested', message: 'Solicitó acompañamiento desde TINO.', createdAt: new Date(current).toISOString() };
           s.alerts.push(alert); return alert.id;
         }); respond(200, { ok: true, alertId }); return;
       }
@@ -380,7 +385,9 @@ export function createApp({
         const alerts = state.alerts.filter((a) => a.groupId === group.id && !a.revokedAt && helpIds.has(a.userId))
           .map(({ id, type, message, createdAt, resolvedAt, userId }) => ({ id, type, message, createdAt, resolvedAt,
             memberId: userId, requesterName: state.users.find((u) => u.id === userId)?.name }));
-        respond(200, { group: publicGroup(group), members, alerts }); return;
+        const joinRequests = account?.id === group.adminAccountId ? (state.familyJoinRequests ?? []).filter(r => r.groupId === group.id && !r.resolvedAt)
+          .map(r => { const applicant = state.accounts.find(a => a.id === r.accountId); return { id: r.id, name: applicant?.profile?.name ?? 'Persona de apoyo', email: applicant?.email, createdAt: r.createdAt }; }) : [];
+        respond(200, { group: publicGroup(group), members, alerts, joinRequests }); return;
       }
       const resolveMatch = /^\/family\/alerts\/([a-f0-9-]+)\/resolve$/.exec(route);
       if (method === 'POST' && resolveMatch) {
@@ -396,7 +403,7 @@ export function createApp({
       throw new ApiError(404, 'not_found', 'Ruta inexistente.');
     } catch (error) {
       if (res.headersSent) { res.end(); return; }
-      const known = error instanceof ApiError || error instanceof OpenArgError;
+      const known = error instanceof ApiError || error instanceof OpenArgError || error instanceof AccountError;
       if (error.retryAfter !== null && error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
       respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
     }

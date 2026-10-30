@@ -149,7 +149,7 @@ class NietoApp : Application() {
 
     fun connect() = work {
         api.register()
-        api.request("/devices/me", "PATCH", JSONObject().put("name", settings.deviceName).put("territoryId", "AR-C"))
+        api.request("/devices/me", "PATCH", JSONObject().put("name", settings.deviceName).put("territoryId", settings.territoryId))
         api.request("/health", authenticated = false)
         refreshFamilyInternal()
         status("Teléfono conectado. Las credenciales quedan cifradas en este dispositivo.")
