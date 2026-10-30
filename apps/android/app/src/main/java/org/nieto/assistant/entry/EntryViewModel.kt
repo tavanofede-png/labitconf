@@ -7,6 +7,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import org.nieto.assistant.data.ApiFailure
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -18,6 +20,8 @@ data class EntryState(
     val page: EntryPage = EntryPage.WELCOME, val role: AccountRole = AccountRole.USER,
     val fields: Map<String, String> = mapOf("territoryId" to "AR-C", "organizationType" to "community"),
     val answers: Map<String, Int> = emptyMap(), val preferences: Map<String, Boolean> = emptyMap(),
+    val profileStep: Int = 0, val usernameEdited: Boolean = false, val usernameStatus: String = "idle",
+    val usernameChecked: String = "", val emailVerified: Boolean = false,
     val familyMode: String = "create", val question: Int = 0, val login: Boolean = false,
     val firstTime: Boolean = true, val accepted: Boolean = false, val busy: Boolean = false,
     val error: String? = null, val message: String? = null, val challengeId: String = "",
@@ -31,6 +35,9 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     val state = mutable.asStateFlow()
     private var job: Job? = null
     private var generation = 0
+    private var usernameJob: Job? = null
+    private var answerJob: Job? = null
+    private var usernameRevision = 0
     private fun restore(): EntryState = runCatching {
         val data = saved.get<String>("entryDraft")?.let(::JSONObject) ?: return EntryState()
         val fields = data.optJSONObject("fields") ?: JSONObject()
@@ -38,7 +45,8 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         val prefs = data.optJSONObject("preferences") ?: JSONObject()
         EntryState(page = EntryPage.valueOf(data.optString("page", "WELCOME")), role = AccountRole.valueOf(data.optString("role", "USER")),
             fields = fields.keys().asSequence().associateWith { fields.getString(it) }, answers = answers.keys().asSequence().associateWith { answers.getInt(it) }.filterValues { it in 0..3 },
-            preferences = prefs.keys().asSequence().associateWith { prefs.getBoolean(it) }, familyMode = data.optString("familyMode", "create"), question = data.optInt("question").coerceIn(0, 2),
+            preferences = prefs.keys().asSequence().associateWith { prefs.getBoolean(it) }, familyMode = data.optString("familyMode", "create"), question = data.optInt("question").coerceIn(0, questionsFor(AccountRole.valueOf(data.optString("role", "USER"))).lastIndex),
+            profileStep = data.optInt("profileStep"), usernameEdited = data.optBoolean("usernameEdited"), emailVerified = app.settings.read("accountSession").isNotBlank(),
             login = data.optBoolean("login"), firstTime = data.optBoolean("firstTime", true))
     }.getOrDefault(EntryState())
     private fun change(block: (EntryState) -> EntryState) {
@@ -48,13 +56,68 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         val safePage = if (s.page == EntryPage.CODE) if (s.login) EntryPage.LOGIN else EntryPage.PROFILE else s.page
         saved["entryDraft"] = JSONObject().put("page", safePage.name).put("role", s.role.name).put("fields", JSONObject(s.fields))
             .put("answers", JSONObject(s.answers)).put("preferences", JSONObject(s.preferences)).put("familyMode", s.familyMode)
-            .put("question", s.question).put("login", s.login).put("firstTime", s.firstTime).toString()
+            .put("profileStep", s.profileStep).put("usernameEdited", s.usernameEdited).put("question", s.question).put("login", s.login).put("firstTime", s.firstTime).toString()
     }
-    fun move(page: EntryPage) { generation++; job?.cancel(); change { it.copy(page = page, busy = false, error = null, message = null, accepted = false) } }
+    fun move(page: EntryPage) { generation++; job?.cancel(); usernameJob?.cancel(); answerJob?.cancel(); change { it.copy(page = page, busy = false, error = null, message = null, accepted = false) } }
     fun start(role: AccountRole) { generation++; job?.cancel(); listOf("accountSession", "caregiverToken", "institutionToken", "installation").forEach { app.settings.write(it, "") }; mutable.value = EntryState(role = role); move(if (role == AccountRole.FAMILY) EntryPage.FAMILY_CHOICE else EntryPage.PROFILE) }
     fun field(key: String, value: String) = change { it.copy(fields = it.fields + (key to value.take(200)), error = null) }
-    fun photo(uri: String) = field("photo", uri)
-    fun answer(index: Int) = change { it.copy(answers = it.answers + (questionsFor(it.role)[it.question].id to index)) }
+    fun photo(uri: String) { field("photo", uri); if (state.value.page == EntryPage.PROFILE && currentProfileStep() == ProfileStep.PHOTO && uri.isNotBlank()) nextProfile() }
+    fun answer(index: Int) {
+        if (state.value.page != EntryPage.QUESTIONS || index !in 0..3) return
+        answerJob?.cancel()
+        val question = state.value.question
+        change { it.copy(answers = it.answers + (questionsFor(it.role)[question].id to index), error = null) }
+        val current = generation
+        answerJob = viewModelScope.launch { delay(220); if (generation == current && state.value.question == question) nextQuestion() }
+    }
+    fun currentProfileStep(): ProfileStep { val s = state.value; val steps = profileStepsFor(s.role, s.emailVerified); return steps[s.profileStep.coerceIn(0, steps.lastIndex)] }
+    fun profileField(key: String, value: String) {
+        if (key == "username") {
+            usernameRevision++; usernameJob?.cancel()
+            change { it.copy(fields = it.fields + (key to value.trim().lowercase(java.util.Locale.ROOT).take(31)), usernameEdited = true, usernameStatus = "idle", usernameChecked = "", error = null) }
+        } else {
+            field(key, if (key == "name") value.take(100) else value)
+            if (key == "name" && !state.value.usernameEdited) change { it.copy(fields = it.fields + ("username" to suggestedUsername(value)), usernameStatus = "idle", usernameChecked = "") }
+        }
+    }
+    fun lookupUsername() {
+        usernameJob?.cancel()
+        val revision = ++usernameRevision
+        val initial = state.value
+        if (initial.page != EntryPage.PROFILE || currentProfileStep() != ProfileStep.USERNAME) return
+        val suggest = !initial.usernameEdited
+        if (!suggest && !validUsername(initial.field("username"))) { change { it.copy(usernameStatus = "invalid") }; return }
+        change { it.copy(usernameStatus = "checking", usernameChecked = "") }
+        val current = generation
+        usernameJob = viewModelScope.launch {
+            delay(350)
+            try {
+                val reply = app.api.request(if (suggest) "/accounts/username/suggest" else "/accounts/username/check", "POST",
+                    JSONObject().put(if (suggest) "name" else "username", initial.field(if (suggest) "name" else "username")),
+                    installationToken = app.settings.read("accountSession"), authenticated = app.settings.read("accountSession").isNotBlank())
+                if (revision == usernameRevision && current == generation) change { it.copy(fields = if (suggest) it.fields + ("username" to reply.getString("username")) else it.fields,
+                    usernameStatus = if (reply.getBoolean("available")) "available" else "taken", usernameChecked = reply.getString("username")) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { if (revision == usernameRevision && current == generation) change { it.copy(usernameStatus = "error", error = "No pude comprobar el usuario. Revisá la conexión y volvé a intentar.") } }
+        }
+    }
+    fun editProfile() { change { it.copy(profileStep = 0) }; move(EntryPage.PROFILE) }
+    fun nextProfile() {
+        val s = state.value
+        val step = currentProfileStep()
+        val error = when (step) {
+            ProfileStep.NAME -> if (s.field("name").trim().isEmpty()) "Decinos cómo te llamás." else null
+            ProfileStep.USERNAME -> if (!validUsername(s.field("username"))) "Usá entre 3 y 30 letras, números, puntos o guiones bajos." else if (s.usernameStatus != "available" || s.usernameChecked != s.field("username")) "Primero necesitamos comprobar que el usuario esté disponible." else null
+            ProfileStep.PHONE -> if (!validPhone(s.field("phone"))) "Ingresá un teléfono válido, con código de área. Es obligatorio." else null
+            ProfileStep.EMAIL -> if (!Patterns.EMAIL_ADDRESS.matcher(s.field("email").trim()).matches()) "Ingresá un correo válido." else null
+            ProfileStep.ORGANIZATION -> if (s.field("organization").isBlank()) "Ingresá el nombre de tu institución." else null
+            else -> null
+        }
+        if (error != null) { change { it.copy(error = error) }; return }
+        val steps = profileStepsFor(s.role, s.emailVerified)
+        if (s.profileStep >= steps.lastIndex) submitProfile()
+        else change { it.copy(profileStep = it.profileStep + 1, error = null, message = null) }
+    }
     fun preference(key: String, enabled: Boolean) = change { it.copy(preferences = it.preferences + (key to enabled)) }
     fun accept(value: Boolean) = change { it.copy(accepted = value) }
     fun firstTime(value: Boolean) = change { it.copy(firstTime = value) }
@@ -74,7 +137,10 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         change { it.copy(busy = true, error = null, message = null) }
         job = viewModelScope.launch {
             try { block() } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { if (generation == current) change { it.copy(error = e.message ?: "No pude completar la acción.") } }
+            catch (e: Exception) { if (generation == current) change {
+                if (e is ApiFailure && e.code == "username_unavailable") it.copy(page = EntryPage.PROFILE, profileStep = profileStepsFor(it.role, it.emailVerified).indexOf(ProfileStep.USERNAME), usernameEdited = true, usernameStatus = "taken", error = e.message)
+                else it.copy(error = e.message ?: "No pude completar la acción.")
+            } }
             finally { if (generation == current) change { it.copy(busy = false) } }
         }
     }
@@ -84,7 +150,8 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             change { it.copy(error = "Completá tu nombre, un correo válido y los datos obligatorios.") }; return
         }
         val username = s.field("username")
-        if (username.isNotBlank() && !Regex("[A-Za-z0-9_.]{3,30}").matches(username)) { change { it.copy(error = "El usuario admite de 3 a 30 letras, números, puntos o guiones bajos.") }; return }
+        if (!validUsername(username)) { change { it.copy(error = "El usuario admite de 3 a 30 letras, números, puntos o guiones bajos.") }; return }
+        if (!validPhone(s.field("phone"))) { change { it.copy(error = "Ingresá tu teléfono. Es obligatorio.") }; return }
         if (app.settings.read("accountSession").isNotBlank()) move(EntryPage.PERMISSIONS) else requestCode()
     }
     fun requestCode() {
@@ -106,7 +173,8 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             val reply = app.api.request("/auth/code/verify", "POST", JSONObject().put("challengeId", s.challengeId).put("code", s.code), authenticated = false)
             require(reply.getString("role") == s.role.wire) { "El acceso no corresponde a este espacio." }
             app.settings.write("accountSession", reply.getString("sessionToken"))
-            change { it.copy(page = if (reply.optBoolean("onboardingRequired", true)) EntryPage.PROFILE else EntryPage.HOME, code = "", challengeId = "") }
+            val hasProfile = s.field("name").isNotBlank() && validUsername(s.field("username")) && validPhone(s.field("phone")) && (s.role != AccountRole.INSTITUTION || s.field("organization").isNotBlank())
+            change { it.copy(page = if (reply.optBoolean("onboardingRequired", true)) if (hasProfile) EntryPage.PERMISSIONS else EntryPage.PROFILE else EntryPage.HOME, profileStep = 0, emailVerified = true, code = "", challengeId = "") }
             if (!reply.optBoolean("onboardingRequired", true)) loadAccount()
         }
     }
@@ -114,6 +182,8 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     fun editQuestion(index: Int) { change { it.copy(question = index) }; move(EntryPage.QUESTIONS) }
     fun back() {
         val s = state.value
+        answerJob?.cancel(); usernameJob?.cancel()
+        if (s.page == EntryPage.PROFILE && s.profileStep > 0) { change { it.copy(profileStep = it.profileStep - 1, error = null) }; return }
         if (s.page == EntryPage.QUESTIONS && s.question > 0) { change { it.copy(question = it.question - 1) }; return }
         move(when (s.page) {
             EntryPage.FIND_PERSON, EntryPage.JOIN_FAMILY -> EntryPage.FAMILY_CHOICE

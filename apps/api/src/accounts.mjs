@@ -8,6 +8,16 @@ export class AccountError extends Error { constructor(status, code, message) { s
 function check(condition, status, code, message) { if (!condition) throw new AccountError(status, code, message); }
 const email = value => { check(typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 400, 'invalid_email', 'Ingresá un correo válido.'); return value.trim().toLowerCase(); };
 const cleanText = (value, max = 100) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const usernamePattern = /^[a-z0-9_.]{3,30}$/;
+const usernameBase = name => cleanText(name, 80).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 24).replace(/\.+$/g, '') || 'usuario';
+const availableUsername = (state, name, accountId) => !(state.accounts ?? []).some(a => a.id !== accountId && a.profile?.username?.toLowerCase() === name.toLowerCase());
+function phoneNumber(value) {
+  check(typeof value === 'string' && value.length <= 40 && /^\+?[\d ()-]+$/.test(value.trim()), 400, 'invalid_phone', 'Ingresá un teléfono válido. Es obligatorio.');
+  const digits = value.replace(/\D/g, '');
+  check(digits.length >= 8 && digits.length <= 15, 400, 'invalid_phone', 'El teléfono debe tener entre 8 y 15 dígitos.');
+  return (value.trim().startsWith('+') ? '+' : '') + digits;
+}
 const equal = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const init = s => { for (const key of ['accounts', 'authChallenges', 'authSessions', 'familyJoinRequests']) s[key] ??= []; };
 
@@ -36,6 +46,20 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       ...(account.pendingGroupId ? { accessStatus: 'group_approval_required' } : {}) };
   }
   async function handle({ route, method, body, bearer, remoteAddress }) {
+    if (method === 'POST' && ['/accounts/username/suggest', '/accounts/username/check'].includes(route)) {
+      const account = await principal(bearer);
+      const state = await store.read();
+      if (route.endsWith('/check')) {
+        const username = cleanText(body.username, 31).toLowerCase();
+        check(usernamePattern.test(username), 400, 'invalid_username', 'Usá entre 3 y 30 letras, números, puntos o guiones bajos.');
+        return [200, { username, available: availableUsername(state, username, account?.id) }];
+      }
+      check(typeof body.name === 'string' && body.name.trim().length > 0 && body.name.length <= 100, 400, 'invalid_name', 'Ingresá tu nombre para generar un usuario.');
+      let base = usernameBase(body.name); if (base.length < 3) base += '.tino';
+      let username = base, suffix = 1;
+      while (!availableUsername(state, username, account?.id)) { suffix++; username = `${base}${suffix}`; }
+      return [200, { username, available: true }];
+    }
     if (method === 'POST' && route === '/auth/code/request') {
       const address = email(body.email); check(roles.includes(body.role), 400, 'invalid_role', 'Elegí un tipo de cuenta válido.');
       check(['login', 'signup', 'family_join'].includes(body.purpose), 400, 'invalid_purpose', 'El motivo del acceso no es válido.');
@@ -92,14 +116,16 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       const profile = Object.fromEntries(['name', 'email', 'username', 'phone', 'birthDate', 'territoryId', 'organization', 'organizationType', 'position'].map(key => [key, cleanText(input[key], key === 'email' ? 254 : 100)]));
       profile.email = account.email;
       check(profile.name && /^AR-[A-Z]$/.test(profile.territoryId), 400, 'invalid_profile', 'Completá el nombre y el territorio.');
-      check(!profile.username || /^[A-Za-z0-9_.]{3,30}$/.test(profile.username), 400, 'invalid_username', 'Revisá el nombre de usuario.');
+      profile.username = profile.username.toLowerCase();
+      check(usernamePattern.test(profile.username), 400, 'invalid_username', 'El nombre de usuario es obligatorio y admite de 3 a 30 letras, números, puntos o guiones bajos.');
+      profile.phone = phoneNumber(input.phone);
       check(account.role !== 'institution' || profile.organization, 400, 'organization_required', 'Ingresá el nombre de la institución.');
       check(questionIds[account.role].every(id => Number.isInteger(body.answers?.[id]) && body.answers[id] >= 0 && body.answers[id] <= 3), 400, 'invalid_answers', 'Respondé todas las preguntas con una opción A, B, C o D.');
       const answers = Object.fromEntries(questionIds[account.role].map(id => [id, body.answers[id]]));
       const preferences = Object.fromEntries(['microphone', 'notifications', 'screen', 'support', 'aggregates'].map(key => [key, body.preferences?.[key] === true]));
       const result = await store.update(s => {
         init(s); const a = s.accounts.find(a => a.id === account.id);
-        check(!profile.username || !s.accounts.some(other => other.id !== a.id && other.role === 'user' && other.profile?.username?.toLowerCase() === profile.username.toLowerCase()), 409, 'username_unavailable', 'Ese nombre de usuario no está disponible.');
+        check(availableUsername(s, profile.username, a.id), 409, 'username_unavailable', 'Ese nombre de usuario ya está en uso. Elegí otro.');
         a.profile = profile; a.preferences = preferences; a.answers = answers; a.onboarded = true;
         let invitation = {};
         if (a.role === 'user') {

@@ -22,7 +22,7 @@ async function fixture(t, overrides = {}) {
     const result = await request('/auth/code/verify', { method: 'POST', body: { challengeId: challenge.body.challengeId, code: codes.get(email) } }); assert.equal(result.status, 200);
     return result.body.sessionToken;
   };
-  const onboard = async (token, email, role = 'user', extra = {}) => request('/accounts/onboarding', { token, method: 'POST', body: { role, profile: { name: email.split('@')[0], email, territoryId: 'AR-C', organization: 'Institución de prueba' }, preferences: {},
+  const onboard = async (token, email, role = 'user', extra = {}) => request('/accounts/onboarding', { token, method: 'POST', body: { role, profile: { name: email.split('@')[0], email, username: email.split('@')[0], phone: '+54 11 1234 5678', territoryId: 'AR-C', organization: 'Institución de prueba' }, preferences: {},
     answers: role === 'user' ? { purpose: 0, interaction: 1, pace: 2, priority: 3 } : role === 'family' ? { relationship: 0, support: 1, frequency: 2, guidance: 3 } : { objective: 0, evidence: 1, work: 2 }, ...extra } });
   return { request, login, onboard, codes, file, advance: ms => { clock += ms; } };
 }
@@ -93,4 +93,46 @@ test('failed delivery never creates a usable code; unconfigured email never clai
   assert.equal(result.status, 502); assert.equal(JSON.parse(await readFile(f.file, 'utf8')).authChallenges.length, 0);
   const unavailable = await fixture(t, { sendCode: null, localDemo: false, resendKey: '', mailFrom: '' });
   assert.equal((await unavailable.request('/auth/code/request', { method: 'POST', body: { email: 'person@example.com', role: 'user', purpose: 'signup' } })).status, 503);
+});
+
+
+test('username suggestions avoid existing accounts across roles and ownership is case-insensitive', async t => {
+  const f = await fixture(t), first = await f.login('first@example.com');
+  const profile = { name: 'José Pérez', email: 'first@example.com', username: 'Jose.Perez', phone: '+54 (11) 1234-5678', territoryId: 'AR-C' };
+  const created = await f.onboard(first, profile.email, 'user', { profile });
+  assert.equal(created.status, 200); assert.equal(created.body.profile.username, 'jose.perez'); assert.equal(created.body.profile.phone, '+541112345678');
+  const check = username => f.request('/accounts/username/check', { method: 'POST', body: { username } });
+  assert.equal((await check('JOSE.PEREZ')).body.available, false);
+  const own = await f.request('/accounts/username/check', { method: 'POST', token: first, body: { username: 'JOSE.PEREZ' } });
+  assert.equal(own.body.available, true);
+  const suggestion = await f.request('/accounts/username/suggest', { method: 'POST', body: { name: 'José Pérez' } });
+  assert.equal(suggestion.body.username, 'jose.perez2'); assert.equal(suggestion.body.available, true);
+  const second = await f.login('second@example.com', 'family');
+  const duplicate = await f.onboard(second, 'second@example.com', 'family', { profile: { ...profile, email: 'second@example.com', username: 'JOSE.PEREZ' } });
+  assert.equal(duplicate.status, 409); assert.equal(duplicate.body.error.code, 'username_unavailable');
+  assert.equal((await f.onboard(first, profile.email, 'user', { profile })).status, 200);
+});
+
+test('phone and username are mandatory and invalid profile data is never persisted', async t => {
+  const f = await fixture(t), token = await f.login('valid@example.com');
+  const profile = { name: 'Test Person', email: 'valid@example.com', username: 'test.person', phone: '+54 11 1234 5678', territoryId: 'AR-C' };
+  for (const phone of [undefined, '', '123', '+1234567890123456', 'call 12345678', 12345678]) {
+    const result = await f.onboard(token, profile.email, 'user', { profile: { ...profile, phone } });
+    assert.equal(result.status, 400); assert.equal(result.body.error.code, 'invalid_phone');
+  }
+  for (const username of [undefined, '', 'ab', 'a'.repeat(31), 'con espacios', 'nombre@usuario']) {
+    const result = await f.onboard(token, profile.email, 'user', { profile: { ...profile, username } });
+    assert.equal(result.status, 400); assert.equal(result.body.error.code, 'invalid_username');
+  }
+  assert.equal((await f.request('/accounts/me', { token })).body.onboardingRequired, true);
+  assert.equal((await f.onboard(token, profile.email, 'user', { profile })).status, 200);
+});
+
+test('two simultaneous signups cannot save the same username', async t => {
+  const f = await fixture(t), one = await f.login('one@example.com'), two = await f.login('two@example.com');
+  const result = await Promise.all([[one, 'one@example.com'], [two, 'two@example.com']].map(([token, email]) =>
+    f.onboard(token, email, 'user', { profile: { name: 'Same name', email, username: 'same.name', phone: '+541112345678', territoryId: 'AR-C' } })));
+  assert.deepEqual(result.map(r => r.status).sort(), [200, 409]);
+  const stored = JSON.parse(await readFile(f.file, 'utf8'));
+  assert.equal(stored.accounts.filter(a => a.profile?.username === 'same.name').length, 1);
 });

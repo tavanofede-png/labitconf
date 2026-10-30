@@ -81,6 +81,10 @@ private val Background = Color(0xFFF3F6F6)
         TinoWelcomeScreen(s, vm::start, vm::login, onConnection = { vm.move(EntryPage.CONNECTION) })
         return
     }
+    if (s.page == EntryPage.PROFILE || s.page == EntryPage.QUESTIONS) {
+        TinoOnboardingScreen(s, vm, pickPhoto = { photo.launch(arrayOf("image/*")) })
+        return
+    }
     if (s.page == EntryPage.HOME && s.role == AccountRole.USER) {
         Column(Modifier.fillMaxSize().background(Background).statusBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -143,23 +147,7 @@ private val Background = Color(0xFFF3F6F6)
                         TextButton(onClick = vm::requestCode, enabled = !s.busy && now >= s.resendAt) { Text(if (now < s.resendAt) "Reenviar en ${(s.resendAt - now) / 1000 + 1} s" else "Reenviar código") }
                         TextButton(onClick = vm::back, enabled = !s.busy) { Text("Cambiar correo") }
                     }
-                    EntryPage.PROFILE -> {
-                        Title("Primero,\nconozcámonos.", when (s.role) { AccountRole.USER -> "Contanos cómo querés que te llamemos. La foto y los datos adicionales son opcionales."; AccountRole.FAMILY -> "Estos datos son tuyos, como persona que acompaña. La otra persona conserva sus permisos."; else -> "Contanos quiénes son y dónde trabajan." })
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            ProfilePhoto(s.field("photo"), s.field("name"))
-                            Column { TextButton(onClick = { photo.launch(arrayOf("image/*")) }, enabled = !s.busy) { Text(if (s.field("photo").isBlank()) "Agregar foto (opcional)" else "Cambiar foto") }; if (s.field("photo").isNotBlank()) TextButton(onClick = { vm.photo("") }) { Text("Quitar foto") } }
-                        }
-                        EntryField("Nombre y apellido", s.field("name"), { vm.field("name", it) }, enabled = !s.busy)
-                        EntryField("Tu correo", s.field("email"), { vm.field("email", it) }, KeyboardType.Email, enabled = !s.busy && app.settings.read("accountSession").isBlank())
-                        EntryField("Nombre de usuario (opcional)", s.field("username"), { vm.field("username", it) }, enabled = !s.busy)
-                        EntryField("Teléfono (opcional)", s.field("phone"), { vm.field("phone", it) }, KeyboardType.Phone, enabled = !s.busy)
-                        TerritorySelector(s.field("territoryId")) { vm.field("territoryId", it) }
-                        if (s.role == AccountRole.INSTITUTION) {
-                            EntryField("Nombre de la institución", s.field("organization"), { vm.field("organization", it) }, enabled = !s.busy)
-                            EntryField("Tu función (opcional)", s.field("position"), { vm.field("position", it) }, enabled = !s.busy)
-                        }
-                        Primary(if (app.settings.read("accountSession").isBlank()) "Verificar mi correo" else "Continuar", !s.busy, vm::submitProfile)
-                    }
+                    EntryPage.PROFILE -> Unit // Dedicated single-question flow.
                     EntryPage.PERMISSIONS -> {
                         Title("Vos elegís\nlos permisos.", "Podés continuar sin habilitar todo. Cada permiso se puede cambiar después.")
                         if (s.role != AccountRole.INSTITUTION) {
@@ -170,17 +158,10 @@ private val Background = Color(0xFFF3F6F6)
                         } else Banner("Tu institución consulta datos agregados por territorio. No accede a conversaciones, capturas ni ubicaciones individuales. El acceso debe estar autorizado por el equipo.")
                         Primary("Personalizar mi experiencia", !s.busy) { vm.move(EntryPage.QUESTIONS) }
                     }
-                    EntryPage.QUESTIONS -> {
-                        val questions = questionsFor(s.role); val question = questions[s.question]
-                        Text("PREGUNTA ${s.question + 1} DE ${questions.size}", color = Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        LinearProgressIndicator(progress = { (s.question + 1).toFloat() / questions.size }, modifier = Modifier.fillMaxWidth(), color = Teal, trackColor = Mint)
-                        Title(question.title, "Elegí la opción que más se acerque a lo que necesitás. Podés cambiarla después.")
-                        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) { question.options.forEachIndexed { index, option -> RadioRow("${'A' + index}. $option", s.answers[question.id] == index, { vm.answer(index) }) } }
-                        Primary(if (s.question == questions.lastIndex) "Revisar mi configuración" else "Siguiente pregunta", s.answers[question.id] != null, vm::nextQuestion)
-                    }
+                    EntryPage.QUESTIONS -> Unit // Dedicated single-question flow.
                     EntryPage.REVIEW -> {
                         Title("Así va a\nacompañarte TINO.", "Revisá tus elecciones antes de guardarlas.")
-                        Surface(color = Mint, shape = RoundedCornerShape(20.dp)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(s.field("name"), fontWeight = FontWeight.Bold); Text(s.field("email"), fontSize = 16.sp); Text(s.role.label, color = Teal); TextButton(onClick = { vm.move(EntryPage.PROFILE) }) { Text("Editar datos") } } }
+                        Surface(color = Mint, shape = RoundedCornerShape(20.dp)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(s.field("name"), fontWeight = FontWeight.Bold); Text("@${s.field("username")}", fontSize = 18.sp); Text(s.field("phone"), fontSize = 16.sp); Text(s.field("email"), fontSize = 16.sp); Text(s.role.label, color = Teal); TextButton(onClick = vm::editProfile) { Text("Editar datos") } } }
                         questionsFor(s.role).forEachIndexed { index, q -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(q.title, color = Muted, fontSize = 16.sp); Text(q.options[s.answers[q.id] ?: 0], fontSize = 18.sp); TextButton(onClick = { vm.editQuestion(index) }) { Text("Cambiar respuesta") }; HorizontalDivider() } }
                         if (s.role == AccountRole.FAMILY) Banner("El vínculo y los permisos requieren aceptación de la persona acompañada. Tu cuenta no controla su teléfono.")
                         CheckRow("Confirmo mis datos y entiendo que puedo cambiar mis preferencias y revocar permisos.", s.accepted, vm::accept)
@@ -254,7 +235,7 @@ private val Background = Color(0xFFF3F6F6)
 @Composable private fun Permission(title: String, detail: String, checked: Boolean, action: (Boolean) -> Unit) { Surface(color = Color.White, shape = RoundedCornerShape(20.dp)) { Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, fontWeight = FontWeight.Bold, fontSize = 20.sp); Text(detail, color = Muted, fontSize = 16.sp, lineHeight = 24.sp) }; Switch(checked, action) } } }
 @Composable private fun TerritorySelector(value: String, select: (String) -> Unit) { var expanded by remember { mutableStateOf(false) }; Column { Text("Provincia o jurisdicción", color = Muted, fontSize = 15.sp); OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = RoundedCornerShape(16.dp)) { Text(entryTerritories.find { it.first == value }?.second ?: "Elegir territorio", Modifier.weight(1f)); Text("⌄") }; DropdownMenu(expanded, { expanded = false }, modifier = Modifier.heightIn(max = 320.dp)) { entryTerritories.forEach { (id, name) -> DropdownMenuItem(text = { Text(name) }, onClick = { select(id); expanded = false }) } } } }
 @Composable private fun Stat(label: String, value: String) { Surface(color = Color.White, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(label, color = Muted, fontSize = 16.sp); Text(value, color = Teal, fontSize = 28.sp, fontWeight = FontWeight.Bold) } } }
-@Composable private fun ProfilePhoto(uri: String, name: String) {
+@Composable internal fun ProfilePhoto(uri: String, name: String) {
     val resolver = LocalContext.current.contentResolver
     val bitmap by produceState<android.graphics.Bitmap?>(null, uri) { value = if (uri.isBlank()) null else withContext(Dispatchers.IO) { runCatching { val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; resolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it, null, bounds) }; val options = BitmapFactory.Options().apply { inSampleSize = (maxOf(bounds.outWidth, bounds.outHeight) / 256).coerceAtLeast(1) }; resolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it, null, options) } }.getOrNull() } }
     Surface(color = Mint, shape = CircleShape, modifier = Modifier.size(76.dp)) { if (bitmap != null) Image(bitmap!!.asImageBitmap(), "Tu foto de perfil", Modifier.clip(CircleShape), contentScale = ContentScale.Crop) else Box(contentAlignment = Alignment.Center) { Text(name.take(1).uppercase().ifBlank { "+" }, color = Teal, fontSize = 30.sp, fontWeight = FontWeight.Bold) } }
