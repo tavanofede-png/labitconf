@@ -67,7 +67,6 @@ private val Paper = Color(0xFFF3F6F6)
                         IconButton(onClick = { closeMenu {} }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Cerrar menú" }) { ChatIcon("close") }
                     }
                     Text("Tu espacio", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 12.dp))
-                    ChatMenuAction("Chat") { closeMenu {} }
                     ChatMenuAction("Mi grupo familiar") { closeMenu(onFamily) }
                     ChatMenuAction("Guías") { closeMenu(onGuides) }
                     ChatMenuAction("Ajustes") { closeMenu(onSettings) }
