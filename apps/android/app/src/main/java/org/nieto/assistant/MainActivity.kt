@@ -37,6 +37,7 @@ import org.nieto.assistant.flow.Stage
 import org.nieto.assistant.entry.TinoEntryRoot
 import org.nieto.assistant.ui.TinoTypography
 import org.nieto.assistant.ui.TinoChatScreen
+import org.nieto.assistant.presence.WakeVoiceService
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as NietoApp
@@ -47,19 +48,25 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { TinoEntryRoot(app) { onLogout -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onLogout) } } }
+        setContent { NietoTheme { TinoEntryRoot(app) { onLogout -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onLogout, ::stopManualVoice) } } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
+    override fun onStart() { super.onStart(); app.foreground(true) }
     override fun onResume() {
         super.onResume()
         val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
         app.screenConnection(enabled.split(':').any { it.contains("org.nieto.assistant/") })
     }
     private fun toggleVoice() {
+        if (app.state.value.wakePhase != "off") {
+            if (app.state.value.wakePhase in listOf("waiting", "command")) startService(Intent(this, WakeVoiceService::class.java).setAction("command"))
+            return
+        }
         if (listening) { recognizer?.stopListening(); listening = false; return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
         else beginListening()
     }
+    private fun stopManualVoice() { recognizer?.cancel(); recognizer?.destroy(); recognizer = null; listening = false }
     private fun beginListening() {
         app.stopSpeaking()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -106,9 +113,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        app.openChat()
         if (app.consumeVoiceRequest()) toggleVoice()
     }
-    override fun onStop() { recognizer?.cancel(); listening = false; super.onStop() }
+    override fun onStop() { recognizer?.cancel(); listening = false; app.foreground(false); super.onStop() }
     override fun onDestroy() { recognizer?.destroy(); recognizer = null; super.onDestroy() }
 }
 
@@ -122,10 +130,11 @@ private val Turquoise = Color(0xFF00D6C9)
         onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
 
-@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onEmail: (EmailDraft?, Boolean) -> Unit, onAccessibility: () -> Unit, onLogout: () -> Unit) {
+@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onEmail: (EmailDraft?, Boolean) -> Unit, onAccessibility: () -> Unit, onLogout: () -> Unit, beforeWakeStart: () -> Unit) {
     val state by app.state.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     var disclosure by remember { mutableStateOf(false) }
+    LaunchedEffect(state.openChatEpoch) { tab = 0 }
     BackHandler(enabled = tab != 0) { tab = 0 }
     val startFlow: (String) -> Unit = { flowId ->
         if (flowId == GuidanceEngine.FLOW_ID) { tab = 2; app.startGuide(onReady = onWhatsApp) }
@@ -133,10 +142,10 @@ private val Turquoise = Color(0xFF00D6C9)
     }
     val reopenTask: () -> Unit = { if (app.state.value.task?.flowId == "email-send") onEmail(null, false) else onWhatsApp() }
     if (tab == 0) {
-        TinoChatScreen(app, state, listening, onVoice,
+        TinoChatScreen(app, state, listening || state.wakePhase == "command", onVoice,
             onStartGuide = startFlow, onOpenTask = reopenTask,
             onFamily = { tab = 1; if (app.settings.token.isNotBlank()) app.refreshFamily() },
-            onGuides = { tab = 2 }, onSettings = { tab = 3 }, onLogout = onLogout)
+            onGuides = { tab = 2 }, onSettings = { tab = 3 }, onLogout = onLogout, beforeWakeStart = beforeWakeStart)
     } else {
         Scaffold(containerColor = WarmWhite, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {

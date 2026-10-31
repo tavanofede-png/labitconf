@@ -257,6 +257,8 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     fun approveMember(id: String) = work { app.api.request("/accounts/family/requests/$id/approve", "POST", JSONObject(), installationToken = app.settings.read("accountSession")); val data = app.api.request("/family/summary", installationToken = app.settings.read("caregiverToken")); change { it.copy(dashboard = data, message = "Incorporación aprobada. Los permisos de las personas acompañadas se conservan.") } }
     fun connect(url: String) = work { app.settings.baseUrl = url; app.api.request("/health", authenticated = false); change { it.copy(message = "Conexión verificada con el servidor.") } }
     fun logout() = work {
+        app.stopPresence()
+        app.stopSpeaking()
         val token = app.settings.read("accountSession")
         if (token.isNotBlank()) app.api.request("/accounts/session", "DELETE", installationToken = token)
         listOf("accountSession", "caregiverToken", "institutionToken", "onboardingComplete", "installation").forEach { app.settings.write(it, "") }

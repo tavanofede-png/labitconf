@@ -2,6 +2,10 @@ package org.nieto.assistant
 
 import android.app.Application
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.content.Intent
+import org.nieto.assistant.presence.FloatingBubbleService
+import org.nieto.assistant.presence.WakeVoiceService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +31,12 @@ data class AppState(
     val task: GuidedTask? = null, val emailDraft: EmailDraft? = null,
     val accessibilityConnected: Boolean = false,
     val overlayEnabled: Boolean = false,
+    val bubbleEnabled: Boolean = false,
+    val wakePhase: String = "off",
+    val presenceNotice: String? = null,
+    val foreground: Boolean = false,
+    val speaking: Boolean = false,
+    val openChatEpoch: Int = 0,
     val familyName: String? = null,
     val shareProgress: Boolean = false,
     val allowHelp: Boolean = false,
@@ -45,6 +55,7 @@ class NietoApp : Application() {
     private var startedAt = 0L
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    private var activeUtterance: String? = null
     private data class QueuedEvent(val sessionId: String, val body: JSONObject, val serverUrl: String, val installationToken: String)
     private val events = Channel<QueuedEvent>(Channel.UNLIMITED)
     private var voiceRequestedFromOverlay = false
@@ -82,14 +93,35 @@ class NietoApp : Application() {
             ttsReady = result == TextToSpeech.SUCCESS
             if (ttsReady) tts?.language = Locale.forLanguageTag("es-AR")
         }
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) { scope.launch { if (utteranceId == activeUtterance) mutable.value = mutable.value.copy(speaking = true) } }
+            override fun onDone(utteranceId: String?) { finishVoice(utteranceId) }
+            @Deprecated("Required Android callback") override fun onError(utteranceId: String?) { finishVoice(utteranceId) }
+            override fun onStop(utteranceId: String?, interrupted: Boolean) { finishVoice(utteranceId) }
+        })
     }
+    private fun finishVoice(id: String?) { scope.launch { if (id == activeUtterance) { activeUtterance = null; mutable.value = mutable.value.copy(speaking = false) } } }
 
     fun status(text: String) { mutable.value = mutable.value.copy(status = text) }
     fun speak(text: String = state.value.guide.notice ?: state.value.guide.instruction) {
-        if (ttsReady) tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nieto_instruction")
+        if (ttsReady) {
+            activeUtterance = UUID.randomUUID().toString()
+            mutable.value = mutable.value.copy(speaking = true)
+            if (tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, activeUtterance) == TextToSpeech.ERROR) finishVoice(activeUtterance)
+        }
         else status("La voz no está lista. Podés leer las instrucciones en pantalla.")
     }
-    fun stopSpeaking() { tts?.stop() }
+    fun stopSpeaking() { activeUtterance = null; tts?.stop(); mutable.value = mutable.value.copy(speaking = false) }
+    fun foreground(visible: Boolean) { mutable.value = mutable.value.copy(foreground = visible) }
+    fun openChat() { mutable.value = mutable.value.copy(openChatEpoch = mutable.value.openChatEpoch + 1) }
+    fun bubbleState(enabled: Boolean) { mutable.value = mutable.value.copy(bubbleEnabled = enabled) }
+    fun wakeState(phase: String) { mutable.value = mutable.value.copy(wakePhase = phase) }
+    fun presenceNotice(text: String?) { mutable.value = mutable.value.copy(presenceNotice = text) }
+    fun stopPresence() {
+        stopService(Intent(this, FloatingBubbleService::class.java))
+        stopService(Intent(this, WakeVoiceService::class.java))
+        mutable.value = mutable.value.copy(bubbleEnabled = false, wakePhase = "off", presenceNotice = null)
+    }
     fun requestVoiceFromOverlay() { voiceRequestedFromOverlay = true }
     fun consumeVoiceRequest(): Boolean = voiceRequestedFromOverlay.also { voiceRequestedFromOverlay = false }
     fun screenPackage(value: String) { if (mutable.value.screenPackage != value) mutable.value = mutable.value.copy(screenPackage = value) }

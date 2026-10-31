@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -44,7 +46,8 @@ private val Paper = Color(0xFFF3F6F6)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit,
-    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onFamily: () -> Unit, onGuides: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
+    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onFamily: () -> Unit, onGuides: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit,
+    beforeWakeStart: () -> Unit) {
     var message by rememberSaveable { mutableStateOf("") }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -67,10 +70,12 @@ private val Paper = Color(0xFFF3F6F6)
                         IconButton(onClick = { closeMenu {} }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Cerrar menú" }) { ChatIcon("close") }
                     }
                     Text("Tu espacio", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 12.dp))
-                    ChatMenuAction("Mi grupo familiar") { closeMenu(onFamily) }
-                    ChatMenuAction("Guías") { closeMenu(onGuides) }
-                    ChatMenuAction("Ajustes") { closeMenu(onSettings) }
-                    Spacer(Modifier.weight(1f))
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                        ChatMenuAction("Mi grupo familiar") { closeMenu(onFamily) }
+                        ChatMenuAction("Guías") { closeMenu(onGuides) }
+                        ChatMenuAction("Ajustes") { closeMenu(onSettings) }
+                        AssistantPermissions(app, state, beforeWakeStart)
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     LogoutButton(enabled = !state.busy) { closeMenu { app.stopSpeaking(); onLogout() } }
                 }

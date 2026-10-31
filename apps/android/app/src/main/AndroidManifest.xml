@@ -3,6 +3,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <queries>
         <package android:name="com.whatsapp" />
         <intent><action android:name="android.intent.action.SENDTO" /><data android:scheme="mailto" /></intent>
@@ -18,9 +22,13 @@
         android:usesCleartextTraffic="${cleartextAllowed}"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
+        <service android:name=".presence.FloatingBubbleService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled floating accessibility assistant shortcut with a visible draggable mascot; no screen observation." />
+        </service>
+        <service android:name=".presence.WakeVoiceService" android:exported="false" android:foregroundServiceType="microphone" />
         <service
             android:name=".screen.NietoAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

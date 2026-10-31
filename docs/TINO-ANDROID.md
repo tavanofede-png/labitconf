@@ -37,7 +37,7 @@ Para recorrer el alta en el mock, **Verificar mi correo** abre «Te llegó un c�
 
 ## Inicio en el chat
 
-En el mock, **Ya tengo cuenta → correo → 000-000** abre directamente el chat de TINO, incluso si antes se inició un alta incompleta con ese correo. El login de demo precarga el perfil; el alta nueva conserva su recorrido separado. El inicio muestra la mascota oficial arriba, el menú lateral que se desliza desde la derecha y el compositor fijo con escritura, voz y envío. El menú abre Chat, Mi grupo familiar, Guías, Ajustes y Cerrar sesión. El inicio anterior con tarjetas y navegación inferior fue reemplazado por esta conversación. Una nueva sesión limpia la conversación anterior en memoria.
+En el mock, **Ya tengo cuenta → correo → 000-000** abre directamente el chat de TINO, incluso si antes se inició un alta incompleta con ese correo. El login de demo precarga el perfil; el alta nueva conserva su recorrido separado. El inicio muestra la mascota oficial arriba, el menú lateral que se desliza desde la derecha y el compositor fijo con escritura, voz y envío. El menú abre Mi grupo familiar, Guías y Ajustes; muestra permisos y Cerrar sesión en rojo con su icono. No ofrece Chat si ya está abierto. El inicio anterior con tarjetas y navegación inferior fue reemplazado por esta conversación. Una nueva sesión limpia la conversación anterior en memoria.
 
 ## Conversación y recorridos de la demo
 
@@ -53,8 +53,23 @@ Contrato de chat: `POST /api/assistant/message` con Bearer de la cuenta, `text`,
 
 ## Verificación actual
 
-Pasan 46 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
+Pasan 46 pruebas de API y 12 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
 
 Verificación física anterior: bienvenida, conexión USB al backend, registro de instalación, ingreso de una consulta por teclado y respuesta visible de la API. Todavía deben verificarse en la tablet el nuevo acceso demo, micrófono, permisos de Accesibilidad y el recorrido real sobre WhatsApp. OpenARG no tiene una clave configurada en esta Mac; no se acreditan datos públicos en vivo.
 
 `scripts/android-viewer.mjs` muestra imágenes en vivo de Android y transfiere toques/teclado al dispositivo seleccionado con `ANDROID_SERIAL`; por defecto usa `emulator-5554`. Solo escucha en loopback y exige origen y nonce para cada acción. En dispositivos físicos no permite cambiar resolución/densidad. Fue validado con la tablet: la orientación de los toques se calcula con las dimensiones de la captura real, no con la orientación natural del dispositivo. No recrea la app con HTML ni usa el frontend React.
+
+
+## Burbuja y «Hola TINO»
+
+El menú del chat muestra dos interruptores independientes arriba de Cerrar sesión. Empiezan apagados. La burbuja usa SYSTEM_ALERT_WINDOW, autorizado en Ajustes de Android; es un acceso flotante y arrastrable con la mascota oficial que abre el chat. No solicita lectura de pantalla. Se oculta dentro de TINO, con el dispositivo bloqueado y cuando la guía de Accesibilidad ya muestra una burbuja. Su servicio foreground declara specialUse y explica el uso en el manifest; este uso requiere revisión al publicar en Google Play.
+
+«Hola TINO» solicita consentimiento, micrófono y notificaciones. presence/WakeVoiceService.kt mantiene un servicio foreground de tipo microphone iniciado desde la app visible. Usa Vosk Android 0.3.75 y el modelo español pequeño 0.42, incluidos en la APK. Detecta la frase localmente, emite un sonido y escucha hasta 15 segundos para la consulta. Solo esa consulta transcrita pasa al chat existente. No se guardan ni transmiten grabaciones ni texto ambiental. Se pausa durante la respuesta y la voz de TINO. El botón de micrófono utiliza el mismo motor si el servicio está activo, para evitar dos consumidores del micrófono.
+
+Ambos servicios se detienen desde el menú o su notificación y al cerrar sesión. No se reinician al arrancar el dispositivo ni tras un cierre forzado; Android puede detenerlos. No reemplazan al asistente predeterminado del sistema ni usan su DSP de bajo consumo. Probar ruido, batería, llamadas y pantalla apagada en la tablet antes de afirmar equivalencia con un asistente del sistema.
+
+Gradle prepareVoiceModel descarga el modelo oficial y verifica SHA-256 09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f. Cachea el ZIP en .cache/voice-models y genera assets fuera de Git. Las licencias viajan en assets. La primera compilación requiere Internet y la APK aumenta de tamaño.
+
+Verificación de voz: tres pruebas de instrumentación con el decodificador Android real y audio sintético generado localmente: reconoce «Hola Tino», rechaza una frase común y reconoce una consulta de correo. No usan el micrófono. Ejecutar assembleDebugAndroidTest, instalar app-debug-androidTest.apk y ejecutar adb shell am instrument -w -r org.nieto.assistant.test/org.nieto.assistant.presence.VoiceSmokeInstrumentation. Esto no sustituye la prueba acústica en la tablet.
+
+Fuentes: https://developer.android.com/develop/background-work/services/fgs/service-types, https://alphacephei.com/vosk/models y https://github.com/alphacep/vosk-android-demo.
