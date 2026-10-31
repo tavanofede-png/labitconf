@@ -81,7 +81,7 @@ export function createApp({
   institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
   corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
   now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000,
-  realtimeBudgetLimits = {},
+  realtimeBudgetLimits = {}, clientAddress = req => req.socket.remoteAddress,
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
   const admission = new RealtimeAdmission(store, { now, limits: realtimeBudgetLimits });
@@ -114,9 +114,10 @@ export function createApp({
       const route = url.pathname.slice(4).replace(/\/$/, '') || '/';
       const token = /^Bearer ([A-Za-z0-9_\-.]+)$/i.exec(req.headers.authorization ?? '')?.[1] ?? '';
       const current = now();
-      // Do not trust X-Forwarded-For without a configured reverse proxy.
+      // The local default ignores forwarding headers. Cloud injects its
+      // platform-specific, validated address resolver explicitly.
       if (rates.size > 5000) for (const [key, value] of rates) if (value.resetAt <= current) rates.delete(key);
-      for (const rateKey of [`ip:${req.socket.remoteAddress}`, ...(token ? [`token:${hash(token)}`] : [])]) {
+      for (const rateKey of [`ip:${clientAddress(req)}`, ...(token ? [`token:${hash(token)}`] : [])]) {
         let rate = rates.get(rateKey);
         if (!rate || rate.resetAt <= current) { rate = { count: 0, resetAt: current + rateWindowMs }; rates.set(rateKey, rate); }
         required(++rate.count <= rateLimit, 429, 'rate_limited', 'Demasiados pedidos. Esperá un minuto.');
@@ -131,7 +132,7 @@ export function createApp({
           transportError: status.transportError, queryError: status.queryError },
           privacy: { minimumCohort, screenStorage: false, conversationStorage: false }, institutionConfigured: Boolean(institutionToken),
           android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null, versionName: apk?.versionName ?? null, versionCode: apk?.versionCode ?? null, sha256: apk?.sha256 ?? null },
-          assistant: { ...realtime.status(), ...admission.status(), maxConnectionsPerOrigin: realtime.maxConnectionsPerOrigin }, storage: 'local_json_single_process' }); return;
+          assistant: { ...realtime.status(), ...admission.status(), maxConnectionsPerOrigin: realtime.maxConnectionsPerOrigin }, storage: store.storageType ?? 'local_json_single_process' }); return;
       }
       if (method === 'POST' && route === '/devices') {
         keys(body, ['name', 'territoryId', 'enrollmentCode']);
@@ -252,9 +253,11 @@ export function createApp({
         const controller = new AbortController();
         const onClose = () => { if (!res.writableEnded) controller.abort(); };
         res.once('close', onClose);
-        try { respond(200, await realtime.reply({ deviceId: user.id, text: message, signal: controller.signal, origin: directOrigin(req.socket.remoteAddress),
-          beforeConnect: () => admission.reserve(user.id, req.socket.remoteAddress, 'http') })); }
-        finally { res.off('close', onClose); }
+        let reservation; let reply;
+        try { reply = await realtime.reply({ deviceId: user.id, text: message, signal: controller.signal, origin: directOrigin(clientAddress(req)),
+          beforeConnect: async () => { reservation = await admission.reserve(user.id, clientAddress(req), 'http'); } }); }
+        finally { res.off('close', onClose); await admission.release(reservation?.leaseId).catch(() => {}); }
+        respond(200, reply);
         return;
       }
       const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
@@ -331,11 +334,11 @@ export function createApp({
       respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
     }
   };
-  handler.store = store; handler.openarg = openarg; handler.realtime = realtime; handler.admission = admission;
+  handler.store = store; handler.openarg = openarg; handler.realtime = realtime; handler.admission = admission; handler.clientAddress = clientAddress;
   handler.authorizeRealtime = async req => {
     const origin = req.headers.origin;
     if (origin && !corsOrigins.includes(origin)) throw new RealtimeError('origin_not_allowed', 'Origen no permitido.', 403);
-    const current = now(); const ip = req.socket.remoteAddress;
+    const current = now(); const ip = clientAddress(req);
     if (realtimeAttempts.size > 1000) for (const [key, value] of realtimeAttempts) if (value.resetAt <= current) realtimeAttempts.delete(key);
     let attempt = realtimeAttempts.get(ip);
     if (!attempt || attempt.resetAt <= current) { attempt = { count: 0, resetAt: current + 60_000 }; realtimeAttempts.set(ip, attempt); }

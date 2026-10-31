@@ -12,10 +12,6 @@ artifacts/
 data/
 apps/android/
 apps/api/data/
-apps/api/src/
-apps/api/scripts/
-apps/api/test/
-apps/api/docs/
 apps/web/dist/
 apps/web/test/
 docs/

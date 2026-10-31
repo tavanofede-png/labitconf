@@ -25,6 +25,7 @@
     "verify:screen": "npm run verify:screen --workspace @nieto/api"
   },
   "overrides": {
-    "rollup": "4.59.0"
+    "rollup": "4.59.0",
+    "zod": "4.6.6"
   }
 }
