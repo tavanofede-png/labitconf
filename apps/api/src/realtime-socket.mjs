@@ -2,7 +2,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { RealtimeError } from './realtime.mjs';
 
 const safeEvent = error => ({ type: 'error', code: error instanceof RealtimeError ? error.code : 'realtime_unavailable',
-  message: error instanceof RealtimeError ? error.message : 'No pude completar la conexión de voz.', fatal: !(error instanceof RealtimeError) || error.fatal });
+  message: error instanceof RealtimeError ? error.message : 'No pude completar la conexión de voz.', fatal: !(error instanceof RealtimeError) || error.fatal,
+  ...(error instanceof RealtimeError && error.code === 'realtime_already_active' ? { retryable: true } : {}) });
 
 /** The mobile protocol is deliberately not an arbitrary proxy to OpenAI events. */
 export function attachRealtimeSocket(server, app) {
@@ -26,9 +27,9 @@ export function attachRealtimeSocket(server, app) {
       wss.handleUpgrade(req, socket, head, async client => {
         let leaseId = null; let releaseJob = null;
         const release = () => {
-          if (!leaseId) return Promise.resolve();
+          if (!leaseId) return Promise.resolve(true);
           if (!releaseJob) {
-            releaseJob = app.admission.release(leaseId).catch(() => {});
+            releaseJob = app.admission.release(leaseId).then(() => true, () => false);
             // Vercel keeps the durable release alive after client disconnect.
             // A crash still leaves only a bounded, expiring lease.
             try { app.defer?.(releaseJob); } catch { /* Expiration remains a safe fallback. */ }
@@ -48,7 +49,7 @@ export function attachRealtimeSocket(server, app) {
         }
         catch (error) { conversation?.close(); release(); if (client.readyState === WebSocket.OPEN) { client.send(JSON.stringify(safeEvent(error))); client.close(1008, 'Conversación no disponible'); } return; }
         clients.add(client);
-        let stopped = false; let windowStart = Date.now(); let messageCount = 0; let leaseCheck = null; let checkingLease = false;
+        let stopped = false; let windowStart = Date.now(); let messageCount = 0; let leaseCheck = null; let checkingLease = false; let ending = null;
         const send = event => {
           if (stopped || client.readyState !== WebSocket.OPEN) return;
           if (client.bufferedAmount > 512_000) { stop(1013, 'La reproducción no sigue el ritmo de la conexión.'); return; }
@@ -59,15 +60,24 @@ export function attachRealtimeSocket(server, app) {
           clearInterval(leaseCheck);
           const released = release();
           conversation.close(); clients.delete(client);
+          let releaseConfirmed = !leaseId;
           if (leaseId && client.readyState === WebSocket.OPEN) {
             let timer;
-            await Promise.race([released, new Promise(resolve => { timer = setTimeout(resolve, 20_000); timer.unref?.(); })]);
+            releaseConfirmed = await Promise.race([released, new Promise(resolve => { timer = setTimeout(() => resolve(false), 20_000); timer.unref?.(); })]);
             clearTimeout(timer);
           }
-          if (client.readyState === WebSocket.OPEN) client.close(code, reason);
+          if (client.readyState === WebSocket.OPEN) {
+            // The end acknowledgement means the previous durable slot is free.
+            // Sending it earlier races the next "Hola Tino" on another instance.
+            if (ending && releaseConfirmed) client.send(JSON.stringify(ending));
+            client.close(ending && !releaseConfirmed ? 1013 : code, ending && !releaseConfirmed ? 'Cierre de conexión en curso' : reason);
+          }
           else if (client.readyState !== WebSocket.CLOSED) client.terminate();
         };
-        conversation.on('event', event => { send(event); if (event.type === 'error' && event.fatal) stop(1011, 'Conexión de voz interrumpida'); });
+        conversation.on('event', event => {
+          if (event.type === 'conversation.ended') { ending = event; return; }
+          send(event); if (event.type === 'error' && event.fatal) stop(1011, 'Conexión de voz interrumpida');
+        });
         conversation.once('closed', details => { void stop(1000, details?.renewable ? 'Renovación de conexión' : 'Conversación cerrada'); });
         if (leaseId) {
           leaseCheck = setInterval(async () => {
@@ -79,6 +89,7 @@ export function attachRealtimeSocket(server, app) {
           leaseCheck.unref?.();
         }
         client.on('message', (raw, binary) => {
+          if (stopped) return;
           try {
             if (binary) throw new RealtimeError('invalid_realtime_message', 'Usá mensajes JSON para la conversación.', 400, false);
             if (Date.now() - windowStart > 10_000) { windowStart = Date.now(); messageCount = 0; }

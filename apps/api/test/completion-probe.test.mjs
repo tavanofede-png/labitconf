@@ -109,3 +109,13 @@ test('busy turns defer probes; timeout and close bound memory without polling or
 test('default budget policy cannot start autonomous provider checks', t => {
   const f = fixture(t, { enabled: false }); f.start(); assert.equal(f.sent.length, 0);
 });
+
+test('a real reduced baseline resumes observation without making the old screen current or requiring a second snapshot', t => {
+  const f = fixture(t); const before = f.state.screen;
+  f.state.screen = null; f.probe.observe(); f.probe.activity(before);
+  assert.equal(f.state.screen, null); t.mock.timers.tick(500); assert.equal(f.sent.length, 0);
+  f.change(screen('after_reconnect', 'Operación de prueba completada')); t.mock.timers.tick(2000);
+  const input = JSON.parse(f.sent[0].response.input[0].content[0].text);
+  assert.equal(input.BEFORE.id, 'before'); assert.equal(input.AFTER.id, 'after_reconnect');
+  assert.equal(f.state.screen.id, 'after_reconnect');
+});

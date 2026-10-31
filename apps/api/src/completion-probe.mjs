@@ -24,11 +24,12 @@ export class CompletionProbe {
     this.lastProbeAt = -Infinity; this.screenDigest = null; this.screenChangedAt = now();
     this.probes = new Map(); this.responseIds = new Map(); this.active = null;
   }
-  activity() {
+  activity(baseline) {
     this.cancel();
     const state = this.current();
     if (!this.enabled || this.closed || !state.task?.goal) return;
-    this.action = { id: ++this.sequence, at: this.now(), before: reduced(state.screen), beforeDigest: digest(state.screen) };
+    const before = baseline ?? state.screen;
+    this.action = { id: ++this.sequence, at: this.now(), before: reduced(before), beforeDigest: digest(before) };
     this.schedule();
   }
   observe() {

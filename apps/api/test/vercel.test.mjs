@@ -138,6 +138,54 @@ test('cloud concurrency leases enforce shared device, origin and global caps, th
   assert.equal(JSON.stringify((await a.read()).realtimeLeases).includes('origin-a'), false);
 });
 
+test('explicit end acknowledges only after durable release, so an immediate new wake on another instance cannot inherit the old lease', async t => {
+  const client = durableClient(); const stores = [0, 1].map(() => new BlobStore({ client, sleep: async () => {} }));
+  let providerConnects = 0;
+  class EndableConversation extends TestConversation {
+    async connect() { providerConnects++; return super.connect(); }
+    handleClient(event) {
+      if (event.type !== 'close') return;
+      this.emit('event', { type: 'task.context', context: { goal: '', targetApp: '', progress: '', expectsReply: false } });
+      this.emit('event', { type: 'conversation.ended', reason: 'user_end' }); this.close();
+    }
+  }
+  const servers = stores.map(store => createCloudServer({ store, institutionToken: 'operator-test', continuousAssistance: true,
+    openarg: new OpenArgClient({ apiKey: '' }), realtime: new RealtimeService({ apiKey: 'not-a-real-key', continuous: true, conversationFactory: () => new EndableConversation() }) }));
+  await Promise.all(servers.map(server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve))));
+  const sockets = []; let unblockRelease;
+  const gate = new Promise(resolve => { unblockRelease = resolve; });
+  t.after(async () => { unblockRelease(); for (const socket of sockets) socket.terminate(); for (const server of servers) server.closeRealtime(); await Promise.all(servers.map(server => new Promise(resolve => server.close(resolve)))); });
+  const bases = servers.map(server => `http://127.0.0.1:${server.address().port}`);
+  const post = async (path, body, token) => {
+    const response = await fetch(bases[0] + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+    assert.ok(response.ok); return response.json();
+  };
+  const invitation = await post('/api/institution/device-invitations', {}, 'operator-test');
+  const device = await post('/api/devices', { name: 'Synthetic close race', territoryId: 'AR-C', enrollmentCode: invitation.enrollmentCode });
+  const connect = async instance => {
+    const socket = new WebSocket(bases[instance].replace('http:', 'ws:') + '/api/assistant/realtime', { headers: { Authorization: `Bearer ${device.token}` } }); sockets.push(socket);
+    const received = []; socket.on('message', raw => received.push(JSON.parse(raw.toString())));
+    const first = once(socket, 'message'); await once(socket, 'open'); await first; return { socket, received };
+  };
+  const initial = await connect(0); assert.equal(initial.received[0].type, 'ready');
+  const admission = servers[0].listeners('request')[0].admission;
+  const originalRelease = admission.release.bind(admission); let releasing;
+  const releaseStarted = new Promise(resolve => { releasing = resolve; });
+  admission.release = async leaseId => { releasing(); await gate; return originalRelease(leaseId); };
+  const oldLease = (await stores[0].read()).realtimeLeases[0].id;
+  initial.socket.send(JSON.stringify({ type: 'close' })); await releaseStarted;
+  assert.equal(initial.received.some(event => event.type === 'conversation.ended'), false); assert.equal(initial.socket.readyState, WebSocket.OPEN);
+  const blocked = await connect(1); assert.equal(blocked.received[0].code, 'realtime_already_active'); assert.equal(blocked.received[0].retryable, true);
+  assert.equal(providerConnects, 1); assert.equal((await stores[1].read()).realtimeLeases.length, 1);
+  const acknowledged = once(initial.socket, 'message'); unblockRelease();
+  const [rawAck] = await acknowledged; assert.equal(JSON.parse(rawAck.toString()).type, 'conversation.ended');
+  assert.equal((await stores[1].read()).realtimeLeases.length, 0);
+  const next = await connect(1); assert.equal(next.received[0].type, 'ready'); assert.equal(providerConnects, 2);
+  const newLease = (await stores[0].read()).realtimeLeases[0].id; assert.notEqual(newLease, oldLease);
+  await originalRelease(oldLease); assert.equal((await stores[1].read()).realtimeLeases[0].id, newLease);
+  next.socket.send(JSON.stringify({ type: 'close' }));
+});
+
 test('operator-authorized continuous mode removes daily cuts while preserving history, admission and shared concurrency', async () => {
   const client = durableClient(); const store = new BlobStore({ client, sleep: async () => {} });
   const previousUsage = { day: '2026-10-30', devices: {}, origins: {}, global: { turns: 9999, seconds: 99999, contexts: 9999 } };

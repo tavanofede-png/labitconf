@@ -32,6 +32,8 @@ Solo dentro del runtime Vercel se utiliza su encabezado de IP de ingreso, valida
 
 El transporte cloud dura como máximo 270 segundos; la lease vence a los 300 ante una caída. `waitUntil` conserva el trabajo de liberación después de desconectar. Un cierre normal iniciado por el servidor espera su liberación antes de cerrar el socket. HTTP libera antes de responder y su lease vence a los 75 segundos. Una escritura fallida no concede conexiones adicionales.
 
+La confirmación `conversation.ended` también espera la liberación duradera. Así, terminar y activar «Hola Tino» inmediatamente no reserva contra la lease anterior. El cliente solicita el fin con `close`, espera confirmación o cierre y trata `realtime_already_active` con `retryable:true` como transitorio únicamente antes de enviar entrada. El error puede llegar como JSON tras el upgrade. No se elimina una lease ajena ni se permite dos sesiones por dispositivo; una liberación tardía solo afecta su ID original. Si la liberación falla, no se confirma falsamente el cierre y se conserva la caducidad segura.
+
 No se guarda voz, pantalla, conversación ni resumen de tarea en Blob. El resumen existe solamente en RAM del cliente y de la conexión durante la consulta activa y su rotación técnica; no es un historial persistido.
 
 ## Fin de conversación e inactividad
@@ -42,7 +44,9 @@ El servidor aplica ese plazo sin refrescarlo por snapshots, limpieza de pantalla
 
 `expectsReply` es informativo: no inicia una captura automática ni una nueva llamada al proveedor. La persona activa cada consulta con «Hola Tino» o una acción explícita. Cambiar de aplicación no pide una respuesta ni conserva una sesión sin interacción.
 
-`user.activity` solo contiene `type` y un `kind` cerrado (`tap`, `scroll`, `text`, `navigation`), sin valores ni contenido de pantalla. Se agrupan ráfagas y se limita su frecuencia. El evento no crea conversaciones, no invoca al proveedor, no cambia la admisión y no revive un contexto vencido.
+`user.activity` requiere `type` y un `kind` cerrado (`tap`, `scroll`, `text`, `navigation`), sin texto escrito ni valores editables. Opcionalmente acepta `baseline` con controles reducidos y saneados de la pantalla real anterior al reconectar observación, sin imágenes; nunca se usa como pantalla actual. Se agrupan ráfagas y se limita su frecuencia. El evento no crea conversaciones, no invoca por sí solo al proveedor, no cambia la admisión y no revive un contexto vencido.
+
+El cliente puede recuperar la observación silenciosa tras la rotación técnica o una nueva acción real, con objetivo en RAM todavía vigente. La nueva conexión pasa la misma autenticación y reserva duradera, y no reinicia el idle por transmitir pantallas o reconectar. No se reabre una conversación terminada o vencida ni se abre el micrófono automáticamente.
 
 Cuando el modelo reconoce un pedido de dejar de hablar o evidencia real de que terminó el objetivo completo, vacía la tarea y señala `endReason:user_end` o `task_completed`. El servidor publica el contexto vacío y `conversation.ended`, cancela salida pendiente y cierra sin pedir una respuesta adicional ni despedida. Un paso intermedio no implica completar la tarea. La razón terminal no se conserva en el resumen ni concede permisos o acciones.
 

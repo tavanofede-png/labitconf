@@ -2,6 +2,8 @@
 
 Modelo fijo `gpt-realtime-2.1-mini`; `OPENAI_API_KEY` solo existe en el backend. TINO acompaña la intención de la persona a través de aplicaciones, ajustes y trámites del teléfono. La app visible es una observación, no define el objetivo ni limita las tareas.
 
+La conversación general es libre y responde al turno actual con el detalle necesario. La indicación de una acción por respuesta se aplica al guiar una tarea práctica. No se fuerzan saludos, preguntas iniciales, guiones ni fórmulas de respuesta. La voz corresponde al audio real del modelo; diagnósticos de transporte y admisión son estado técnico, no respuestas habladas mediante TTS local.
+
 La persona hace cada toque. `point_to_control` solo señala IDs vigentes de una pantalla real. Ninguna herramienta pulsa, abre aplicaciones, completa campos o ejecuta envíos. Sin un control observable TINO puede orientar verbalmente, por ejemplo volver a Inicio mediante el botón o gesto observado. No inventa coordenadas ni considera los hints de apps un inventario exhaustivo. Puede responder preguntas generales sin pantalla.
 
 ## Activación y silencio
@@ -33,7 +35,7 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
 | `text` con `text` | Consulta de hasta 1.000 caracteres, en la modalidad elegida. |
 | `screen.context` | Reemplaza la observación. Con `requestGuidance:false` solo actualiza. Durante captura no genera respuesta, incluso si llega `true`. |
 | `screen.clear` | Retira snapshot y targets anteriores, conservando una captura en curso. |
-| `user.activity` con `kind:"tap"`, `"scroll"`, `"text"` o `"navigation"` | Informa una acción real y reinicia los 30 segundos de una conversación activa; no contiene valores, texto escrito, IDs ni coordenadas. No pide respuesta, abre conexión ni revive una conversación vencida. |
+| `user.activity` con `kind:"tap"`, `"scroll"`, `"text"` o `"navigation"` | Informa una acción real y reinicia los 30 segundos de una conversación activa; no lleva el texto escrito. Puede incluir `baseline` reducido de la pantalla real anterior al reconectar observación. No pide respuesta, abre conexión ni revive una conversación vencida. |
 | `resume.context` con `context` | Restaura el resumen al rotar una conexión durante una consulta activa, antes de su primer turno; no pide una respuesta. Nunca se usa después de terminar o de 30 segundos de inactividad. |
 | `cancel` con `playback` opcional | Cancela el turno y limpia captura y reproducción pendientes. |
 | `playback.complete` con `turnId` | Confirma que el audio se terminó de reproducir realmente. |
@@ -57,7 +59,7 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
 ```
 
 - `renewal.required`: incluye `reason:"transport_rotation"` y `session`. Es una indicación técnica de renovación durante una consulta activa, no voz ni error de tarea. No se emite para inactividad.
-- `conversation.ended`: incluye `reason:"idle"`, `"user_end"` o `"task_completed"`; exige descartar el resumen, cortar salida pendiente y no reconectar ni retomar esa conversación automáticamente. Lo precede un `task.context` vacío y sigue un cierre normal.
+- `conversation.ended`: incluye `reason:"idle"`, `"user_end"` o `"task_completed"`; exige descartar el resumen, cortar salida pendiente y no retomar esa conversación automáticamente. Lo precede un `task.context` vacío. El transporte retiene esta confirmación hasta liberar la lease duradera y después cierra normalmente: la siguiente activación ya puede reservar otra sesión.
 - `task.context`: comunica `context` actualizado por el modelo.
 - `response.started`: identifica `turnId` y `outputMode`.
 - `audio.delta`: incluye `turnId`, `itemId`, `contentIndex` y audio PCM base64.
@@ -66,6 +68,8 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
 - `response.done`: contiene `turnId`, `status` y `expectsReply`. Terminar generación no significa terminar reproducción ni completar la tarea.
 - `cancelled`: descarta la salida parcial cancelada.
 - `error`: código, mensaje redactado y `fatal`, sin claves, headers, objetos de proveedor ni transcripción de entrada.
+
+Al terminar explícitamente, Android envía `{"type":"close"}` y espera la confirmación o cierre del socket antes de la siguiente conexión; cancela audio y memoria local de inmediato y puede conservar una nueva activación pendiente. Una desconexión abrupta todavía puede dejar una liberación en curso. `realtime_already_active` puede llegar como JSON después del upgrade, con `retryable:true`: solo antes de iniciar captura o enviar entrada se admite un reintento acotado. No se repite audio ni se borra la lease de otra sesión. Si no se pudo confirmar la liberación, no se emite una confirmación de fin falsa; el transporte cierra con código 1013.
 
 `expectsReply` corresponde únicamente al turno recién terminado y comienza en `false`. Es información sobre la respuesta del modelo: no autoriza una captura, no reactiva el micrófono ni renueva el plazo de inactividad. La siguiente consulta requiere «Hola Tino» o una acción explícita de la persona. Retomar un resumen fuerza `expectsReply:false`.
 
@@ -90,7 +94,11 @@ Android conserva ese objeto solamente en RAM durante la consulta activa y su rot
 
 La caducidad del servidor también usa 30 segundos por defecto y no se refresca con snapshots, limpieza de pantalla, configuración ni mensajes inválidos. Mientras hay captura, generación o reproducción pendiente, espera que esa actividad termine. La reproducción tiene además una espera acotada por la duración máxima del audio y un margen de red si se pierde su confirmación: ningún paquete de finalización ausente conserva memoria indefinidamente.
 
-`user.activity` tiene exactamente dos propiedades: `type` y `kind`. Solo se acepta para una conversación ya iniciada o retomada; una conexión preparada sin consulta no conserva memoria por esos mensajes. Android agrupa ráfagas con intervalo mínimo de 300 ms y conserva su último evento. Cada evento válido recibido reinicia el plazo; el servidor agrupa el trabajo de evaluación con intervalo mínimo de 250 ms y conserva el límite global de frecuencia del socket. Una actividad recibida después del vencimiento termina la conversación en vez de resucitarla. El evento no se reenvía al modelo ni se persiste.
+`user.activity` requiere `type` y `kind` y admite únicamente `baseline` como dato opcional. Solo se acepta para una conversación ya iniciada o retomada; una conexión preparada sin consulta no conserva memoria por esos mensajes. Android agrupa ráfagas con intervalo mínimo de 300 ms y conserva su último evento. Cada evento válido recibido reinicia el plazo; el servidor agrupa el trabajo de evaluación con intervalo mínimo de 250 ms y conserva el límite global de frecuencia del socket. Una actividad recibida después del vencimiento termina la conversación en vez de resucitarla. El evento no se reenvía al modelo ni se persiste.
+
+`baseline` usa `{id,packageName,width,height,controls}` con los mismos límites, saneamiento y redacción de controles que `screen.context`; rechaza imágenes y cualquier propiedad adicional. Es exclusivamente la pantalla real observada antes de esa acción. Nunca se convierte en la pantalla actual ni se usa para señalar. Después de una rotación, el cliente puede enviar `resume.context`, `user.activity` con ese baseline y un único `screen.context` fresco con `requestGuidance:false`, sin presentar una pantalla vieja como actual ni enviar dos snapshots separados por 750 ms. El formato anterior de dos propiedades sigue siendo válido.
+
+La observación puede recuperar su transporte silenciosamente al rotar o cuando una acción real ocurre con la conexión cerrada, siempre que exista una tarea en RAM todavía vigente. No requiere otro saludo para seguir observando esa misma tarea, no abre captura ni produce una respuesta hablada. El plazo local no se reinicia por reconectar o enviar frames: después de terminar o de 30 segundos sin actividad no se retoma ninguna tarea. Sin un baseline real, se espera otra acción con contexto observado; no se inventa uno.
 
 ## Evaluación silenciosa de finalización
 

@@ -752,6 +752,23 @@ test('a user request cancels an unacknowledged probe and late probe metadata can
   assert.equal(conversation.turns, 1); assert.equal(conversation.pendingResponses.length, 0);
 });
 
+test('activity accepts a sanitized reduced baseline after reconnection but rejects images, extra fields and invalid controls', async t => {
+  const upstream = await fakeOpenAi(t, () => {});
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'resume.context', context: { goal: 'Completar la operación de prueba', targetApp: 'Prueba', progress: 'Falta confirmar' } });
+  const baseline = { ...screen(), controls: [{ ...screen().controls[0], id: 'private_input', label: 'un valor privado', role: 'input' }] };
+  const activityAt = conversation.lastActivityAt;
+  for (const invalidBaseline of [null, { ...baseline, image: {} }, { ...baseline, navigation: {} }, { ...baseline, execute: 'tap' }, { ...baseline, controls: [{ ...baseline.controls[0], bounds: [-1, 0, 20, 20] }] }]) {
+    assert.throws(() => conversation.handleClient({ type: 'user.activity', kind: 'tap', baseline: invalidBaseline }), error => error.code === 'invalid_realtime_message');
+  }
+  assert.equal(conversation.lastActivityAt, activityAt); assert.equal(conversation.completionProbe.action, null);
+  conversation.handleClient({ type: 'user.activity', kind: 'tap', baseline });
+  assert.equal(conversation.screen, null); assert.equal(conversation.completionProbe.action.before.controls[0].label, 'Campo de texto');
+  assert.equal(conversation.completionProbe.action.before.controls[0].redacted, true);
+  assert.equal(output.seen.some(event => event.type === 'response.started'), false);
+});
+
 test('idle expiry waits for active recording and generation, then counts from the completed response', async t => {
   let finishResponse; let activityClock = 100_000;
   const upstream = await fakeOpenAi(t, (socket, event, helper) => { finishResponse = () => helper.sendResponse(socket, event); });
