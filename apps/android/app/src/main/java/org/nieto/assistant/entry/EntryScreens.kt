@@ -91,7 +91,7 @@ private val Background = Color(0xFFF3F6F6)
     }
     BackHandler(enabled = s.page != EntryPage.WELCOME && s.page != EntryPage.HOME) { vm.back() }
     if (s.page == EntryPage.WELCOME) {
-        TinoWelcomeScreen(s, vm::start, vm::login, onConnection = { vm.move(EntryPage.CONNECTION) })
+        TinoWelcomeScreen(s, vm::start, vm::login)
         return
     }
     if (s.page == EntryPage.PROFILE || s.page == EntryPage.QUESTIONS) {
