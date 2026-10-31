@@ -22,6 +22,8 @@ Abrí el enlace en **Chrome**, desde desktop o tablet. La app se presenta en una
 - «Hola TINO, quiero compartir mi ubicación».
 - «Hola TINO, quiero mandar un correo por Gmail».
 
+Los **recuadros verdes** muestran el control del próximo paso. TINO empieza señalando la app en Android y continúa por voz después de cada acción: abrir, elegir contactos, escribir y confirmar. WhatsApp permite mandar mensajes, crear grupos y compartir una ubicación; Gmail permite redactar, revisar y enviar un correo desde la bandeja.
+
 El chat flotante se abre **solo al tocar la burbuja**. La burbuja aparece **fuera de TINO** y se puede arrastrar a los márgenes. **−** minimiza y conserva la conversación; **×** la cierra y la borra. Al volver a TINO, la burbuja se oculta.
 
 ## Tres interfaces, una misma app

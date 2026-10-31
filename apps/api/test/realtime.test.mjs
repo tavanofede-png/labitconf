@@ -141,6 +141,23 @@ test('an HTTP voice turn cannot claim speech when the provider only returned tex
   assert.equal(service.active.size, 0);
 });
 
+test('guide narration uses the same real voice model, reads its fixed step and disables task tools', async t => {
+  const sentence='Tocá el signo más de la esquina superior derecha.';
+  const upstream=await fakeOpenAi(t,(socket,event)=>{
+    const id='guide-voice';
+    socket.send(JSON.stringify({type:'response.created',response:{id,metadata:event.response.metadata}}));
+    socket.send(JSON.stringify({type:'response.output_audio.delta',response_id:id,item_id:'guide-item',delta:Buffer.alloc(4800).toString('base64')}));
+    socket.send(JSON.stringify({type:'response.output_audio_transcript.done',response_id:id,transcript:sentence}));
+    socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[]}}));
+  });
+  const service=new RealtimeService({apiKey:'test-key',conversationOptions:{endpoint:upstream.endpoint}});t.after(()=>service.close());
+  const result=await service.reply({deviceId:'guide-device',text:sentence,narrationText:sentence,outputMode:'audio'});
+  const config=upstream.messages.find(event=>event.type==='session.update').session;
+  assert.equal(result.model,REALTIME_MODEL);assert.equal(result.audio.mimeType,'audio/wav');
+  assert.deepEqual(config.tools,[]);assert.equal(config.tool_choice,'none');assert.ok(config.instructions.includes(sentence));
+  assert.equal(service.active.size,0);
+});
+
 test('a partially generated voice reply is rejected when the provider did not complete it', async t => {
   const upstream = await fakeOpenAi(t, (socket, event) => {
     const id = 'cut-off-voice';

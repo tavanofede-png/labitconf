@@ -10,6 +10,7 @@ try{
  await page.getByRole('button',{name:'DEMO',exact:true}).click();
  await page.getByRole('button',{name:'Salir de TINO al inicio de Android'}).click();
  await page.getByRole('button',{name:'Abrir WhatsApp',exact:true}).click();
+ await page.getByRole('button',{name:'Nuevo chat',exact:true}).click();
  await page.getByRole('button',{name:'Nuevo grupo',exact:true}).click();
  for(const name of ['Lucía','Ana','Pedro','Martín'])assert.equal(await page.locator('.jp-selection').getByRole('button',{name,exact:true}).count(),1);
  assert.equal(await page.locator('.jp-selection .jp-avatar:visible').count(),4);

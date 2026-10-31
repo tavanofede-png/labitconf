@@ -51,7 +51,7 @@ export class RealtimeConversation extends EventEmitter {
   constructor({ apiKey, deviceId = 'verification', mode = 'audio', endpoint = 'wss://api.openai.com/v1/realtime',
     socketFactory = (url, options) => new WebSocket(url, options), connectTimeoutMs = 15_000,
     responseTimeoutMs = 60_000, idleTimeoutMs = 30_000, maxSessionMs = 10 * 60_000, maxTurns = 20,
-    continuous = false, renewAfterMs, now = Date.now, activityNow = Date.now, completionProbeOptions = {}, maxOutputTokens = 800,
+    continuous = false, renewAfterMs, now = Date.now, activityNow = Date.now, completionProbeOptions = {}, maxOutputTokens = 800, narrationText = '',
   } = {}) {
     super();
     const url = new URL(endpoint);
@@ -60,6 +60,8 @@ export class RealtimeConversation extends EventEmitter {
     if ((!openAi && !localTest) || url.username || url.password || url.hash) throw new Error('Endpoint Realtime no permitido.');
     if (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 2048) throw new Error('Límite de respuesta no válido.');
     this.maxOutputTokens = maxOutputTokens;
+    if (typeof narrationText !== 'string' || narrationText.length > 600) throw new Error('Narración no válida.');
+    this.narrationText = narrationText;
     this.apiKey = apiKey; this.deviceId = deviceId; this.mode = mode; this.endpoint = endpoint; this.socketFactory = socketFactory;
     this.connectTimeoutMs = connectTimeoutMs; this.responseTimeoutMs = responseTimeoutMs; this.idleTimeoutMs = Math.max(1, Math.min(idleTimeoutMs, 30_000)); this.maxSessionMs = Math.min(maxSessionMs, 600_000);
     this.continuous = continuous === true; this.maxTurns = this.continuous ? Infinity : Math.min(maxTurns, 20); this.now = now;
@@ -146,10 +148,10 @@ export class RealtimeConversation extends EventEmitter {
   }
   configure() {
     this.send({ type: 'session.update', session: { type: 'realtime', model: REALTIME_MODEL,
-      instructions: INSTRUCTIONS, output_modalities: [this.mode], max_output_tokens: this.maxOutputTokens,
+      instructions: this.narrationText ? `Sos la voz de TINO, en español de Argentina. Leé únicamente la siguiente instrucción, literalmente y con tono claro y cercano. No agregues saludos, preguntas ni pasos. No ejecutes herramientas. Texto: ${JSON.stringify(this.narrationText)}${VOICE_STYLE}` : INSTRUCTIONS, output_modalities: [this.mode], max_output_tokens: this.maxOutputTokens,
       audio: { input: { format: { type: 'audio/pcm', rate: AUDIO_RATE }, turn_detection: null },
         output: { format: { type: 'audio/pcm', rate: AUDIO_RATE }, voice: REALTIME_VOICE } },
-      tools: [POINT_TOOL, TASK_CONTEXT_TOOL], tool_choice: 'auto',
+      tools: this.narrationText ? [] : [POINT_TOOL, TASK_CONTEXT_TOOL], tool_choice: this.narrationText ? 'none' : 'auto',
     } });
   }
   handleUpstream(raw) {
@@ -413,23 +415,23 @@ export class RealtimeService {
     this.apiKey = apiKey; this.options = { continuous, ...conversationOptions }; this.factory = conversationFactory; this.maxConnections = maxConnections; this.maxConnectionsPerOrigin = Math.max(1, Math.min(maxConnectionsPerOrigin, Math.max(1, maxConnections - 1))); this.httpTimeoutMs = Math.min(httpTimeoutMs, 65_000); this.active = new Map(); this.origins = new Map();
   }
   status() { const configured = Boolean(this.apiKey?.trim()); return { configured, model: REALTIME_MODEL, voiceStreaming: configured, generalConversation: configured, mode: configured ? 'openai_realtime' : 'unconfigured', screenInput: configured, continuousAssistance: this.options.continuous === true }; }
-  reserve(deviceId, mode = 'audio', origin = deviceId, maxOutputTokens) {
+  reserve(deviceId, mode = 'audio', origin = deviceId, maxOutputTokens, narrationText) {
     if (!this.status().configured) throw new RealtimeError('openai_not_configured', 'Falta OPENAI_API_KEY en el servidor para conversar con TINO.', 503);
     if (this.active.has(deviceId)) throw new RealtimeError('realtime_already_active', 'Este teléfono ya tiene una conversación activa. Cerrala antes de iniciar otra.', 409);
     if (this.active.size >= this.maxConnections) throw new RealtimeError('realtime_busy', 'TINO está atendiendo otras conversaciones. Volvé a intentar en un momento.', 429);
     origin = String(origin).replace(/^::ffff:/i, '').toLowerCase();
     if ([...this.origins.values()].filter(value => value === origin).length >= this.maxConnectionsPerOrigin) throw new RealtimeError('realtime_origin_busy', 'Esta conexión de red ya tiene varias asistencias activas. Esperá a que termine una.', 429);
-    const conversation = this.factory({ ...this.options, apiKey: this.apiKey, deviceId, mode, ...(maxOutputTokens ? { maxOutputTokens } : {}) });
+    const conversation = this.factory({ ...this.options, apiKey: this.apiKey, deviceId, mode, ...(maxOutputTokens ? { maxOutputTokens } : {}), ...(narrationText ? { narrationText } : {}) });
     this.active.set(deviceId, conversation); this.origins.set(deviceId, origin);
     conversation.once('closed', () => { if (this.active.get(deviceId) === conversation) { this.active.delete(deviceId); this.origins.delete(deviceId); } });
     return conversation;
   }
-  async reply({ deviceId, text, signal, origin, beforeConnect, localReply, outputMode = 'text' }) {
+  async reply({ deviceId, text, signal, origin, beforeConnect, localReply, outputMode = 'text', narrationText }) {
     if (!['text', 'audio'].includes(outputMode)) throw invalid('Elegí una respuesta escrita o de voz.');
     // Audio, its transcript and reasoning share the same token budget. The
     // text-sized cap can cut off an otherwise short spoken answer. Keep the
     // HTTP audio byte/duration limit below as an independent hard bound.
-    const conversation = this.reserve(deviceId, outputMode, origin, outputMode === 'audio' ? 2048 : undefined);
+    const conversation = this.reserve(deviceId, outputMode, origin, outputMode === 'audio' ? 2048 : undefined, narrationText);
     const audioChunks = []; let audioBytes = 0; let audioTooLong = false;
     const onAudio = event => {
       if (outputMode !== 'audio' || event.type !== 'audio.delta') return;

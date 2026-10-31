@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import type { Dispatch, FormEvent, SetStateAction } from 'react';
 import { ArrowLeftIcon, ArrowRightIcon, BuildingsIcon, DeviceMobileIcon, MicrophoneIcon, PaperPlaneTiltIcon, UsersThreeIcon, XIcon, ListIcon, StopIcon, SignOutIcon, SquaresFourIcon, CircleIcon } from '@phosphor-icons/react';
 import { JuryDashboard, JuryFamily } from './JuryDashboard';
@@ -6,6 +6,8 @@ import { JuryPractice } from './JuryPractice';
 import type { JuryPracticeTask } from './JuryPractice';
 import { juryApi } from './jury-api';
 import { juryScreenContext } from './jury-screen-context';
+import {JuryGuide} from './JuryGuide';
+import {createPracticeState,practiceReducer,practiceGuide,resolvePracticeTask} from './jury-practice-model';
 import './jury.css';
 import './jury-bubble.css';
 import { JuryAndroidHome, AndroidStatusBar } from './JuryAndroidHome';
@@ -24,7 +26,11 @@ export function JuryApp() {
   const [role,setRole] = useState<Role>('user'); const [menu,setMenu] = useState(false);
   const [organization,setOrganization] = useState('Laboratorio de inclusión');
   const [surface,setSurface]=useState<JurySurface>('tino');const [apps,setApps]=useState(false);
-  const [whatsappTask,setWhatsappTask]=useState<JuryPracticeTask>('message');const [gmailTask,setGmailTask]=useState<JuryPracticeTask>('email');
+  const [practice,dispatchPractice]=useReducer(practiceReducer,undefined,createPracticeState);
+  const [legacyGmail,setLegacyGmail]=useState(false);
+  const [guidePaused,setGuidePaused]=useState(false);const [guideBusy,setGuideBusy]=useState(false);const [guideRepeat,setGuideRepeat]=useState(0);
+  const [guideMessage,setGuideMessage]=useState<{id:string;text:string}|null>(null);
+  const guideCache=useRef(new Map<string,JuryVoiceAudio>());
   const [whatsappOpened,setWhatsappOpened]=useState(false);const [gmailOpened,setGmailOpened]=useState(false);
   const [bubbleOpen,setBubbleOpen]=useState(false);const [chatStarted,setChatStarted]=useState(false);const [chatClosed,setChatClosed]=useState(false);
   const [bubblePosition,setBubblePosition]=useState({right:true,top:Math.max(100,window.innerHeight*.35)});
@@ -34,8 +40,10 @@ export function JuryApp() {
   const [voiceEpoch,setVoiceEpoch]=useState(0);
   const outside=surface!=='tino';const popup=outside&&bubbleOpen;
   const chatVisible=popup||(surface==='tino'&&page==='home'&&role==='user');
-  const wake=useJuryWake({enabled:mic&&voiceRead&&!chatActive&&!audio.playing&&!audio.blocked&&(outside||role==='user'),source:microphone.stream,conversationActive:voiceSession,onWake:()=>{setChatStarted(true);setChatClosed(false);setVoiceError('');},onMessage:text=>{setChatStarted(true);setChatClosed(false);setVoiceSession(true);setChatActive(true);setWakeMessage({id:Date.now(),text});},onIdle:()=>setVoiceSession(false)});
-  function stopVoice(){wake.cancel();audio.stop();setVoiceSession(false);setVoiceEpoch(value=>value+1);}
+  const guide=practiceGuide(practice,surface);
+  const guideKey=guide?`${practice.run}:${guide.id}:${surface}`:'';
+  const wake=useJuryWake({enabled:mic&&voiceRead&&!guideBusy&&!chatActive&&!audio.playing&&!audio.blocked&&(outside||role==='user'),source:microphone.stream,conversationActive:voiceSession,onWake:()=>{setChatStarted(true);setChatClosed(false);setVoiceError('');},onMessage:text=>{setChatStarted(true);setChatClosed(false);setVoiceSession(true);setChatActive(true);setWakeMessage({id:Date.now(),text});},onIdle:()=>setVoiceSession(false)});
+  function stopVoice(){setGuidePaused(true);wake.cancel();audio.stop();setVoiceSession(false);setVoiceEpoch(value=>value+1);}
   function navigate(next: Role) { setRole(next);setPage('home');setSurface('tino');setChatStarted(true);setChatClosed(false);setBubbleOpen(false);setMenu(false);window.scrollTo(0,0); }
   function back() { setPage('welcome');setBubbleOpen(false); }
   function open(next:JurySurface) {
@@ -45,15 +53,39 @@ export function JuryApp() {
     if(next==='gmail')setGmailOpened(true);
   }
   function startPractice(task:JuryPracticeTask) {
-    if(task==='email'||task==='gmail'){setGmailTask(task);open('gmail');}
-    else {setWhatsappTask(task);open('whatsapp');}
+    audio.stop();setGuideBusy(true);setChatActive(false);setVoiceError('');setChatStarted(true);setChatClosed(false);
+    if(task==='gmail'){setGuideBusy(false);dispatchPractice({type:'CANCEL'});setLegacyGmail(true);open('gmail');return;}
+    setLegacyGmail(false);setGuidePaused(false);setVoiceSession(true);dispatchPractice({type:'START',task});open('android');
   }
+  function requestPractice(text:string){const task=resolvePracticeTask(text);if(!task)return false;startPractice(task);return true;}
+  function pauseGuidance(){setGuidePaused(true);audio.stop();}
+  function cancelGuidance(){stopVoice();dispatchPractice({type:'CANCEL'});}
+  function androidBack(){
+    if(surface==='whatsapp'&&practice.wa.screen!=='chats'){dispatchPractice({type:'WA_BACK'});return;}
+    if(surface==='gmail'&&!legacyGmail&&practice.gm.screen!=='inbox'){dispatchPractice({type:'GM_BACK'});return;}
+    if(outside)open('android');else back();
+  }
+  useEffect(()=>{if(guide)setGuideMessage({id:guideKey,text:guide.text});},[guideKey]);
+  useEffect(()=>{
+    if(!guide||guidePaused||!voiceRead){setGuideBusy(false);return;}
+    const controller=new AbortController();let cancelled=false;
+    const timer=setTimeout(async()=>{
+      setGuideBusy(true);audio.stop();setVoiceError('');
+      try{
+        let clip=guideCache.current.get(guide.id);
+        if(!clip){const reply=await juryApi<{audio:JuryVoiceAudio}>('guide',{stepId:guide.id,voice:true},'',controller.signal);clip=reply.audio;if(!clip)throw new Error('No pude preparar la voz. Tocá repetir para intentar de nuevo.');guideCache.current.set(guide.id,clip);}
+        if(!cancelled)await audio.play(clip);
+      }catch(error){if(!cancelled)setVoiceError(error instanceof Error?error.message:'No pude leer este paso.');}
+      finally{if(!cancelled)setGuideBusy(false);}
+    },250);
+    return()=>{cancelled=true;clearTimeout(timer);controller.abort();audio.stop();};
+  },[guideKey,guidePaused,voiceRead,guideRepeat,audio.play,audio.stop]);
   async function permission(activate=false) {
     if(mic&&!activate){stopVoice();microphone.pause();return;}
     setVoiceRead(true);setVoiceError('');await microphone.request();
   }
   useEffect(()=>{document.title='TINO · La ayuda justa, cuando la necesitás';},[]);
-  return <div className={`jury-app j-surface-${surface}`} data-microphone-permitted={mic} data-microphone-name={microphone.label}>
+  return <div className={`jury-app j-surface-${surface}`} data-microphone-permitted={mic} data-microphone-name={microphone.label} data-guided={Boolean(guide)} data-guided-task={practice.task||undefined}>
     <div className="j-tino-surface" hidden={outside}>
       <header className="j-header"><button className="j-logo" onClick={back} aria-label="TINO, volver atrás"><img src="/brand/tino-logo.webp" alt="TINO"/></button>{page==='home' && <span className="j-space">{names[role]}</span>}<div className="j-header-end">{page==='welcome'?<button className="j-button j-dark" onClick={()=>navigate('user')}>DEMO</button>:<button className="j-icon-button" aria-label="Abrir menú" onClick={()=>setMenu(true)}><ListIcon size={28}/></button>}<button className="j-icon-button j-exit-app" aria-label="Salir de TINO al inicio de Android" title="Salir al inicio de Android" onClick={()=>open('android')}><SignOutIcon size={27}/></button></div></header>
       {page==='welcome' && <main className="j-welcome"><img className="j-welcome-ghost" src="/brand/tino-mascot.png" alt="TINO te saluda"/><h1>La ayuda justa,<br/>cuando la necesitás.</h1><p>Tu teléfono, a tu manera.</p><div className="j-role-grid">{(['user','family','institution'] as Role[]).map((r,i)=><button className="j-role" key={r} onClick={()=>{setRole(r);setPage('onboard');}}>{i===0?<DeviceMobileIcon/>:i===1?<UsersThreeIcon/>:<BuildingsIcon/>}<strong>{names[r]}</strong><span>{['Quiero ayuda con mi teléfono','Quiero acompañar a alguien','Quiero entender y actuar'][i]}</span><ArrowRightIcon/></button>)}</div><button className="j-account-link" onClick={()=>setPage('login')}>Ya tengo cuenta <ArrowRightIcon size={18}/></button></main>}
@@ -63,18 +95,19 @@ export function JuryApp() {
       {page==='home' && (role==='institution'?<JuryDashboard organization={organization}/>:role==='family'?<JuryFamily/>:null)}
       {menu && <div className="j-drawer-backdrop" onClick={()=>setMenu(false)}><aside className="j-drawer" aria-label="Menú de TINO" onClick={e=>e.stopPropagation()}><div className="j-drawer-top"><img src="/brand/tino-logo.webp" alt="TINO"/><button className="j-icon-button" aria-label="Cerrar menú" onClick={()=>setMenu(false)}><XIcon/></button></div><p className="j-space">Estás en {names[role]}</p>{(['user','family','institution'] as Role[]).map(r=><button className="j-menu-item" key={r} onClick={()=>navigate(r)}>{r==='user'?'TINO Chat':names[r]}<ArrowRightIcon/></button>)}<div className="j-drawer-controls"><h3>Permisos</h3><JurySwitch label="Micrófono" checked={mic} change={()=>void permission()}/><JurySwitch label="Respuestas por voz" checked={voiceRead} change={()=>{setVoiceRead(v=>!v);stopVoice();}}/>{microphone.label&&<p>Micrófono conectado: {microphone.label}</p>}{microphone.error&&<p role="status">{microphone.error}</p>}<button className="j-button j-outline" onClick={()=>{setMenu(false);setPage('welcome');audio.stop();}}>Volver al inicio</button></div></aside></div>}
     </div>
-    {surface==='android'&&<JuryAndroidHome open={open} apps={apps}/>}
+    {surface==='android'&&<JuryAndroidHome open={open} apps={apps} target={guide?.target||null}/>}
     <audio ref={audio.element} data-tino-voice="reply" onEnded={audio.onEnded} onError={audio.onError} hidden/>
-    {(outside||wake.capturing||voiceSession||audio.playing||audio.blocked||microphone.error)&&<div className={`j-wake-status ${wake.status==='ready'?'is-ready':''}`} role="status" title={audio.error||voiceError||microphone.error||(microphone.label?`Micrófono conectado: ${microphone.label}`:undefined)}><MicrophoneIcon size={19}/><span>{audio.playing?'TINO te está hablando…':audio.error||voiceError||microphone.error||(microphone.requesting?'Permití el micrófono en el navegador':wake.capturing?`Te escucho · ${String(Math.floor(wake.seconds/60)).padStart(2,'0')}:${String(wake.seconds%60).padStart(2,'0')}`:chatActive?'…':wake.status==='ready'?(voiceSession?'Te escucho. Podés seguir hablando.':'Decí «Hola TINO»'):wake.status==='starting'?'Preparando escucha…':wake.error||(mic?'Voz activada':'Activá el micrófono de esta computadora'))}</span>{audio.blocked?<button onClick={()=>{setVoiceError('');audio.retry();}}>Activar sonido</button>:<><button aria-label={mic&&wake.status==='error'?'Reintentar escucha por voz':mic?'Desactivar escucha por voz':'Activar escucha por voz'} onClick={()=>mic&&wake.status==='error'?wake.retry():void permission()}>{mic&&wake.status==='error'?'Reintentar':mic?'Pausar':'Activar voz'}</button>{(audio.playing||voiceSession||wake.capturing)&&<button aria-label="Terminar conversación por voz" onClick={stopVoice}><XIcon size={17}/></button>}</>}</div>}
+    {(outside||wake.capturing||voiceSession||audio.playing||audio.blocked||microphone.error)&&<div className={`j-wake-status ${wake.status==='ready'?'is-ready':''}`} role="status" title={audio.error||voiceError||microphone.error||(microphone.label?`Micrófono conectado: ${microphone.label}`:undefined)}><MicrophoneIcon size={19}/><span>{audio.playing?'TINO te está hablando…':audio.error||voiceError||microphone.error||(microphone.requesting?'Permití el micrófono en el navegador':wake.capturing?`Te escucho · ${String(Math.floor(wake.seconds/60)).padStart(2,'0')}:${String(wake.seconds%60).padStart(2,'0')}`:chatActive||guideBusy?'…':wake.status==='ready'?(voiceSession?'Te escucho. Podés seguir hablando.':'Decí «Hola TINO»'):wake.status==='starting'?'Preparando escucha…':wake.error||(mic?'Voz activada':'Activá el micrófono de esta computadora'))}</span>{audio.blocked?<button onClick={()=>{setVoiceError('');audio.retry();}}>Activar sonido</button>:<><button aria-label={mic&&wake.status==='error'?'Reintentar escucha por voz':mic?'Desactivar escucha por voz':'Activar escucha por voz'} onClick={()=>mic&&wake.status==='error'?wake.retry():void permission()}>{mic&&wake.status==='error'?'Reintentar':mic?'Pausar':'Activar voz'}</button>{(audio.playing||voiceSession||wake.capturing)&&<button aria-label="Terminar conversación por voz" onClick={stopVoice}><XIcon size={17}/></button>}</>}</div>}
 
-    {whatsappOpened&&<div className="j-external-app" data-jury-external-screen hidden={surface!=='whatsapp'}><AndroidStatusBar/><div className="jury-practice"><JuryPractice key={whatsappTask} task={whatsappTask}/></div></div>}
-    {gmailOpened&&<div className="j-external-app" data-jury-external-screen hidden={surface!=='gmail'}><AndroidStatusBar/><div className="jury-practice"><JuryPractice key={gmailTask} task={gmailTask}/></div></div>}
+    {whatsappOpened&&<div className="j-external-app" data-jury-external-screen hidden={surface!=='whatsapp'}><AndroidStatusBar/><div className="jury-practice"><JuryPractice app="whatsapp" state={practice} dispatch={dispatchPractice} target={surface==='whatsapp'?guide?.target||null:null}/></div></div>}
+    {gmailOpened&&<div className="j-external-app" data-jury-external-screen hidden={surface!=='gmail'}><AndroidStatusBar/><div className="jury-practice"><JuryPractice app="gmail" state={practice} dispatch={dispatchPractice} target={surface==='gmail'?guide?.target||null:null} legacy={legacyGmail}/></div></div>}
     {chatStarted&&!chatClosed&&<div className={popup?'j-chat-popup':'j-chat-page'} style={{display:chatVisible?'block':'none'}} role={popup?'dialog':undefined} aria-label={popup?'Chat flotante de TINO':undefined}>
-      {popup&&<div className="j-popup-heading"><strong>TINO</strong><div><button className="j-popup-open-app" onClick={()=>{setPage('home');setRole('user');open('tino');}}>Abrir TINO</button><button className="j-icon-button" aria-label="Minimizar conversación" onClick={()=>setBubbleOpen(false)}>−</button><button className="j-icon-button" aria-label="Cerrar y borrar conversación" onClick={()=>{stopVoice();setWakeMessage(null);setChatActive(false);setBubbleOpen(false);setChatClosed(true);audio.stop();}}><XIcon/></button></div></div>}
-      <JuryChat mic={mic} acquireMicrophone={microphone.acquire} voiceRead={voiceRead} visible={chatVisible} startPractice={startPractice} wakeMessage={wakeMessage} wakeCapture={wake.capturing} wakePartial={wake.partial} cancelWake={wake.cancel} finishWake={wake.finish} onActivity={setChatActive} playVoice={audio.play} onVoiceError={setVoiceError} onVoiceEnd={stopVoice} voiceEpoch={voiceEpoch}/>
+      {popup&&<div className="j-popup-heading"><strong>TINO</strong><div><button className="j-popup-open-app" onClick={()=>{setPage('home');setRole('user');open('tino');}}>Abrir TINO</button><button className="j-icon-button" aria-label="Minimizar conversación" onClick={()=>setBubbleOpen(false)}>−</button><button className="j-icon-button" aria-label="Cerrar y borrar conversación" onClick={()=>{cancelGuidance();setGuideMessage(null);setWakeMessage(null);setChatActive(false);setBubbleOpen(false);setChatClosed(true);audio.stop();}}><XIcon/></button></div></div>}
+      <JuryChat guideMessage={guideMessage} onGuidedRequest={requestPractice} pauseGuidance={pauseGuidance} mic={mic} acquireMicrophone={microphone.acquire} voiceRead={voiceRead} visible={chatVisible} startPractice={startPractice} wakeMessage={wakeMessage} wakeCapture={wake.capturing} wakePartial={wake.partial} cancelWake={wake.cancel} finishWake={wake.finish} onActivity={setChatActive} playVoice={audio.play} onVoiceError={setVoiceError} onVoiceEnd={cancelGuidance} voiceEpoch={voiceEpoch}/>
     </div>}
+    {guide&&<JuryGuide guide={guide} paused={guidePaused||!voiceRead} onRepeat={()=>{setVoiceRead(true);setGuidePaused(false);setGuideRepeat(n=>n+1);}} onPause={pauseGuidance} onCancel={cancelGuidance}/>}
     {outside&&<JuryBubble open={popup} position={bubblePosition} setPosition={setBubblePosition} onOpen={()=>{setChatStarted(true);setChatClosed(false);setBubbleOpen(v=>!v);}}/>}
-    <nav className="j-android-nav" aria-label="Navegación de Android"><button aria-label="Atrás en Android" onClick={()=>{if(outside)open('android');else back();}}><ArrowLeftIcon size={22}/></button><button aria-label="Inicio de Android" onClick={()=>open('android')}><CircleIcon size={21}/></button><button aria-label="Ver aplicaciones de Android" onClick={()=>{open('android');setApps(true);}}><SquaresFourIcon size={22}/></button></nav>
+    <nav className="j-android-nav" aria-label="Navegación de Android"><button aria-label="Atrás en Android" onClick={androidBack}><ArrowLeftIcon size={22}/></button><button aria-label="Inicio de Android" data-guide-control="android-home" data-guide-active={guide?.target==='android-home'||undefined} onClick={()=>open('android')}><CircleIcon size={21}/></button><button aria-label="Ver aplicaciones de Android" onClick={()=>{open('android');setApps(true);}}><SquaresFourIcon size={22}/></button></nav>
   </div>;
 }
 
@@ -86,12 +119,14 @@ function JuryBubble({open,onOpen,position,setPosition}:{open:boolean;onOpen:()=>
 
 export function JurySwitch({label,checked,change}:{label:string;checked:boolean;change:()=>void}) { return <button className="j-switch-row" role="switch" aria-checked={checked} onClick={change}><span>{label}</span><span className={`j-switch ${checked?'is-on':''}`}><i/></span></button>; }
 
-function JuryChat({mic,acquireMicrophone,voiceRead,visible,startPractice,wakeMessage,wakeCapture,wakePartial,cancelWake,finishWake,onActivity,playVoice,onVoiceError,onVoiceEnd,voiceEpoch}:{mic:boolean;acquireMicrophone:()=>Promise<MediaStream>;voiceRead:boolean;visible:boolean;startPractice:(task:JuryPracticeTask)=>void;wakeMessage:{id:number;text:string}|null;wakeCapture:boolean;wakePartial:string;cancelWake:()=>void;finishWake:()=>void;onActivity:(active:boolean)=>void;playVoice:(audio:JuryVoiceAudio)=>Promise<void>;onVoiceError:(error:string)=>void;onVoiceEnd:()=>void;voiceEpoch:number}) {
+function JuryChat({guideMessage,onGuidedRequest,pauseGuidance,mic,acquireMicrophone,voiceRead,visible,startPractice,wakeMessage,wakeCapture,wakePartial,cancelWake,finishWake,onActivity,playVoice,onVoiceError,onVoiceEnd,voiceEpoch}:{guideMessage:{id:string;text:string}|null;onGuidedRequest:(text:string)=>boolean;pauseGuidance:()=>void;mic:boolean;acquireMicrophone:()=>Promise<MediaStream>;voiceRead:boolean;visible:boolean;startPractice:(task:JuryPracticeTask)=>void;wakeMessage:{id:number;text:string}|null;wakeCapture:boolean;wakePartial:string;cancelWake:()=>void;finishWake:()=>void;onActivity:(active:boolean)=>void;playVoice:(audio:JuryVoiceAudio)=>Promise<void>;onVoiceError:(error:string)=>void;onVoiceEnd:()=>void;voiceEpoch:number}) {
   const [messages,setMessages]=useState<Message[]>([]); const [text,setText]=useState(''); const [typing,setTyping]=useState(true);
   const [listening,setListening]=useState(false); const [seconds,setSeconds]=useState(0); const [partial,setPartial]=useState(''); const [error,setError]=useState('');
   const [suggestion,setSuggestion]=useState<JuryPracticeTask|null>(null); const recorder=useRef<MediaRecorder|null>(null);const audioStream=useRef<MediaStream|null>(null);const recordingTimeout=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);const startingRecorder=useRef(false); const busy=useRef(false); const cancelled=useRef(false); const end=useRef<HTMLDivElement>(null);
   const request=useRef<AbortController|null>(null);const visibleRef=useRef(visible);
   const [sending,setSending]=useState(false);const voiceReadRef=useRef(voiceRead);voiceReadRef.current=voiceRead;const consumedWake=useRef<number|undefined>(undefined);const spokenRequest=useRef(false);
+  const consumedGuide=useRef('');
+  useEffect(()=>{if(guideMessage&&consumedGuide.current!==guideMessage.id){consumedGuide.current=guideMessage.id;setMessages(current=>[...current,{role:'assistant',text:guideMessage.text}]);setTyping(false);}},[guideMessage]);
   useEffect(()=>{onActivity(sending||listening||!!partial);},[sending,listening,partial,onActivity]);
   useEffect(()=>{if(spokenRequest.current)request.current?.abort();},[voiceEpoch]);
   useEffect(()=>{if(wakeMessage&&consumedWake.current!==wakeMessage.id){consumedWake.current=wakeMessage.id;void send(wakeMessage.text,true);}},[wakeMessage]);
@@ -102,6 +137,8 @@ function JuryChat({mic,acquireMicrophone,voiceRead,visible,startPractice,wakeMes
   async function send(value:string,spoken=false) {
     const clean=value.trim();if(!clean||busy.current)return;busy.current=true;spokenRequest.current=spoken;setSending(true);setError('');if(spoken)onVoiceError('');setText('');setSuggestion(null);
     const history=[...messages,{role:'user' as const,text:clean}];setMessages(history);setTyping(true);const began=Date.now();
+    if(onGuidedRequest(clean)){busy.current=false;spokenRequest.current=false;setSending(false);setTyping(false);return;}
+    pauseGuidance();
     const controller=new AbortController();request.current=controller;
     try { const reply=await juryApi<{instruction:string;audio?:JuryVoiceAudio;ended?:boolean}>('chat',{text:clean,voice:spoken&&voiceReadRef.current,history:messages,screen:juryScreenContext(document.querySelector('[data-jury-external-screen]:not([hidden])'))},'',controller.signal); await new Promise(resolve=>setTimeout(resolve,Math.max(0,2000-(Date.now()-began))));if(controller.signal.aborted)return;if(reply.ended){onVoiceEnd();return;}setMessages(m=>[...m,{role:'assistant',text:reply.instruction}]);
       const normalized=clean.toLowerCase();if(/grupo/.test(normalized))setSuggestion('group');else if(/ubicaci[oó]n|locaci[oó]n/.test(normalized))setSuggestion('location');else if(/crear.*(gmail|cuenta)/.test(normalized))setSuggestion('gmail');else if(/gmail|correo|mail/.test(normalized))setSuggestion('email');else if(/mensaje|whatsapp|wasap|wsp/.test(normalized))setSuggestion('message');
