@@ -421,7 +421,8 @@ export function createApp({
       }
       if (method === 'GET' && route === '/assistant/flows') { needUser(); respond(200, { flows: Object.values(TASK_FLOWS) }); return; }
       if (method === 'POST' && route === '/assistant/message') {
-        needUser(); keys(body, ['sessionId', 'text', 'conversationId', 'history', 'attachments']);
+        needUser(); keys(body, ['sessionId', 'text', 'conversationId', 'history', 'attachments', 'outputMode']);
+        required(body.outputMode === undefined || ['text', 'audio'].includes(body.outputMode), 400, 'invalid_output_mode', 'Elegí una respuesta escrita o de voz.');
         const attachments = validateAttachments(body.attachments);
         required(allowLocalAssistant || !attachments.length, 503, 'attachments_not_enabled', 'El análisis de archivos adjuntos no está habilitado en esta conexión de voz.');
         const message = text(body.text || (attachments.length ? 'Ayudame a entender los archivos que adjunté.' : body.text), 'text', 1000);
@@ -438,7 +439,7 @@ export function createApp({
         const onClose = () => { if (!res.writableEnded) controller.abort(); };
         res.once('close', onClose);
         let reservation; let reply;
-        try { reply = await realtime.reply({ deviceId: user.id, signal: controller.signal, origin: directOrigin(clientAddress(req)),
+        try { reply = await realtime.reply({ deviceId: user.id, signal: controller.signal, origin: directOrigin(clientAddress(req)), outputMode: body.outputMode ?? 'text',
           beforeConnect: async () => { reservation = await admission.reserve(user.id, clientAddress(req), 'http'); },
           ...(allowLocalAssistant ? { localReply: () => assistant.reply({ signal: controller.signal, key: hash(token) + ':' + conversationId,
             text: message, history, task, attachments, localOnly: !attachments.length && assistantOptions === undefined }) } : {}),

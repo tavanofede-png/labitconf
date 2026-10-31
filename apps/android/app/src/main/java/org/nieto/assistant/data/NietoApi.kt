@@ -62,7 +62,8 @@ class NietoApi(private val settings:LocalSettings) {
                                 val bytes=response.body?.byteStream()?.use { input ->
                                     val output=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192)
                                     while(true) { val count=input.read(buffer);if(count<0)break
-                                        if(output.size()+count>2_097_152)throw ApiFailure("La respuesta del servidor es demasiado grande.")
+                                        val responseLimit = if(path=="/assistant/message")4_194_304 else 2_097_152
+                                        if(output.size()+count>responseLimit)throw ApiFailure("La respuesta del servidor es demasiado grande.")
                                         output.write(buffer,0,count)
                                     };output.toByteArray()
                                 }?:ByteArray(0)

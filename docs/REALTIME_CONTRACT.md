@@ -4,6 +4,10 @@ Modelo fijo `gpt-realtime-2.1-mini`; `OPENAI_API_KEY` solo existe en el backend.
 
 La conversación general es libre y responde al turno actual con el detalle necesario. La indicación de una acción por respuesta se aplica al guiar una tarea práctica. No se fuerzan saludos, preguntas iniciales, guiones ni fórmulas de respuesta. La voz corresponde al audio real del modelo; diagnósticos de transporte y admisión son estado técnico, no respuestas habladas mediante TTS local.
 
+La voz configurada es `cedar`, con tono cálido, cercano y tranquilo, entonación conversacional y voseo rioplatense suave. El ritmo se guía mediante instrucciones al modelo; no se altera artificialmente la velocidad de reproducción. El proveedor confirmó esa voz en una comprobación real con una pregunta sintética. La calidad percibida se valida escuchándola con la persona.
+
+El chat Android solicita `outputMode:"audio"` en `POST /api/assistant/message` cuando la lectura está habilitada. La respuesta incluye `audio:{base64,mimeType:"audio/wav",voice:"cedar"}` con el audio original del modelo: PCM16 mono de 24 kHz, hasta 45 segundos por respuesta HTTP. El reproductor mantiene ese WAV en memoria, lo valida antes de reproducirlo y lo borra al terminar o cancelar; no escribe archivos ni lo vuelve a sintetizar con la voz de Android. En modo escrito se solicita `outputMode:"text"` y no se reproduce audio. La omisión del campo conserva la respuesta escrita para clientes anteriores. Los lectores manuales de funciones locales conservan su motor de accesibilidad.
+
 La persona hace cada toque. `point_to_control` solo señala IDs vigentes de una pantalla real. Ninguna herramienta pulsa, abre aplicaciones, completa campos o ejecuta envíos. Sin un control observable TINO puede orientar verbalmente, por ejemplo volver a Inicio mediante el botón o gesto observado. No inventa coordenadas ni considera los hints de apps un inventario exhaustivo. Puede responder preguntas generales sin pantalla.
 
 ## Activación y silencio

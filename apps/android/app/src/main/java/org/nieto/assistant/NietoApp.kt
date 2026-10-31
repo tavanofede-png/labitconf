@@ -105,6 +105,10 @@ class NietoApp : Application() {
     private var startedAt = 0L
     private var practiceStartedAt = 0L
     private var tts: TextToSpeech? = null
+    private val naturalSpeech by lazy { org.nieto.assistant.voice.NaturalSpeechPlayer(
+        onActive = { active -> mutable.value = mutable.value.copy(ttsSpeaking = active, speaking = active) },
+        onFailure = { speechNotice("No pude reproducir la voz. La respuesta sigue disponible por escrito.") },
+    ) }
     private var ttsReady = false
     private var ttsInitialized = false
     private var pendingSpeech: String? = null
@@ -242,6 +246,7 @@ class NietoApp : Application() {
     }
     fun speak(text: String = state.value.guide.notice ?: state.value.guide.instruction) {
         if (text.isBlank() || (state.value.assistanceEnabled && state.value.textOnly)) return
+        naturalSpeech.stop()
         if (!ttsReady) {
             if (!ttsInitialized) { pendingSpeech = text; speechNotice("La voz se está preparando. La instrucción sigue disponible en pantalla.") }
             else if (state.value.ttsNotice.isBlank()) speechNotice("La lectura por voz no está disponible. Podés leer la instrucción en pantalla.")
@@ -276,7 +281,7 @@ class NietoApp : Application() {
         pendingSpeech?.let { speak(it) }
     }
     private fun speechNotice(message: String) { mutable.value = mutable.value.copy(ttsNotice = message) }
-    fun stopSpeaking() { pendingSpeech = null; runCatching { tts?.stop() }; mutable.value = mutable.value.copy(ttsSpeaking = false, speaking = false) }
+    fun stopSpeaking() { pendingSpeech = null; naturalSpeech.stop(); runCatching { tts?.stop() }; mutable.value = mutable.value.copy(ttsSpeaking = false, speaking = false) }
     fun retryTelemetry() { TelemetrySync.retryRetained(this) }
     fun enableAssistance() {
         if (!settings.remoteScreenConsent || !settings.openAiConsent) { status("Aceptá el permiso nuevo de asistencia con OpenAI."); return }
@@ -614,6 +619,8 @@ class NietoApp : Application() {
         if(!settings.openAiConsent && !settings.juryDemo){tellUser("Autorizá las consultas con IA en Ajustes para conversar con TINO.");onComplete(false);return}
         if(!settings.juryDemo && state.value.assistanceEnabled && attachments.isEmpty()) { sendVisualMessage(clean,onSubmitted=onComplete);return }
         if (attachments.size > ChatAttachment.MAX_COUNT || attachments.sumOf { it.byteSize } > ChatAttachment.MAX_TOTAL_BYTES) { onComplete(false); return }
+        val readAloud = !(state.value.assistanceEnabled && state.value.textOnly)
+        stopSpeaking()
         mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean, attachments.map { ChatAttachmentLabel(it.name,it.mimeType) })).takeLast(30), busy = true, suggestedFlow = null)
         messageJob = scope.launch {
             val typingStartedAt = android.os.SystemClock.elapsedRealtime()
@@ -622,10 +629,12 @@ class NietoApp : Application() {
                 val history = JSONArray()
                 state.value.chat.dropLast(1).takeLast(12).forEach { line -> history.put(JSONObject().put("role", if (line.fromUser) "user" else "assistant").put("content", line.text.take(1000))) }
                 val body = JSONObject().put("text", clean).put("conversationId", conversationId).put("history", history)
+                    .put("outputMode", if (readAloud) "audio" else "text")
                 while (body.toString().toByteArray(Charsets.UTF_8).size > 14_000 && history.length() > 0) history.remove(0)
                 // Chat is independent of the local outbox session identifier.
                 if (attachments.isNotEmpty()) body.put("attachments", JSONArray().apply { attachments.forEach { put(it.wire()) } })
                 val reply = api.request("/assistant/message", "POST", body)
+                if (reply.optBoolean("ended")) { endConversation(); onComplete(true); return@launch }
                 var answer = reply.optString("instruction", "No pude encontrar una guía para esa consulta.")
                 val sources = reply.optJSONArray("sources")
                 if (sources != null) for (index in 0 until sources.length().coerceAtMost(3)) {
@@ -637,7 +646,11 @@ class NietoApp : Application() {
                 val draft = reply.optJSONObject("emailDraft")?.let { EmailDraft(it.getString("to"), it.getString("subject"), it.getString("body")) }
                 delay((2000L - (android.os.SystemClock.elapsedRealtime() - typingStartedAt)).coerceAtLeast(0L))
                 mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() }, emailDraft = if (reply.optBoolean("clearEmailDraft")) null else draft ?: state.value.emailDraft)
-                speak(answer)
+                if (readAloud) {
+                    val audio = reply.optJSONObject("audio")
+                    if (audio != null) naturalSpeech.play(audio.optString("base64"), audio.optString("mimeType"))
+                    else speechNotice("La voz no estuvo disponible. La respuesta sigue por escrito.")
+                }
                 if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
                 onComplete(true)
             } catch (cancelled: CancellationException) { throw cancelled }

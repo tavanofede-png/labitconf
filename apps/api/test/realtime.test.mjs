@@ -6,7 +6,7 @@ import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import WebSocket, { WebSocketServer } from 'ws';
-import { RealtimeConversation, RealtimeService, REALTIME_MODEL, MAX_AUDIO_CHUNK } from '../src/realtime.mjs';
+import { RealtimeConversation, RealtimeService, REALTIME_MODEL, REALTIME_VOICE, MAX_AUDIO_CHUNK } from '../src/realtime.mjs';
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
 import { validateSnapshot, MAX_IMAGE_BYTES } from '../src/screen-context.mjs';
@@ -104,7 +104,33 @@ test('HTTP voice replies carry real PCM in a playable WAV and retain the exact R
   assert.equal(wav.toString('ascii', 0, 4), 'RIFF'); assert.equal(wav.readUInt32LE(24), 24000);
   assert.equal(wav.readUInt16LE(22), 1); assert.equal(wav.readUInt16LE(34), 16); assert.deepEqual(wav.subarray(44), pcm);
   assert.deepEqual(upstream.messages.find(event => event.type === 'session.update').session.output_modalities, ['audio']);
+  assert.equal(upstream.messages.find(event => event.type === 'session.update').session.audio.output.voice, REALTIME_VOICE);
+  assert.equal(reply.audio.voice, 'cedar');
   assert.equal(service.active.size, 0);
+});
+
+test('the authenticated Android message route returns original neural audio only when requested', async t => {
+  const pcm = Buffer.alloc(4800, 12);
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (event.response.output_modalities[0] === 'text') { helper.sendResponse(socket, event); return; }
+    const id = 'native-chat-voice';
+    socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'native-voice-item', delta: pcm.toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.output_audio_transcript.done', response_id: id, transcript: 'Respuesta del modelo, sin volver a sintetizar.' }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+  });
+  const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
+  const { request, device } = await apiFixture(t, realtime);
+  for (const outputMode of ['robot', null, true]) {
+    const invalid = await request('/assistant/message', { token: device.token, body: { text: 'Hola', outputMode } });
+    assert.equal(invalid.status, 400); assert.equal(invalid.body.error.code, 'invalid_output_mode');
+  }
+  assert.equal(upstream.requests.length, 0);
+  const spoken = await request('/assistant/message', { token: device.token, body: { text: 'Hola', outputMode: 'audio' } });
+  assert.equal(spoken.status, 200); assert.equal(spoken.body.audio.voice, 'cedar');
+  assert.deepEqual(Buffer.from(spoken.body.audio.base64, 'base64').subarray(44), pcm);
+  const silent = await request('/assistant/message', { token: device.token, body: { text: 'Respondé por escrito', outputMode: 'text' } });
+  assert.equal(silent.status, 200); assert.equal(silent.body.audio, undefined);
 });
 
 test('an HTTP voice turn cannot claim speech when the provider only returned text', async t => {
