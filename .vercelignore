@@ -1,0 +1,26 @@
+# The CLI uploads source for a static web build. No provider credentials or local state.
+.env
+.env.*
+.git/
+.vercel/
+.cache/
+.gradle/
+.kotlin/
+.idea/
+node_modules/
+artifacts/
+data/
+apps/android/
+apps/api/data/
+apps/api/src/
+apps/api/scripts/
+apps/api/test/
+apps/api/docs/
+apps/web/dist/
+apps/web/test/
+docs/
+*.log
+*.jks
+*.keystore
+*.hprof
+*.tsbuildinfo

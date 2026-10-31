@@ -9,6 +9,8 @@ coverage/
 apps/api/data/
 .gradle/
 .cache/
+.vercel/
+.playwright-cli/
 .kotlin/
 build/
 local.properties

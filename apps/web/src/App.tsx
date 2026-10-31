@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { AndroidLogoIcon, ArrowUpRightIcon, BuildingsIcon, CaretRightIcon, GearSixIcon, HeartIcon, IconContext, LeafIcon, ShieldCheckIcon, UsersThreeIcon } from '@phosphor-icons/react';
 import { api, readSession, writeSession } from './api';
 import type { Health, Page } from './api';
@@ -14,7 +14,38 @@ const navigation = [
 ];
 function currentPage(): Page { const hash = window.location.hash.slice(1); return navigation.find(item => item.id === hash)?.id ?? 'instituciones'; }
 
+const DemoPage = lazy(() => import('./demo/Demo').then(module => ({ default: module.Demo })));
+
+function demoView(): 'phone' | 'web' | null {
+  const hash = window.location.hash.slice(1);
+  if (navigation.some(item => item.id === hash)) return null;
+  if (hash === 'demo' || hash === 'web') return 'web';
+  if (hash === 'emulador') return 'phone';
+  const path = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (path === '/demo' || path === '/web') return 'web';
+  if (path === '/' || path === '/emulador') return 'phone';
+  return null;
+}
+
 export function App() {
+  const [view, setView] = useState(demoView);
+  useEffect(() => {
+    const refresh = () => setView(demoView());
+    window.addEventListener('hashchange', refresh);
+    window.addEventListener('popstate', refresh);
+    return () => {
+      window.removeEventListener('hashchange', refresh);
+      window.removeEventListener('popstate', refresh);
+    };
+  }, []);
+  useEffect(() => {
+    document.title = view === 'phone' ? 'NIETO · Celular interactivo' : view === 'web' ? 'NIETO · Demo web' : 'NIETO · Portal';
+  }, [view]);
+  if (view) return <IconContext.Provider value={{ weight: 'regular', size: 20 }}><Suspense fallback={<div role="status" className="loading-row">Preparando la demostración…</div>}><DemoPage view={view} /></Suspense></IconContext.Provider>;
+  return <PortalApp />;
+}
+
+function PortalApp() {
   const [page, setPage] = useState<Page>(currentPage);
   const [health, setHealth] = useState<Health | null>(null);
   const [checking, setChecking] = useState(true);
