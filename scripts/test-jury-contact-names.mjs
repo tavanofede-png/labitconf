@@ -1,0 +1,32 @@
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+const require=createRequire('/Users/jazminourens/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/package.json');
+const {chromium}=require('playwright');
+const origin=process.env.JURY_TEST_ORIGIN||'http://127.0.0.1:5173';
+const browser=await chromium.launch({channel:'chrome',headless:true});
+try{
+ const page=await browser.newPage({viewport:{width:876,height:1400}});
+ await page.goto(origin+'/app');
+ await page.getByRole('button',{name:'DEMO',exact:true}).click();
+ await page.getByRole('button',{name:'Salir de TINO al inicio de Android'}).click();
+ await page.getByRole('button',{name:'Abrir WhatsApp',exact:true}).click();
+ await page.getByRole('button',{name:'Nuevo grupo',exact:true}).click();
+ for(const name of ['Lucía','Ana','Pedro','Martín'])assert.equal(await page.locator('.jp-selection').getByRole('button',{name,exact:true}).count(),1);
+ assert.equal(await page.locator('.jp-selection .jp-avatar:visible').count(),4);
+ await page.getByRole('button',{name:'Abrir chat flotante de TINO',exact:true}).click();
+ await page.locator('.j-message-row.assistant .j-message').first().waitFor();
+ await page.getByRole('textbox',{name:'Mensaje para TINO',exact:true}).fill('¿Cuáles son los cuatro nombres de los contactos que ves? Respondé solo con sus nombres, separados por comas.');
+ const request=page.waitForRequest(r=>r.url().includes('resource=chat'));
+ const response=page.waitForResponse(r=>r.url().includes('resource=chat')&&r.status()===200,{timeout:65000});
+ await page.getByRole('button',{name:'Enviar mensaje',exact:true}).click();
+ const context=JSON.parse((await request).postData()).screen;
+ for(const name of ['Lucía','Ana','Pedro','Martín'])assert.equal(context.split(name).length-1,1,context);
+ assert.doesNotMatch(context,/LLucía|AAna|PPedro|MMartín/);
+ console.log('SCREEN_CONTEXT_NAMES_WITHOUT_AVATAR_INITIALS_PASS');
+ const data=await(await response).json();assert.ok(data.instruction?.trim());
+ assert.match(data.instruction,/Luc[ií]a/);assert.match(data.instruction,/Ana/);assert.match(data.instruction,/Pedro/);assert.match(data.instruction,/Mart[ií]n/);
+ assert.doesNotMatch(data.instruction,/LLucía|AAna|PPedro|MMartín/);
+ await page.waitForFunction(expected=>[...document.querySelectorAll('.j-message')].some(el=>el.textContent===expected),data.instruction);
+ await page.screenshot({path:'/private/tmp/tino-contact-names-fixed.png'});
+ console.log('REAL_BACKEND_CONTACT_NAMES_CHAT_PASS',data.instruction);
+}finally{await browser.close();}

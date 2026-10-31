@@ -5,6 +5,7 @@ import { JuryDashboard, JuryFamily } from './JuryDashboard';
 import { JuryPractice } from './JuryPractice';
 import type { JuryPracticeTask } from './JuryPractice';
 import { juryApi } from './jury-api';
+import { juryScreenContext } from './jury-screen-context';
 import './jury.css';
 import './jury-bubble.css';
 import { JuryAndroidHome, AndroidStatusBar } from './JuryAndroidHome';
@@ -102,7 +103,7 @@ function JuryChat({mic,acquireMicrophone,voiceRead,visible,startPractice,wakeMes
     const clean=value.trim();if(!clean||busy.current)return;busy.current=true;spokenRequest.current=spoken;setSending(true);setError('');if(spoken)onVoiceError('');setText('');setSuggestion(null);
     const history=[...messages,{role:'user' as const,text:clean}];setMessages(history);setTyping(true);const began=Date.now();
     const controller=new AbortController();request.current=controller;
-    try { const reply=await juryApi<{instruction:string;audio?:JuryVoiceAudio;ended?:boolean}>('chat',{text:clean,voice:spoken&&voiceReadRef.current,history:messages,screen:document.querySelector('[data-jury-external-screen]:not([hidden])')?.textContent?.slice(0,2000)||''},'',controller.signal); await new Promise(resolve=>setTimeout(resolve,Math.max(0,2000-(Date.now()-began))));if(controller.signal.aborted)return;if(reply.ended){onVoiceEnd();return;}setMessages(m=>[...m,{role:'assistant',text:reply.instruction}]);
+    try { const reply=await juryApi<{instruction:string;audio?:JuryVoiceAudio;ended?:boolean}>('chat',{text:clean,voice:spoken&&voiceReadRef.current,history:messages,screen:juryScreenContext(document.querySelector('[data-jury-external-screen]:not([hidden])'))},'',controller.signal); await new Promise(resolve=>setTimeout(resolve,Math.max(0,2000-(Date.now()-began))));if(controller.signal.aborted)return;if(reply.ended){onVoiceEnd();return;}setMessages(m=>[...m,{role:'assistant',text:reply.instruction}]);
       const normalized=clean.toLowerCase();if(/grupo/.test(normalized))setSuggestion('group');else if(/ubicaci[oó]n|locaci[oó]n/.test(normalized))setSuggestion('location');else if(/crear.*(gmail|cuenta)/.test(normalized))setSuggestion('gmail');else if(/gmail|correo|mail/.test(normalized))setSuggestion('email');else if(/mensaje|whatsapp|wasap|wsp/.test(normalized))setSuggestion('message');
       if(spoken&&voiceReadRef.current){if(!reply.audio)throw new Error('No pude preparar la respuesta de voz.');setTyping(false);await playVoice(reply.audio);}
 
