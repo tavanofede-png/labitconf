@@ -47,10 +47,32 @@ import kotlinx.coroutines.delay
     var pendingBubble by rememberSaveable { mutableStateOf(false) }
     var wakeDisclosure by rememberSaveable { mutableStateOf(false) }
     var bubbleDisclosure by rememberSaveable { mutableStateOf(false) }
+    var pendingWake by rememberSaveable { mutableStateOf(false) }
+    var accessibilityRequested by rememberSaveable { mutableStateOf(false) }
+    var accessibilityReturned by rememberSaveable { mutableStateOf(false) }
+    var wakeResumeGeneration by remember { mutableIntStateOf(0) }
+    val accessibilityPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        accessibilityReturned = true
+    }
     val assistantRole = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         app.refreshAssistantRole()
-        if (app.state.value.assistantSelected) app.startWakeListening()
-        else app.presenceNotice("Elegí TINO como asistente de Android para activar Hola TINO.")
+        if (!app.state.value.assistantSelected) { pendingWake = false; app.presenceNotice("Elegí TINO como asistente de Android para activar Hola TINO.") }
+    }
+    LaunchedEffect(pendingWake, state.assistantSelected, state.accessibilityConnected, accessibilityReturned, wakeResumeGeneration) {
+        if (!pendingWake || !state.assistantSelected || !lifecycle.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
+        if (state.accessibilityConnected) {
+            pendingWake = false
+            app.startWakeListening()
+        } else if (!accessibilityRequested) {
+            accessibilityRequested = true
+            app.presenceNotice("Activá TINO en Accesibilidad. La escucha continuará al volver a la app.")
+            runCatching { accessibilityPermission.launch(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                .onFailure { pendingWake = false; app.presenceNotice("No pude abrir Accesibilidad. Activá TINO desde los ajustes de Android.") }
+        } else if (accessibilityReturned) {
+            // Android can bind the accessibility service shortly after the settings activity returns.
+            delay(2500)
+            if (!app.state.value.accessibilityConnected) { pendingWake = false; app.presenceNotice("Accesibilidad de TINO sigue apagada. La escucha no se inició.") }
+        }
     }
     fun startBubble() {
         if (Settings.canDrawOverlays(context)) runCatching {
@@ -59,14 +81,18 @@ import kotlinx.coroutines.delay
     }
     fun startWake() {
         beforeWakeStart()
+        if (app.settings.token.isBlank()) { app.presenceNotice("Conectá este dispositivo antes de activar Hola TINO."); return }
         runCatching {
             app.refreshAssistantRole()
-            if (!app.state.value.assistantSelected && Build.VERSION.SDK_INT >= 29) {
-                val roles = context.getSystemService(RoleManager::class.java)
-                assistantRole.launch(roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
-            } else app.startWakeListening()
+            accessibilityRequested = false; accessibilityReturned = false; pendingWake = true
+            if (!app.state.value.assistantSelected) {
+                val intent = if (Build.VERSION.SDK_INT >= 29) {
+                    context.getSystemService(RoleManager::class.java).createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)
+                } else Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)
+                assistantRole.launch(intent)
+            }
             app.presenceNotice(null)
-        }.onFailure { app.presenceNotice("No pude activar «Hola TINO». Probá otra vez desde la app abierta.") }
+        }.onFailure { pendingWake = false; app.presenceNotice("No pude activar «Hola TINO». Probá otra vez desde la app abierta.") }
     }
     val voicePermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val mic = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -97,6 +123,7 @@ import kotlinx.coroutines.delay
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                wakeResumeGeneration++
                 if (app.state.value.bubbleEnabled && !Settings.canDrawOverlays(context)) context.stopService(Intent(context, FloatingBubbleService::class.java))
                 if (app.state.value.wakeEnabled && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
                     app.stopWakeListening()
@@ -115,8 +142,8 @@ import kotlinx.coroutines.delay
             }
             HorizontalDivider(Modifier.padding(horizontal = 14.dp), color = Color(0xFFE6EEED))
             PermissionToggle("Hola TINO", state.wakeStatus, state.wakeEnabled) { enabled ->
-                if (!enabled) app.stopWakeListening()
-                else if (app.settings.read("wakeDisclosurePolicy") == "1") requestWakePermissions()
+                if (!enabled) { pendingWake = false; app.stopWakeListening() }
+                else if (app.settings.read("wakeDisclosurePolicy") == "2" && app.settings.openAiConsent && app.settings.remoteScreenConsent) requestWakePermissions()
                 else wakeDisclosure = true
             }
         }
@@ -133,10 +160,12 @@ import kotlinx.coroutines.delay
         dismissButton = { TextButton(onClick = { bubbleDisclosure = false }) { Text("Ahora no") } })
     if (wakeDisclosure) AlertDialog(onDismissRequest = { wakeDisclosure = false },
         title = { Text("Activar «Hola TINO»") },
-        text = { Text("TINO usará el micrófono en segundo plano para reconocer «Hola TINO» en este dispositivo. Al oír el sonido, decí tu consulta.\n\nEl audio no se guarda ni se envía. Solo tu consulta, después de la activación, se envía al chat. Android mostrará el micrófono activo y una notificación para detenerlo. Podés apagarlo cuando quieras.") },
+        text = { Text("TINO reconocerá «Hola TINO» en este dispositivo. Después de la activación enviará tu consulta y los controles accesibles de la pantalla a la asistencia de OpenAI para responderte y orientarte. La escucha ambiente no se guarda ni se envía. Las capturas de imagen tienen un permiso separado.\n\nAndroid necesita micrófono, notificaciones, TINO como asistente y su servicio de Accesibilidad. Te guiaremos por esos permisos y la escucha continuará al volver. Podés apagarla cuando quieras.") },
         confirmButton = { TextButton(onClick = {
             wakeDisclosure = false
-            app.settings.write("wakeDisclosurePolicy", "1")
+            app.settings.write("wakeDisclosurePolicy", "2")
+            app.settings.openAiConsent = true
+            app.settings.remoteScreenConsent = true
             requestWakePermissions()
         }) { Text("Activar") } }, dismissButton = { TextButton(onClick = { wakeDisclosure = false }) { Text("Ahora no") } })
 }

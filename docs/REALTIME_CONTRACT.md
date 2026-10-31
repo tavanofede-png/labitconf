@@ -12,6 +12,8 @@ La persona hace cada toque. `point_to_control` solo señala IDs vigentes de una 
 
 ## Activación y silencio
 
+La activación comprueba vinculación, consentimiento de voz y controles remotos, micrófono, notificaciones, asistente predeterminado y Accesibilidad antes de iniciar el servicio. El interruptor conduce por los permisos que faltan y conserva la intención de activar hasta volver a TINO; iniciar un micrófono mientras todavía está abierta la pantalla de permisos no forma parte del flujo. Reinstalar borrando datos requiere completar de nuevo esa configuración. El consentimiento de controles no habilita capturas de imagen.
+
 La escucha local de «Hola Tino» activa una consulta. El saludo no se detecta enviando audio permanentemente a OpenAI. Después de responder, TINO vuelve a esperar la activación explícita: una pregunta del agente no abre el micrófono automáticamente ni captura conversaciones de otras personas. `expectsReply` es informativo.
 
 «Terminar conversación» cierra el transporte y borra el contexto temporal, pero mantiene la escucha local de «Hola Tino». Después de **30 segundos sin interacción** la conversación también termina y su memoria se elimina. Una activación posterior empieza desde cero. Cada acción real observada —toque, escritura, desplazamiento o navegación a otra app— reinicia el plazo de una conversación activa. Las actualizaciones pasivas de pantalla, pings y configuración no lo prolongan. No se corta una captura, generación o reproducción activa; el plazo comienza al terminar esa actividad.

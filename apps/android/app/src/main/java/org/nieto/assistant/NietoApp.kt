@@ -198,11 +198,23 @@ class NietoApp : Application() {
     fun setWakeStatus(text: String) { mutable.value = mutable.value.copy(wakeStatus = text) }
     fun refreshAssistantRole() { mutable.value = mutable.value.copy(assistantSelected = VoiceInteractionService.isActiveService(this, ComponentName(this, TinoVoiceInteractionService::class.java))) }
     fun startWakeListening() {
-        if (!settings.openAiConsent || !settings.remoteScreenConsent || settings.token.isBlank()) {
-            status("Completá la conexión y los permisos iniciales de TINO."); return
-        }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            status("Falta autorizar el micrófono para decir Hola Tino."); return
+        refreshAssistantRole()
+        val next = org.nieto.assistant.voice.WakeSetupPolicy.next(org.nieto.assistant.voice.WakeSetupRequirements(
+            linked = settings.token.isNotBlank(), consent = settings.openAiConsent && settings.remoteScreenConsent,
+            microphone = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
+            notifications = android.os.Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED,
+            assistant = state.value.assistantSelected, accessibility = state.value.accessibilityConnected && screenCapture != null,
+        ))
+        if (next != org.nieto.assistant.voice.WakeSetupStep.READY) {
+            val message = when (next) {
+                org.nieto.assistant.voice.WakeSetupStep.CONNECTION -> "Conectá este dispositivo antes de activar Hola TINO."
+                org.nieto.assistant.voice.WakeSetupStep.CONSENT -> "Aceptá el permiso de voz y asistencia para activar Hola TINO."
+                org.nieto.assistant.voice.WakeSetupStep.MICROPHONE -> "Permití el micrófono para activar Hola TINO."
+                org.nieto.assistant.voice.WakeSetupStep.NOTIFICATIONS -> "Permití las notificaciones de la escucha de TINO."
+                org.nieto.assistant.voice.WakeSetupStep.ASSISTANT -> "Elegí TINO como asistente de Android."
+                else -> "Activá el servicio de Accesibilidad de TINO y volvé a la app."
+            }
+            setWakeStatus(message); presenceNotice(message); return
         }
         if (!state.value.assistanceEnabled) enableAssistance()
         if (!state.value.assistanceEnabled) return

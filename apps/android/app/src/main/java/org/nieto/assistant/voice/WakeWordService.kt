@@ -70,6 +70,15 @@ class WakeWordService : Service() {
     private var foreground = false
     private var destroyed = false
     private var lastStatus = ""
+    // Content-free runtime diagnostics: never keep PCM, recognized words or provider text here.
+    @Volatile private var lastAudioAt = 0L
+    @Volatile private var inputRms = 0
+    @Volatile private var constrainedFinals = 0L
+    @Volatile private var verifiedWakeCount = 0L
+    @Volatile private var freeFinals = 0L
+    @Volatile private var freePrefixMatches = false
+    @Volatile private var invocationCount = 0L
+    private var handoffCount = 0L
 
     private sealed interface Event {
         data object Changed : Event
@@ -104,6 +113,11 @@ class WakeWordService : Service() {
     override fun dump(fd: java.io.FileDescriptor, writer: java.io.PrintWriter, args: Array<out String>?) {
         val state = app.state.value
         writer.println("wakeOptIn=" + runCatching { app.settings.wakeOptIn }.getOrNull())
+        writer.println("assistantSelected=" + state.assistantSelected)
+        writer.println("accessibilityConnected=" + state.accessibilityConnected)
+        writer.println("deviceLinked=" + app.settings.token.isNotBlank())
+        writer.println("openAiConsent=" + app.settings.openAiConsent)
+        writer.println("remoteScreenConsent=" + app.settings.remoteScreenConsent)
         writer.println("wakeEnabled=" + state.wakeEnabled)
         writer.println("foreground=" + foreground)
         writer.println("captureJobActive=" + (recorderJob?.isActive == true))
@@ -114,6 +128,17 @@ class WakeWordService : Service() {
         writer.println("answerPresent=" + state.answer.isNotBlank())
         writer.println("pointerPresent=" + (state.screenStep != null))
         writer.println("idleRemainingMs=" + app.idleRemainingMs)
+        writer.println("voicePhase=" + state.voice.phase.name)
+        writer.println("voiceMessage=" + state.voice.message)
+        writer.println("busy=" + state.busy)
+        writer.println("lastAudioAgeMs=" + if (lastAudioAt == 0L) -1 else SystemClock.elapsedRealtime() - lastAudioAt)
+        writer.println("inputRms=" + inputRms)
+        writer.println("constrainedFinals=" + constrainedFinals)
+        writer.println("verifiedWakeCount=" + verifiedWakeCount)
+        writer.println("freeFinals=" + freeFinals)
+        writer.println("freePrefixMatches=" + freePrefixMatches)
+        writer.println("invocationCount=" + invocationCount)
+        writer.println("handoffCount=" + handoffCount)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -253,6 +278,7 @@ class WakeWordService : Service() {
         val now = SystemClock.elapsedRealtime()
         if (!microphoneGranted() || !policy.accept(event.phrase, conditions(app.state.value), now)) { event.invocation?.pcm24k?.fill(0); return }
         publishStatus("Preparando la consulta…")
+        handoffCount++
         try { app.startVoiceFromWake(event.invocation) }
         catch (_: RuntimeException) { event.invocation?.pcm24k?.fill(0); publishStatus("No pude empezar la consulta. Podés volver a decir Hola Tino.") }
         scheduleCheck(now)
@@ -357,6 +383,9 @@ class WakeWordService : Service() {
             val buffer = ShortArray(320)
             val startedAt = SystemClock.elapsedRealtime()
             var reportedHealthy = false
+            var windowStarted = startedAt
+            var windowSamples = 0L
+            var windowSquares = 0.0
             while (currentCoroutineContext().isActive) {
                 currentCoroutineContext().ensureActive()
                 val count = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_NON_BLOCKING)
@@ -365,17 +394,27 @@ class WakeWordService : Service() {
                     reportedHealthy = true; events.trySend(Event.Healthy(generation))
                 }
                 if (count == 0) { delay(20); continue }
+                lastAudioAt = SystemClock.elapsedRealtime()
+                for (index in 0 until count) { val value = buffer[index].toDouble(); windowSquares += value * value }
+                windowSamples += count
+                if (lastAudioAt - windowStarted >= 1000L) {
+                    inputRms = kotlin.math.sqrt(windowSquares / windowSamples).toInt()
+                    windowSamples = 0; windowSquares = 0.0; windowStarted = lastAudioAt
+                }
                 if (!ring.append(buffer, count)) throw IOException("Invalid local audio buffer")
                 val wakeFinal = wake?.acceptWaveForm(buffer, count) == true
                 val endFinal = ending.acceptWaveForm(buffer, count)
                 if (wakeFinal) {
+                    constrainedFinals++
                     val json = JSONObject(wake!!.result)
                     // The constrained decoder proves only the wake prefix; never export its shorter audio.
-                    ring.verifyWakePrefix(true, json.optString("text"), timed(json))?.let { wakeProof = it }
+                    ring.verifyWakePrefix(true, json.optString("text"), timed(json))?.let { wakeProof = it; verifiedWakeCount++ }
                 }
                 if (endFinal) {
+                    freeFinals++
                     val json = JSONObject(ending.result)
                     val text = json.optString("text", "")
+                    freePrefixMatches = WakeWordPolicy.matches(text)
                     val state = app.state.value
                     val words = finalWords(json)
                     if (LocalEndPolicy.accepts(true, text, words, app.hasActiveConversation,
@@ -389,7 +428,7 @@ class WakeWordService : Service() {
                     pendingFreeFinal?.let { (text, words) ->
                         // Retry the complete free utterance after either final, never the shorter wake prefix.
                         val invocation = ring.extractInvocation(true, text, words, wakeProof)
-                        if (invocation != null) return CaptureResult(text, false, invocation)
+                        if (invocation != null) { invocationCount++; return CaptureResult(text, false, invocation) }
                     }
                 }
             }
