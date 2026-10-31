@@ -4,6 +4,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class VoiceActivityPolicyTest {
+    @Test fun `a brief spoken confirmation is accepted only in the explicit reply window`() {
+        val reply = VoiceActivityPolicy(followUp = true)
+        reply.observe(pcm(1600, 180))
+        assertTrue(reply.hasSpeech)
+        assertEquals(VoiceActivityPolicy.Decision.END_OF_SPEECH, reply.observe(pcm(0, 1200)))
+        val normal = VoiceActivityPolicy()
+        normal.observe(pcm(1600, 180))
+        assertFalse(normal.hasSpeech)
+    }
+    @Test fun `a sixty millisecond click does not become a spoken confirmation`() {
+        val reply = VoiceActivityPolicy(followUp = true)
+        reply.observe(pcm(9000, 60))
+        assertFalse(reply.hasSpeech)
+        assertEquals(VoiceActivityPolicy.Decision.NO_SPEECH, reply.observe(pcm(0, 7940)))
+    }
     private fun pcm(amplitude: Int, milliseconds: Int = 100): ByteArray {
         val samples = RealtimePolicy.SAMPLE_RATE * milliseconds / 1000
         return ByteArray(samples * 2).apply {

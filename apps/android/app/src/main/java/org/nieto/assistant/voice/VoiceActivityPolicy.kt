@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.sqrt
 
 /** Energy-based endpointing for one PCM16 mono utterance. Keeps counters only, never PCM or transcripts. */
-class VoiceActivityPolicy(private val sampleRate: Int = RealtimePolicy.SAMPLE_RATE) {
+class VoiceActivityPolicy(private val sampleRate: Int = RealtimePolicy.SAMPLE_RATE, followUp: Boolean = false) {
     enum class Decision { CONTINUE, END_OF_SPEECH, NO_SPEECH, MAX_DURATION }
 
     companion object {
@@ -17,6 +17,8 @@ class VoiceActivityPolicy(private val sampleRate: Int = RealtimePolicy.SAMPLE_RA
     }
 
     init { require(sampleRate > 0) }
+    private val minimumVoiceMs = if (followUp) 160L else MIN_VOICE_MS
+    private val minimumRunMs = if (followUp) 120L else MIN_VOICE_RUN_MS
     @Volatile var hasSpeech = false
         private set
     private var totalSamples = 0L
@@ -49,7 +51,7 @@ class VoiceActivityPolicy(private val sampleRate: Int = RealtimePolicy.SAMPLE_RA
             currentRunSamples += samples
             longestRunSamples = max(longestRunSamples, currentRunSamples)
             lastVoiceSample = totalSamples
-            if (voicedSamples * 1000 / sampleRate >= MIN_VOICE_MS && longestRunSamples * 1000 / sampleRate >= MIN_VOICE_RUN_MS) hasSpeech = true
+            if (voicedSamples * 1000 / sampleRate >= minimumVoiceMs && longestRunSamples * 1000 / sampleRate >= minimumRunMs) hasSpeech = true
         } else {
             currentRunSamples = 0
             if (!hasSpeech && rms < MIN_VOICE_RMS) noiseFloor = noiseFloor * 0.9 + rms * 0.1

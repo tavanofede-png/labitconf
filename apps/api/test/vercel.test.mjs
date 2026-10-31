@@ -138,6 +138,26 @@ test('cloud concurrency leases enforce shared device, origin and global caps, th
   assert.equal(JSON.stringify((await a.read()).realtimeLeases).includes('origin-a'), false);
 });
 
+test('operator-authorized continuous mode removes daily cuts while preserving history, admission and shared concurrency', async () => {
+  const client = durableClient(); const store = new BlobStore({ client, sleep: async () => {} });
+  const previousUsage = { day: '2026-10-30', devices: {}, origins: {}, global: { turns: 9999, seconds: 99999, contexts: 9999 } };
+  await store.update(state => {
+    state.users.push({ id: 'approved', realtimeApproved: true }, { id: 'second', realtimeApproved: true }, { id: 'third', realtimeApproved: true }, { id: 'unapproved' });
+    state.realtimeUsage = previousUsage;
+  });
+  const admission = new RealtimeAdmission(store, { continuous: true });
+  await assert.rejects(admission.reserve('unapproved', 'same-origin', 'ws'), error => error.code === 'device_activation_required');
+  const active = await admission.reserve('approved', 'same-origin', 'ws');
+  await assert.rejects(admission.reserve('approved', 'another-origin', 'ws'), error => error.code === 'realtime_already_active');
+  const second = await admission.reserve('second', 'same-origin', 'ws');
+  await assert.rejects(admission.reserve('third', 'same-origin', 'ws'), error => error.code === 'realtime_origin_busy');
+  await admission.release(active.leaseId); await admission.release(second.leaseId);
+  for (let index = 0; index < 64; index++) { const lease = await admission.reserve('approved', 'same-origin', 'ws'); await admission.release(lease.leaseId); }
+  assert.deepEqual((await store.read()).realtimeUsage, previousUsage);
+  assert.equal(admission.status().dailyLimitsEnforced, false); assert.equal(admission.status().limits, null);
+  assert.equal(admission.usage(await store.read()).device('approved').remaining, null);
+});
+
 test('HTTP cloud reply holds a durable lease until provider finishes and releases it before completing the response', async t => {
   const client = durableClient(); const store = new BlobStore({ client, sleep: async () => {} });
   let heldDuringProvider = false;

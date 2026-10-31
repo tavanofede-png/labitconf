@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@vercel/blob": "2.8.2",
+    "@vercel/functions": "3.10.5",
     "ws": "8.22.0"
   },
   "scripts": {

@@ -20,10 +20,17 @@ class ScreenPolicyTest {
         val bad=control.copy(bounds=Box(0,0,1081,100))
         assertNull(ScreenPolicy.target(ScreenStep("screen-1","c1","Tocá"),screen.copy(controls=listOf(bad)),2000))
     }
-    @Test fun `sensitive screens and labels never enter control payload`() {
-        listOf("com.bank.mobile","com.android.permissioncontroller","com.wallet.app","com.android.inputmethod.latin","com.mercadopago.wallet").forEach { assertTrue(ScreenPolicy.blockedPackage(it)) }
-        assertFalse(ScreenPolicy.blockedPackage("com.whatsapp"))
-        listOf("Contraseña","Código de verificación","Mi token","Ingresar PIN","Transferir").forEach { assertTrue(it,ScreenPolicy.sensitiveLabel(it));assertNull(ScreenPolicy.safeLabel(it)) }
+    @Test fun `apps and control names are not a privacy denylist`() {
+        listOf("com.bank.mobile","com.android.permissioncontroller","com.wallet.app","com.android.inputmethod.latin","com.mercadopago.wallet",
+            "com.android.settings", "com.android.systemui", "ar.gob.argentinagobar", "ar.gob.afip.mobile.android.contribuyentes.mi_afip", "com.other.app")
+            .forEach { assertFalse(it, ScreenPolicy.blockedPackage(it)) }
+        assertTrue(ScreenPolicy.blockedPackage(""))
+        listOf("Contraseña", "Código de verificación", "Mi token", "Ingresar PIN", "Transferir", "Ingresar con clave fiscal", "Cambiar contraseña", "Período 2026")
+            .forEach { assertFalse(it, ScreenPolicy.sensitiveLabel(it)); assertEquals(it, ScreenPolicy.safeLabel(it)) }
+    }
+    @Test fun `secret values stay out of control labels without blocking neighboring controls`() {
+        listOf("Contraseña: secreta", "PIN=4321", "OTP:654321", "sk-proj-fake_credential", "Bearer fake_token")
+            .forEach { assertTrue(it, ScreenPolicy.sensitiveLabel(it)); assertNull(ScreenPolicy.safeLabel(it)) }
         assertNull(ScreenPolicy.safeLabel("Código 123456"))
         assertNull(ScreenPolicy.safeLabel("persona@example.org"))
         assertEquals("Buscar",ScreenPolicy.safeLabel("Buscar"))

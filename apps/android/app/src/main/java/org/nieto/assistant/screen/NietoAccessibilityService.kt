@@ -50,6 +50,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
                 if (!state.assistanceEnabled || state.nativeSurfaceVisible) { ++captureGeneration; if (!state.assistanceEnabled) lastCollected = null }
             }
         }
+        app.restoreWakeListening()
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
@@ -97,7 +98,8 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
         app.screenPackage(activePackage)
         if (app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) {
             val display = resources.displayMetrics
-            val fresh = RemoteScreenCollector.collect(root, display.widthPixels.coerceAtMost(10000), display.heightPixels.coerceAtMost(10000), SystemClock.elapsedRealtime(), remoteRevision)
+            val navigation = ScreenNavigationCollector.collect(this, activePackage)
+            val fresh = RemoteScreenCollector.collect(root, display.widthPixels.coerceAtMost(10000), display.heightPixels.coerceAtMost(10000), SystemClock.elapsedRealtime(), remoteRevision, navigation)
             val stable = lastCollected?.takeIf { it.context.fingerprint == fresh.context.fingerprint }
             lastCollected = if (stable != null) fresh.copy(context = fresh.context.copy(id = stable.context.id)) else fresh
             app.onScreenObserved(lastCollected!!.context)
@@ -152,8 +154,9 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
                     if (generation != captureGeneration) { callback(null); return }
                     collectScreen()
                     if (lastCollected?.context?.id != collected.context.id || lastCollected?.context?.blocked == true) { callback(null); return }
-                    // Secure windows are never bypassed. No pixels or controls from this request are uploaded.
-                    if (errorCode == 6) { app.screenUnavailable(); callback(null) }
+                    // Android refused the pixels. Keep only the already reduced, current accessible controls.
+                    // No alternative capture or attempt to bypass FLAG_SECURE is made.
+                    if (errorCode == 6) callback(collected.context.copy(image = null))
                     else callback(collected.context.copy(notice = "Android no permitió la captura. Continúo sólo con controles accesibles."))
                 }
                 override fun onSuccess(result: ScreenshotResult) {
@@ -190,7 +193,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
             catch (_: Exception) { captureInProgress = false; overlay?.render(app.state.value, true); callback(collected.context) }
         }, 120)
     }
-    override fun onInterrupt() { app.stopAssistance(); app.cancel(); overlay?.clear(); localOverlay?.clear() }
+    override fun onInterrupt() { app.stopAssistance(clearWakePreference = false); app.cancel(); overlay?.clear(); localOverlay?.clear() }
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         collector?.cancel()
@@ -200,7 +203,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
         app.screenCapture = null
         WhitelistedCollector.clearContext()
         if (localObserving) app.observe(SafeScreen("", "", recognized = false))
-        app.stopAssistance()
+        app.stopAssistance(clearWakePreference = false)
         app.screenConnection(false)
         super.onDestroy()
     }

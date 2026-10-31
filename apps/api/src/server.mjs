@@ -94,9 +94,10 @@ export function createApp({
   allowLocalAssistant = store.storageType !== 'vercel_blob_private_cas',
   realtimePaths = ['/api/assistant/realtime'],
   realtimeRewriteQuery = null,
+  continuousAssistance = process.env.CONTINUOUS_ASSISTANCE === '1', defer = promise => { void promise; },
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
-  const admission = new RealtimeAdmission(store, { now, limits: realtimeBudgetLimits });
+  const admission = new RealtimeAdmission(store, { now, limits: realtimeBudgetLimits, continuous: continuousAssistance });
   const rates = new Map(); const realtimeAttempts = new Map();
   const accounts = createAccounts({ store, now, ...accountOptions });
   const assistant = createAssistant({ now, ...(assistantOptions ?? {generateReply}) });
@@ -569,6 +570,7 @@ export function createApp({
   handler.store = store; handler.openarg = openarg; handler.realtime = realtime; handler.admission = admission; handler.clientAddress = clientAddress;
   handler.realtimePaths = new Set(realtimePaths);
   handler.realtimeRewriteQuery = realtimeRewriteQuery;
+  handler.defer = defer;
   handler.authorizeRealtime = async req => {
     const origin = req.headers.origin;
     if (origin && !corsOrigins.includes(origin)) throw new RealtimeError('origin_not_allowed', 'Origen no permitido.', 403);

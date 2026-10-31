@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 enum class VoicePhase { IDLE, CONNECTING, LISTENING, WAITING, SPEAKING, ERROR }
-data class VoiceState(val phase: VoicePhase = VoicePhase.IDLE, val message: String = "Voz con TINO", val partialText: String = "") {
+data class VoiceState(val phase: VoicePhase = VoicePhase.IDLE, val message: String = "Voz con TINO", val partialText: String = "", val audibleError: Boolean = true) {
     val active get() = phase in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING, VoicePhase.WAITING, VoicePhase.SPEAKING)
 }
 
@@ -41,6 +41,8 @@ class RealtimeVoice(
     private val onAnswer: (String) -> Unit,
     private val onGuidanceOffer: () -> Unit,
     private val onStep: (ScreenStep) -> Unit = {},
+    private val onTaskContext: (TaskContext?) -> Unit = {},
+    private val onFollowUpRequested: () -> Unit = {},
 ) {
     private val client = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(20, TimeUnit.SECONDS).retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false).build()
@@ -49,6 +51,21 @@ class RealtimeVoice(
     private var ready = false
     private var pendingCapture = false
     private var pendingText: String? = null
+    private var pendingGuidance = false
+    private var quietFollowUp = false
+    @Volatile private var inputHadSpeech = false
+    private var expectsReply = false
+    private val continuity = SessionContinuityPolicy()
+    private val taskMemory = TaskContextMemory()
+    private var taskContext: TaskContext?
+        get() = taskMemory.context
+        set(value) { taskMemory.remember(value) }
+    private var logicalIdentity: Pair<String, String>? = null
+    private var requestEpoch = 0L
+    private var connectJob: Job? = null
+    private var idleClose: Job? = null
+    private var lastClosedAt = 0L
+    private var transportStartedAt = 0L
     private var pendingScreen: JSONObject? = null
     private var lastScreenContextAt = 0L
     private var ignoredCancelAcks = 0
@@ -72,34 +89,64 @@ class RealtimeVoice(
             val hadAudio = playback.hasAudio
             if (!hadAudio || send(JSONObject().put("type", "playback.complete").put("turnId", turnId))) {
                 playback.clear()
-                emit(VoiceState(message = "Respuesta terminada. Podés volver a hablar."))
+                if (expectsReply) {
+                    expectsReply = false
+                    emit(VoiceState(VoicePhase.CONNECTING, "Preparando una breve ventana para tu respuesta…"))
+                    onFollowUpRequested()
+                } else emit(VoiceState(message = "Respuesta terminada. Podés volver a hablar."))
             }
         }
     }, onFailure = { message -> fail(message) })
 
-    fun start(baseUrl: String, installationToken: String, screen: JSONObject? = null, text: String? = null, textOnly: Boolean = false) {
-        require(installationToken.isNotBlank()) { "Conectá este teléfono desde Ajustes." }
+    fun start(baseUrl: String, installationToken: String, screen: JSONObject? = null, text: String? = null,
+        textOnly: Boolean = false, followUp: Boolean = false) {
+        request(baseUrl to installationToken, screen, text, if (textOnly) "text" else "audio", guidance = false, followUp = followUp)
+    }
+
+    private fun request(identity: Pair<String, String>, screen: JSONObject?, text: String?, mode: String, guidance: Boolean, followUp: Boolean = false) {
+        require(identity.second.isNotBlank()) { "Conectá este teléfono desde Ajustes." }
+        if (taskMemory.bind(identity)) onTaskContext(null)
+        logicalIdentity = identity
+        ++requestEpoch
+        connectJob?.cancel(); idleClose?.cancel()
         if (ready) interruptPlayback(ignoreAcknowledgement = true)
-        player.stop()
-        turns.cancel()
-        transcript = ""
-        awaitingResponse = false
-        pendingCapture = true
-        outputMode = if (textOnly) "text" else "audio"
-        if (ready && connectionKey == (baseUrl to installationToken)) {
-            pendingScreen = screen; pendingText = text
+        player.stop(); turns.cancel(); transcript = ""; awaitingResponse = false
+        pendingCapture = true; pendingScreen = screen; pendingText = text; pendingGuidance = guidance
+        outputMode = mode; quietFollowUp = followUp; inputHadSpeech = false; expectsReply = false
+        if (ready && connectionKey == identity && !continuity.shouldRenewBeforeTurn(SystemClock.elapsedRealtime())) {
             beginRequested(connectionGeneration)
-            return
+        } else reopenPending(0)
+    }
+
+    /** Reconnect only for a pending explicit request, never because an idle timer fired. */
+    private fun reopenPending(attempt: Int) {
+        val identity = logicalIdentity ?: return
+        if (!pendingCapture) return
+        val screen = pendingScreen; val text = pendingText; val guidance = pendingGuidance
+        val mode = outputMode; val followUp = quietFollowUp; val epoch = requestEpoch
+        val releasingCapture = captureJob
+        connectJob?.cancel()
+        closeTransport()
+        pendingCapture = true; pendingScreen = screen; pendingText = text; pendingGuidance = guidance
+        outputMode = mode; quietFollowUp = followUp
+        emit(VoiceState(VoicePhase.CONNECTING, "Conectando con TINO. El micrófono todavía está apagado."))
+        connectJob = scope.launch {
+            releasingCapture?.join()
+            val releaseDelay = if (lastClosedAt == 0L) 0L else
+                (SessionContinuityPolicy.LEASE_RELEASE_MS - (SystemClock.elapsedRealtime() - lastClosedAt)).coerceAtLeast(0)
+            val retryDelay = if (attempt == 0) 0L else SessionContinuityPolicy.retryDelay(attempt, kotlin.random.Random.nextLong(201)) ?: return@launch
+            delay(maxOf(releaseDelay, retryDelay))
+            if (epoch != requestEpoch || !pendingCapture) return@launch
+            openConnection(identity, attempt)
         }
-        disconnect()
-        outputMode = if (textOnly) "text" else "audio"
-        pendingCapture = true
-        pendingScreen = screen; pendingText = text
+    }
+
+    private fun openConnection(identity: Pair<String, String>, attempt: Int) {
+        transportStartedAt = SystemClock.elapsedRealtime()
         val generation = ++connectionGeneration
-        connectionKey = baseUrl to installationToken
-        emit(VoiceState(VoicePhase.CONNECTING, "Conectando con OpenAI Realtime. El micrófono todavía está apagado."))
-        val request = Request.Builder().url(RealtimePolicy.socketUrl(baseUrl, BuildConfig.DEBUG))
-            .header("Authorization", "Bearer $installationToken").build()
+        connectionKey = identity
+        val request = Request.Builder().url(RealtimePolicy.socketUrl(identity.first, BuildConfig.DEBUG))
+            .header("Authorization", "Bearer " + identity.second).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 scope.launch {
@@ -110,23 +157,27 @@ class RealtimeVoice(
                 }
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                // Never display throwable messages, response bodies, headers or credentials.
                 val status = response?.code
                 response?.close()
-                scope.launch { if (generation == connectionGeneration) fail(when (status) {
-                    401, 403 -> "El servidor no autorizó la voz. Revisá la conexión del teléfono desde Ajustes."
-                    503 -> "OpenAI Realtime no está configurado o disponible en el servidor."
-                    429 -> "Hay muchas sesiones de voz. Esperá un momento y volvé a intentar."
-                    else -> "No pude mantener la conexión de voz. El micrófono quedó apagado. Podés usar texto."
-                }) }
+                scope.launch {
+                    if (generation != connectionGeneration) return@launch
+                    if (pendingCapture && attempt < SessionContinuityPolicy.MAX_RETRIES && status in listOf(null, 409, 502, 504)) {
+                        reopenPending(attempt + 1)
+                    } else fail(when (status) {
+                        401, 403 -> "El servidor no autorizó la voz. Revisá la conexión del teléfono desde Ajustes."
+                        503 -> "La asistencia de voz no está configurada o disponible en el servidor."
+                        429 -> "La asistencia no pudo autorizar otra consulta en este momento. Probá nuevamente más tarde."
+                        else -> "Se interrumpió la conexión de voz. Podés volver a decir Hola Tino para continuar la tarea."
+                    })
+                }
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                scope.launch { if (generation == connectionGeneration) {
-                    val active = current.active
-                    disconnect()
-                    emit(VoiceState(if (active) VoicePhase.ERROR else VoicePhase.IDLE,
-                        if (active) "La sesión de voz se cerró. El micrófono quedó apagado." else "Sesión de voz cerrada."))
-                } }
+                scope.launch {
+                    if (generation != connectionGeneration) return@launch
+                    if (pendingCapture && attempt < SessionContinuityPolicy.MAX_RETRIES) reopenPending(attempt + 1)
+                    else if (current.active) fail("Se interrumpió la respuesta. Podés volver a decir Hola Tino para continuar.")
+                    else closeTransport()
+                }
             }
         })
         armTimeout(25_000, generation, "La conexión de voz tardó demasiado. El micrófono no se activó.")
@@ -139,6 +190,11 @@ class RealtimeVoice(
         recording = false
         emit(current.copy(phase = VoicePhase.WAITING, message = "Terminando de enviar tu consulta…"))
         synchronized(captureLock) { runCatching { recorder?.stop() } }
+    }
+
+    fun skipFollowUp() {
+        quietFollowUp = false; expectsReply = false
+        if (!recording && current.phase == VoicePhase.CONNECTING) emit(VoiceState())
     }
 
     fun selectOutputMode(textOnly: Boolean) {
@@ -159,37 +215,55 @@ class RealtimeVoice(
         return true
     }
 
-    fun cancel() {
+    fun cancel(clearTaskContext: Boolean = true) {
+        ++requestEpoch; connectJob?.cancel(); connectJob = null; idleClose?.cancel()
         interruptPlayback(ignoreAcknowledgement = false)
-        disconnect()
+        closeTransport()
+        if (clearTaskContext) { forgetTaskContext(); logicalIdentity = null }
         emit(VoiceState(message = "Voz cancelada. Micrófono y reproducción apagados."))
     }
 
-    fun disconnect() {
+    fun disconnect() { cancel() }
+
+    private fun forgetTaskContext() { taskMemory.clear(); onTaskContext(null) }
+
+    /** Closing a technical transport preserves the bounded task and never schedules a new socket. */
+    private fun closeTransport() {
         ++connectionGeneration
-        pendingCapture = false
+        pendingCapture = false; pendingGuidance = false
         pendingText = null; pendingScreen = null; ignoredCancelAcks = 0
-        lastScreenContextAt = 0L
-        ready = false
-        awaitingResponse = false
-        commitCapture = false
-        recording = false
-        turns.cancel()
-        watchdog?.cancel(); watchdog = null
+        lastScreenContextAt = 0L; ready = false; awaitingResponse = false
+        commitCapture = false; recording = false; expectsReply = false
+        turns.cancel(); watchdog?.cancel(); watchdog = null; idleClose?.cancel(); idleClose = null
         captureDeadline?.cancel(); captureDeadline = null
         synchronized(captureLock) { runCatching { recorder?.stop() } }
         captureJob?.cancel(); captureJob = null
-        player.stop()
-        playback.clear()
-        socket?.cancel(); socket = null
-        connectionKey = null
-        transcript = ""
+        player.stop(); playback.clear()
+        socket?.let { previous ->
+            lastClosedAt = SystemClock.elapsedRealtime()
+            if (!previous.close(1000, "transport released")) previous.cancel()
+        }
+        socket = null; connectionKey = null; transcript = ""
+        continuity.transportClosed()
     }
 
-    private fun emit(value: VoiceState) { current = value; onState(value) }
+    private fun armIdleClose() {
+        idleClose?.cancel()
+        if (!ready || current.active) return
+        idleClose = scope.launch {
+            delay(SessionContinuityPolicy.IDLE_CLOSE_MS)
+            if (ready && !current.active && !pendingCapture) closeTransport()
+        }
+    }
+
+    private fun emit(value: VoiceState) {
+        current = value; onState(value)
+        if (value.active) idleClose?.cancel() else armIdleClose()
+    }
     private fun fail(message: String) {
-        disconnect()
-        emit(VoiceState(VoicePhase.ERROR, message.take(220)))
+        val audible = SessionContinuityPolicy.shouldSpeakError(quietFollowUp, inputHadSpeech)
+        closeTransport()
+        emit(VoiceState(VoicePhase.ERROR, message.take(220), audibleError = audible))
     }
     private fun send(message: JSONObject, failOnError: Boolean = true): Boolean {
         val ws = socket
@@ -203,12 +277,21 @@ class RealtimeVoice(
     }
     private fun beginRequested(generation: Long) {
         if (!send(JSONObject().put("type", "output.mode").put("mode", outputMode))) return
+        val guidance = pendingGuidance; pendingGuidance = false
+        if (guidance) {
+            pendingCapture = false; awaitingResponse = true
+            emit(VoiceState(VoicePhase.WAITING, "La pantalla cambió. TINO prepara el próximo paso…"))
+        }
         val screen = pendingScreen; pendingScreen = null
         if (screen != null) {
-            if (!send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", false))) return
+            if (!send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", guidance))) return
             lastScreenContextAt = SystemClock.elapsedRealtime()
         }
         if (screen == null) send(JSONObject().put("type", "screen.clear"))
+        if (guidance) {
+            armTimeout(110_000, generation, "No pude preparar el siguiente paso. Podés volver a decir Hola Tino.")
+            return
+        }
         val text = pendingText; pendingText = null
         if (text != null) {
             pendingCapture = false
@@ -217,7 +300,13 @@ class RealtimeVoice(
         } else beginCapture(generation)
     }
     fun updateScreen(screen: JSONObject, requestGuidance: Boolean): Boolean {
-        if (!ready || current.active) return false
+        if (current.active) return false
+        if (requestGuidance && (!ready || continuity.shouldRenewBeforeTurn(SystemClock.elapsedRealtime()))) {
+            val identity = logicalIdentity ?: return false
+            request(identity, screen, null, outputMode, guidance = true)
+            return true
+        }
+        if (!ready) return false
         if (requestGuidance) {
             turns.cancel(); player.stop(); transcript = ""; awaitingResponse = true
             emit(VoiceState(VoicePhase.WAITING, "La pantalla cambió. TINO prepara el próximo paso…"))
@@ -274,7 +363,25 @@ class RealtimeVoice(
                     fail("El servidor no ofrece el modelo o formato de audio esperado."); return
                 }
                 ready = true; watchdog?.cancel()
+                val session = event.optJSONObject("session")
+                continuity.ready(transportStartedAt,
+                    session?.optLong("maxSessionMs", SessionContinuityPolicy.DEFAULT_MAX_MS) ?: SessionContinuityPolicy.DEFAULT_MAX_MS,
+                    session?.optLong("renewAfterMs", SessionContinuityPolicy.DEFAULT_RENEW_MS) ?: SessionContinuityPolicy.DEFAULT_RENEW_MS,
+                    session?.optBoolean("renewable", false) == true)
+                taskContext?.let { context ->
+                    if (!send(JSONObject().put("type", "resume.context").put("context", JSONObject()
+                        .put("goal", context.goal).put("targetApp", context.targetApp).put("progress", context.progress)))) return
+                }
                 if (pendingCapture) beginRequested(generation)
+            }
+            "renewal.required" -> {
+                continuity.requireRenewal()
+                if (!current.active && continuity.renewable) closeTransport()
+            }
+            "task.context" -> {
+                val context = event.optJSONObject("context") ?: return
+                taskContext = TaskContext.bounded(context.optString("goal"), context.optString("targetApp"), context.optString("progress"))
+                onTaskContext(taskContext)
             }
             "response.started" -> {
                 if (!awaitingResponse) return
@@ -282,6 +389,7 @@ class RealtimeVoice(
                 val responseMode = event.optString("outputMode", outputMode)
                 if (responseMode != outputMode) { fail("El servidor no respetó el modo de respuesta elegido. Volvé a intentar."); return }
                 if (turns.begin(turnId)) {
+                    expectsReply = false
                     transcript = ""
                     playback.start(turnId)
                     if (outputMode == "audio") player.start(turnId)
@@ -319,6 +427,7 @@ class RealtimeVoice(
                 val turnId = event.optString("turnId")
                 if (!turns.accepts(turnId)) return
                 awaitingResponse = false; watchdog?.cancel()
+                expectsReply = event.optBoolean("expectsReply", false) && outputMode == "audio"
                 if (event.optString("status") != "completed") {
                     player.stop(); turns.cancel()
                     emit(VoiceState(VoicePhase.ERROR, "La respuesta no se completó. Podés intentar otra vez."))
@@ -352,7 +461,7 @@ class RealtimeVoice(
         turns.cancel()
         if (!send(JSONObject().put("type", "audio.start"))) return
         recording = true
-        val activity = VoiceActivityPolicy()
+        val activity = VoiceActivityPolicy(followUp = quietFollowUp)
         val silentTimeout = AtomicBoolean(false)
         emit(VoiceState(VoicePhase.CONNECTING, "Preparando el micrófono. Hablá después de la señal."))
         val captureSocket = socket
@@ -413,7 +522,9 @@ class RealtimeVoice(
                         problem = "La conexión es demasiado lenta para enviar el audio."; break
                     }
                     captured += aligned
-                    when (activity.observe(chunk, aligned)) {
+                    val decision = activity.observe(chunk, aligned)
+                    inputHadSpeech = activity.hasSpeech
+                    when (decision) {
                         VoiceActivityPolicy.Decision.END_OF_SPEECH, VoiceActivityPolicy.Decision.MAX_DURATION -> {
                             commitCapture = true
                             recording = false
@@ -446,7 +557,10 @@ class RealtimeVoice(
                         commitCapture = false
                         awaitingResponse = false
                         turns.cancel()
-                        emit(VoiceState(VoicePhase.ERROR, "No escuché voz con claridad. Volvé a hablar o escribile a TINO."))
+                        val quiet = quietFollowUp
+                        quietFollowUp = false
+                        if (quiet) emit(VoiceState())
+                        else emit(VoiceState(VoicePhase.ERROR, "No escuché voz con claridad. Podés volver a decir Hola Tino."))
                         return@launch
                     }
                     if (!commitCapture) return@launch

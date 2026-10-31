@@ -51,7 +51,7 @@ export function ProductionInstall() {
         <div className="install-introduction">
           <p className="install-eyebrow"><AndroidLogoIcon size={19} aria-hidden="true" /> TINO PARA ANDROID <span>v0.7.0</span></p>
           <h1 id="install-title">Tu teléfono.<br /><span>Con una mano cerca.</span></h1>
-          <p className="install-lead">Pedí ayuda con tu voz. TINO te acompaña dentro de Gmail, WhatsApp y tus aplicaciones, y te señala dónde tocar.</p>
+          <p className="install-lead">Pedí ayuda con tu voz. TINO te acompaña por las aplicaciones de tu teléfono, sigue tu tarea entre ellas y te señala dónde tocar.</p>
           <a className="install-download" href={APK_DOWNLOAD_URL}><DownloadSimpleIcon size={23} aria-hidden="true" /><span>Descargar TINO para Android</span></a>
           <p className="install-download-note">APK · Instalación directa en tu dispositivo</p>
           <div className="install-device"><AndroidLogoIcon size={25} aria-hidden="true" /><div><span>Dispositivo objetivo</span><strong>Samsung Galaxy Tab S10+ · Android 16</strong></div></div>
@@ -80,7 +80,7 @@ export function ProductionInstall() {
         </div>
       </section>
 
-      <section className="install-voice" aria-labelledby="install-voice-title"><div><p className="install-eyebrow">EN TUS APLICACIONES</p><h2 id="install-voice-title">«Hola Tino, ayudame<br />a crear un correo».</h2></div><p>Con la configuración completa, abrí Gmail y pedí ayuda. TINO escucha tu pedido, responde por voz y marca el control que tenés que tocar. Podés seguir usando tus apps sin abrir TINO en cada consulta.</p></section>
+      <section className="install-voice" aria-labelledby="install-voice-title"><div><p className="install-eyebrow">EN TODO TU TELÉFONO</p><h2 id="install-voice-title">«Hola Tino, ayudame<br />con este trámite».</h2></div><p>Pedí ayuda desde donde estés. TINO te explica cómo llegar a la aplicación que necesitás y cómo continuar allí, un paso a la vez. Mi Argentina, ARCA, el correo o la configuración del teléfono: la tarea la elegís vos. TINO responde cuando se lo pedís.</p></section>
     </main>
 
     <footer className="install-footer"><span>TINO · Tu teléfono, a tu manera.</span><a href="/portal#bienvenida">Ingresar al portal <ArrowUpRightIcon size={15} aria-hidden="true" /></a></footer>

@@ -10,8 +10,9 @@ export const directOrigin = value => String(value ?? 'unknown').replace(/^::ffff
 
 /** Atomic admission and conservative UTC-day reservations. No content is recorded. */
 export class RealtimeAdmission {
-  constructor(store, { now = Date.now, limits = {} } = {}) {
+  constructor(store, { now = Date.now, limits = {}, continuous = process.env.CONTINUOUS_ASSISTANCE === '1' } = {}) {
     this.store = store; this.now = now;
+    this.continuous = continuous === true;
     this.distributed = store.storageType === 'vercel_blob_private_cas';
     this.concurrent = { global: Math.min(8, validLimit(process.env.REALTIME_MAX_CONNECTIONS, 8)),
       origin: Math.min(2, validLimit(process.env.REALTIME_MAX_CONNECTIONS_PER_ORIGIN, 2)), device: 1 };
@@ -44,8 +45,6 @@ export class RealtimeAdmission {
       const user = state.users.find(item => item.id === deviceId);
       if (!user || user.realtimeApproved !== true) throw new RealtimeError('device_activation_required', 'Conectá este teléfono con un código vigente del equipo para habilitar la asistencia.', 403);
       const day = new Date(this.now()).toISOString().slice(0, 10);
-      if (state.realtimeUsage?.day !== day) state.realtimeUsage = { day, devices: {}, origins: {}, global: zero() };
-      const usage = state.realtimeUsage;
       const originHash = hash(directOrigin(origin));
       let leases;
       if (this.distributed) {
@@ -59,21 +58,28 @@ export class RealtimeAdmission {
         if (leases.filter(lease => lease.originHash === originHash).length >= this.concurrent.origin)
           throw new RealtimeError('realtime_origin_busy', 'Esta conexión de red ya tiene varias asistencias activas. Esperá a que termine una.', 429);
       }
-      const records = { device: usage.devices[deviceId] ?? zero(), origin: usage.origins[originHash] ?? zero(), global: usage.global };
-      if (Object.values(records).some(record => !record || Object.keys(amount).some(metric => !Number.isSafeInteger(record[metric]) || record[metric] < 0))) throw new RealtimeError('realtime_budget_unavailable', 'No pude validar el presupuesto de asistencia. Consultá al equipo.', 503);
-      for (const [scope, record] of Object.entries(records)) for (const [metric, quantity] of Object.entries(amount)) {
-        if (record[metric] + quantity > this.limits[scope][metric]) throw new RealtimeError('realtime_daily_budget', 'Se alcanzó el presupuesto diario de asistencia. Volvé a intentar mañana o consultá al equipo.', 429);
+      if (!this.continuous) {
+        if (state.realtimeUsage?.day !== day) state.realtimeUsage = { day, devices: {}, origins: {}, global: zero() };
+        const usage = state.realtimeUsage;
+        const records = { device: usage.devices[deviceId] ?? zero(), origin: usage.origins[originHash] ?? zero(), global: usage.global };
+        if (Object.values(records).some(record => !record || Object.keys(amount).some(metric => !Number.isSafeInteger(record[metric]) || record[metric] < 0))) throw new RealtimeError('realtime_budget_unavailable', 'No pude validar el presupuesto de asistencia. Consultá al equipo.', 503);
+        for (const [scope, record] of Object.entries(records)) for (const [metric, quantity] of Object.entries(amount)) {
+          if (record[metric] + quantity > this.limits[scope][metric]) throw new RealtimeError('realtime_daily_budget', 'Se alcanzó el presupuesto diario de asistencia. Volvé a intentar mañana o consultá al equipo.', 429);
+        }
+        for (const record of Object.values(records)) for (const [metric, quantity] of Object.entries(amount)) record[metric] += quantity;
+        usage.devices[deviceId] = records.device; usage.origins[originHash] = records.origin;
       }
-      for (const record of Object.values(records)) for (const [metric, quantity] of Object.entries(amount)) record[metric] += quantity;
-      usage.devices[deviceId] = records.device; usage.origins[originHash] = records.origin;
+      // Continuous mode is an operator configuration, never a client flag.
+      // Historical reservations remain untouched rather than being reset.
+      const reserved = this.continuous ? null : { ...amount };
       if (leases) {
         // Cloud conversations stop after 270s and HTTP turns after 65s. The
         // small grace period survives crashes, without holding slots forever.
         const expiresAt = this.now() + (kind === 'ws' ? 300_000 : 75_000);
         state.realtimeLeases = [...leases, { id: leaseId, deviceId, originHash, expiresAt }];
-        return { day, reserved: { ...amount }, leaseId, expiresAt };
+        return { day, reserved, leaseId, expiresAt };
       }
-      return { day, reserved: { ...amount } };
+      return { day, reserved };
     });
   }
   async release(leaseId) {
@@ -90,14 +96,16 @@ export class RealtimeAdmission {
     if (!lease || !state.users.some(user => user.id === lease.deviceId && user.realtimeApproved === true))
       throw new RealtimeError('device_activation_required', 'El acceso de este teléfono se desactivó. Consultá al equipo.', 403);
   }
-  status() { return { admission: 'operator_single_use_code', budgetBasis: 'reserved_maximum_per_connection_utc_day', reservations: RESERVATIONS, limits: this.limits,
+  status() { return { admission: 'operator_single_use_code', continuousAssistance: this.continuous, dailyLimitsEnforced: !this.continuous,
+    budgetBasis: this.continuous ? 'operator_authorized_continuous_assistance' : 'reserved_maximum_per_connection_utc_day',
+    reservations: this.continuous ? null : RESERVATIONS, limits: this.continuous ? null : this.limits,
     ...(this.distributed ? { concurrency: { ...this.concurrent, scope: 'shared_durable_leases', maxSocketSeconds: 270 } } : {}) }; }
   usage(state) {
     const day = new Date(this.now()).toISOString().slice(0, 10);
     const saved = state.realtimeUsage?.day === day ? state.realtimeUsage : { devices: {}, global: zero() };
     return { day, globalReserved: saved.global, device: deviceId => {
       const reserved = saved.devices[deviceId] ?? zero();
-      return { reserved, remaining: Object.fromEntries(Object.entries(this.limits.device).map(([key, limit]) => [key, Math.max(0, limit - reserved[key])])) };
+      return { reserved, remaining: this.continuous ? null : Object.fromEntries(Object.entries(this.limits.device).map(([key, limit]) => [key, Math.max(0, limit - reserved[key])])), enforced: !this.continuous };
     } };
   }
 }

@@ -24,12 +24,16 @@ export function attachRealtimeSocket(server, app) {
       if (socket.destroyed) return;
       if (!app.realtime.status().configured) throw new RealtimeError('openai_not_configured', 'Falta OPENAI_API_KEY en el servidor.', 503);
       wss.handleUpgrade(req, socket, head, async client => {
-        let leaseId = null; let released = false;
+        let leaseId = null; let releaseJob = null;
         const release = () => {
-          if (!leaseId || released) return; released = true;
-          // A crashed instance may not finish this write; the durable lease
-          // expires after the bounded cloud session and never grants more use.
-          void app.admission.release(leaseId).catch(() => {});
+          if (!leaseId) return Promise.resolve();
+          if (!releaseJob) {
+            releaseJob = app.admission.release(leaseId).catch(() => {});
+            // Vercel keeps the durable release alive after client disconnect.
+            // A crash still leaves only a bounded, expiring lease.
+            try { app.defer?.(releaseJob); } catch { /* Expiration remains a safe fallback. */ }
+          }
+          return releaseJob;
         };
         client.on('error', () => { if (client.readyState !== WebSocket.CLOSED) client.terminate(); });
         client.once('close', () => { conversation?.close(); release(); });
@@ -50,15 +54,21 @@ export function attachRealtimeSocket(server, app) {
           if (client.bufferedAmount > 512_000) { stop(1013, 'La reproducción no sigue el ritmo de la conexión.'); return; }
           client.send(JSON.stringify(event));
         };
-        const stop = (code = 1000, reason = 'Conversación cerrada') => {
+        const stop = async (code = 1000, reason = 'Conversación cerrada') => {
           if (stopped) return; stopped = true;
-          clearInterval(leaseCheck); release();
+          clearInterval(leaseCheck);
+          const released = release();
           conversation.close(); clients.delete(client);
+          if (leaseId && client.readyState === WebSocket.OPEN) {
+            let timer;
+            await Promise.race([released, new Promise(resolve => { timer = setTimeout(resolve, 20_000); timer.unref?.(); })]);
+            clearTimeout(timer);
+          }
           if (client.readyState === WebSocket.OPEN) client.close(code, reason);
           else if (client.readyState !== WebSocket.CLOSED) client.terminate();
         };
         conversation.on('event', event => { send(event); if (event.type === 'error' && event.fatal) stop(1011, 'Conexión de voz interrumpida'); });
-        conversation.once('closed', () => stop());
+        conversation.once('closed', details => { void stop(1000, details?.renewable ? 'Renovación de conexión' : 'Conversación cerrada'); });
         if (leaseId) {
           leaseCheck = setInterval(async () => {
             if (stopped || checkingLease) return; checkingLease = true;

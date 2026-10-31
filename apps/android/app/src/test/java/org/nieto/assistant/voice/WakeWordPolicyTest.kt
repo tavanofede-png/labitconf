@@ -11,16 +11,22 @@ class WakeWordPolicyTest {
         for (phrase in listOf("hola", "tino", "hola tinoide", "caracola tino", "hola mi tino", "holatino", "")) assertFalse(WakeWordPolicy.matches(phrase))
     }
 
-    @Test fun `every permission audio and phone surface gate prevents wake`() {
+    @Test fun `every permission and audio ownership gate prevents wake`() {
         val policy = WakeWordPolicy()
         assertTrue(policy.canListen(ready, 0))
         val blocked = listOf(ready.copy(enabled = false), ready.copy(assistanceEnabled = false),
-            ready.copy(accessibilityConnected = false), ready.copy(voiceBusy = true), ready.copy(ttsSpeaking = true),
-            ready.copy(nativeSurfaceVisible = true))
+            ready.copy(accessibilityConnected = false), ready.copy(voiceBusy = true), ready.copy(ttsSpeaking = true))
         blocked.forEach { conditions ->
             assertFalse(policy.canListen(conditions, 0))
             assertFalse(policy.accept("hola tino", conditions, 0))
         }
+    }
+
+    @Test fun `wake stays available in TINOs own configuration and family surfaces`() {
+        val policy = WakeWordPolicy()
+        val ownSurface = ready.copy(nativeSurfaceVisible = true)
+        assertTrue(policy.canListen(ownSurface, 0))
+        assertTrue(policy.accept("hola tino", ownSurface, 0))
     }
 
     @Test fun `wake latches until the assistant turn finishes and playback has settled`() {

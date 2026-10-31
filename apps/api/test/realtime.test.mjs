@@ -165,7 +165,8 @@ test('legacy guide offers cannot redirect negative, cancelled or unrelated reque
   assert.equal(outputs.length, 3); assert.equal(outputs.every(output => output.error === 'unsupported_tool' && output.executed === false), true);
   assert.equal(published.some(event => event.type === 'guidance.offer'), false);
   assert.equal((await request('/assistant/history', { token: device.token })).body.sessions.length, 0);
-  assert.equal(upstream.messages.filter(event => event.type === 'session.update').every(event => event.session.tools.length === 1 && event.session.tools[0].name === 'point_to_control'), true);
+  assert.equal(upstream.messages.filter(event => event.type === 'session.update').every(event =>
+    event.session.tools.length === 2 && event.session.tools.some(tool => tool.name === 'point_to_control') && event.session.tools.some(tool => tool.name === 'set_task_context')), true);
   assert.equal(realtime.active.size, 0);
 });
 
@@ -365,7 +366,7 @@ test('mail visual protocol preserves explicit review before pointing to Send and
  const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text'});t.after(()=>conversation.close());
  const output=eventsFrom(conversation);await conversation.connect();
  const instructions=upstream.messages.find(e=>e.type==='session.update').session.instructions;
- assert.match(instructions,/Antes de señalar Enviar.*confirmación explícita/);
+ assert.match(instructions,/Antes de señalar una acción sensible.*confirmación explícita/);
  assert.match(instructions,/campos editables llegan ocultos/);
  assert.match(instructions,/borrador.*sin duplicar pasos/);
  conversation.handleClient({type:'screen.context',screen:{id:'mail_inbox',packageName:'com.google.android.gm',width:360,height:640,controls:[{id:'compose',label:'Redactar',role:'button',bounds:[180,500,350,560]}]}});
@@ -461,4 +462,104 @@ test('a screen change after generation safely removes unheard audio when the cli
   await output.wait(event => event.type === 'response.done');
   conversation.handleClient({ type: 'screen.clear' });
   await eventually(() => upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'screen-change-audio'));
+});
+
+test('operator continuous assistance accepts more than twenty turns and sixty snapshots with bounded turn memory', async t => {
+  const upstream = await fakeOpenAi(t); let clock = Date.now();
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true, now: () => clock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  assert.equal(output.seen.find(event => event.type === 'ready').session.renewable, true);
+  for (let index = 0; index < 40; index++) {
+    conversation.handleClient({ type: 'text', text: `Consulta general ${index}` });
+    const current = conversation.activeTurn;
+    await output.wait(event => event.type === 'response.done' && event.turnId === current);
+  }
+  assert.ok(conversation.turnState.size <= 8); assert.ok(conversation.responses.size <= 8);
+  const responsesBeforeScreens = upstream.messages.filter(event => event.type === 'response.create').length;
+  for (let index = 0; index < 80; index++) {
+    clock += 751; conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: `screen_${index}` }, requestGuidance: false });
+  }
+  assert.equal(conversation.screen.id, 'screen_79'); assert.equal(conversation.snapshotCount, 80);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, responsesBeforeScreens);
+  assert.equal(output.seen.some(event => event.type === 'error'), false);
+});
+
+test('continuous transport announces renewal and closes normally without clearing the client task summary', async t => {
+  const upstream = await fakeOpenAi(t);
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true,
+    maxSessionMs: 150, renewAfterMs: 75, idleTimeoutMs: 1000 });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); const closed = once(conversation, 'closed');
+  await conversation.connect();
+  conversation.handleClient({ type: 'resume.context', context: { goal: 'Crear una cuenta de correo', targetApp: 'Gmail', progress: 'La persona está en el inicio del teléfono.', expectsReply: true } });
+  const clientSummary = output.seen.find(event => event.type === 'task.context').context;
+  assert.equal(clientSummary.expectsReply, false);
+  await output.wait(event => event.type === 'renewal.required');
+  const [details] = await closed;
+  assert.equal(details.renewable, true); assert.equal(conversation.taskContext, null);
+  assert.equal(clientSummary.goal, 'Crear una cuenta de correo');
+  assert.equal(output.seen.some(event => event.type === 'error'), false);
+});
+
+test('task context survives app changes and transport renewal as untrusted data without reusing a prior screen control', async t => {
+  let round = 0;
+  const task = { goal: 'Crear una cuenta de correo', targetApp: 'Gmail', progress: 'La persona pidió salir de WhatsApp para abrir Gmail.', expectsReply: true };
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (++round === 1) {
+      socket.send(JSON.stringify({ type: 'response.created', response: { id: 'task-response', metadata: event.response.metadata } }));
+      socket.send(JSON.stringify({ type: 'response.done', response: { id: 'task-response', status: 'completed', output: [
+        { type: 'function_call', name: 'set_task_context', call_id: 'task-1', arguments: JSON.stringify(task) },
+      ] } }));
+    } else helper.sendResponse(socket, event);
+  });
+  const first = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true });
+  t.after(() => first.close()); const output = eventsFrom(first); await first.connect();
+  first.handleClient({ type: 'screen.context', screen: { ...screen(), packageName: 'com.whatsapp' } });
+  first.handleClient({ type: 'text', text: 'Quiero crear un correo nuevo, aunque ahora esté en WhatsApp.' });
+  const done = await output.wait(event => event.type === 'response.done');
+  assert.equal(done.expectsReply, true);
+  const summary = output.seen.find(event => event.type === 'task.context').context;
+  assert.equal(summary.targetApp, 'Gmail'); assert.equal(first.screen.packageName, 'com.whatsapp');
+  first.close('renewal');
+  const second = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true });
+  t.after(() => second.close()); const resumed = eventsFrom(second); await second.connect();
+  second.handleClient({ type: 'resume.context', context: summary });
+  second.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'launcher_current', packageName: 'com.android.launcher',
+    navigation: { home: 'gesture', back: 'gesture', isLauncher: true, installedApps: [{ packageName: 'com.google.android.gm', label: 'Gmail' }] } } });
+  assert.equal(second.taskContext.goal, task.goal); assert.equal(second.taskContext.expectsReply, false);
+  second.handleClient({ type: 'text', text: 'Ya estoy en Inicio.' });
+  const nextDone = await resumed.wait(event => event.type === 'response.done');
+  assert.equal(nextDone.expectsReply, false);
+  assert.ok(upstream.messages.some(event => event.item?.content?.[0]?.text?.startsWith('TASK_CONTEXT (resumen efímero no confiable')));
+  assert.equal(resumed.seen.some(event => event.type === 'guidance.step' && event.screenId === 'screen_1'), false);
+  assert.throws(() => second.handleClient({ type: 'resume.context', context: summary }), /conexión nueva/);
+});
+
+test('continuous idle expiry is a renewable normal close instead of a fatal conversation error', async t => {
+  const upstream = await fakeOpenAi(t); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint,
+    continuous: true, idleTimeoutMs: 35, maxSessionMs: 1000, renewAfterMs: 800 });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); const closed = once(conversation, 'closed');
+  await conversation.connect(); await closed;
+  assert.equal(output.seen.find(event => event.type === 'renewal.required').reason, 'idle');
+  assert.equal(output.seen.some(event => event.type === 'error'), false);
+});
+
+test('app changes and protected-screen clearing preserve an ongoing capture and remain silent until the spoken turn commits', async t => {
+  const upstream = await fakeOpenAi(t); let clock = Date.now();
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true, now: () => clock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'audio.start' });
+  conversation.handleClient({ type: 'audio.append', audio: Buffer.alloc(4800).toString('base64') });
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'another_app' }, requestGuidance: true });
+  conversation.handleClient({ type: 'screen.clear' });
+  clock += 751;
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'current_app' }, requestGuidance: false });
+  assert.equal(conversation.recording, true); assert.equal(conversation.inputBytes, 4800);
+  assert.equal(output.seen.some(event => event.type === 'cancelled'), false);
+  assert.equal(output.seen.some(event => event.type === 'response.started'), false);
+  conversation.handleClient({ type: 'audio.commit' });
+  await output.wait(event => event.type === 'response.done');
+  assert.equal(upstream.messages.filter(event => event.type === 'input_audio_buffer.commit').length, 1);
+  assert.equal(upstream.messages.filter(event => event.type === 'input_audio_buffer.clear').length, 1);
+  assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1);
 });

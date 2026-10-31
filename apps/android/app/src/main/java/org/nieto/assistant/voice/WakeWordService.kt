@@ -69,6 +69,7 @@ class WakeWordService : Service() {
     private sealed interface Event {
         data object Changed : Event
         data object Talk : Event
+        data object FollowUp : Event
         data class Captured(val generation: Long, val phrase: String) : Event
         data class Failed(val generation: Long) : Event
     }
@@ -105,6 +106,11 @@ class WakeWordService : Service() {
             else stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_FOLLOW_UP) {
+            if (foreground && controller != null && app.state.value.wakeEnabled) events.trySend(Event.FollowUp)
+            else { app.skipFollowUpVoice(); stopSelf() }
+            return START_NOT_STICKY
+        }
         // Android must never resurrect microphone capture without another visible user action.
         if (intent?.action != ACTION_START || !app.state.value.wakeEnabled) {
             stopSelf()
@@ -132,6 +138,7 @@ class WakeWordService : Service() {
                             stopListening("No pude usar el micrófono. Revisá los permisos y volvé a activar TINO.")
                         }
                         Event.Talk -> handleTalk()
+                        Event.FollowUp -> handleFollowUp()
                         Event.Changed -> Unit
                     }
                     if (!destroyed) reconcile()
@@ -165,7 +172,6 @@ class WakeWordService : Service() {
             publishStatus(when {
                 state.voice.active || state.busy || state.recordingVoiceNote || state.screenCapturePending -> "TINO está atendiendo tu consulta."
                 state.ttsSpeaking -> "TINO está hablando."
-                state.nativeSurfaceVisible -> "Abrí otra aplicación para usar Hola Tino."
                 !state.accessibilityConnected -> "Esperando la conexión del servicio de accesibilidad…"
                 else -> "Esperando para volver a escuchar Hola Tino…"
             })
@@ -224,6 +230,17 @@ class WakeWordService : Service() {
         try { app.startVoiceFromWake() }
         catch (_: RuntimeException) { publishStatus("No pude empezar la consulta. Podés volver a activar TINO.") }
         scheduleCheck(now)
+    }
+
+    private suspend fun handleFollowUp() {
+        stopCapture()
+        val state = app.state.value
+        if (!microphoneGranted() || LocalMicrophoneLease.occupied || !state.wakeEnabled || !state.followUpPending ||
+            !state.assistanceEnabled || !state.accessibilityConnected || state.ttsSpeaking || state.recordingVoiceNote || state.busy || state.screenCapturePending) {
+            app.skipFollowUpVoice(); return
+        }
+        // Realtime keeps CONNECTING across playback drain, so local recognition cannot race this handoff.
+        app.startVoiceFromWake(greet = false, followUp = true)
     }
 
     private fun conditions(state: AppState) = WakeWordConditions(
@@ -301,7 +318,8 @@ class WakeWordService : Service() {
     }
 
     private fun stopListening(message: String, userRequested: Boolean = false) {
-        app.stopWakeListening(clearPreference = userRequested)
+        if (userRequested) app.stopAssistance()
+        else app.stopWakeListening(clearPreference = false)
         app.setWakeStatus(message)
         stopSelf()
     }
@@ -347,6 +365,7 @@ class WakeWordService : Service() {
         const val ACTION_START = "org.nieto.assistant.voice.START_WAKE"
         const val ACTION_STOP = "org.nieto.assistant.voice.STOP_WAKE"
         const val ACTION_TALK = "org.nieto.assistant.voice.TALK"
+        const val ACTION_FOLLOW_UP = "org.nieto.assistant.voice.FOLLOW_UP"
         const val MODEL_ASSET = OfflineVoiceModel.ASSET_DIRECTORY
         private const val CHANNEL_ID = "tino_wake_microphone"
         private const val NOTIFICATION_ID = 8201

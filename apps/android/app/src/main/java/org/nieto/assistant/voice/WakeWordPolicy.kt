@@ -30,7 +30,7 @@ class WakeWordPolicy {
 
     fun canListen(conditions: WakeWordConditions, now: Long): Boolean =
         conditions.enabled && conditions.assistanceEnabled && conditions.accessibilityConnected &&
-            !conditions.voiceBusy && !conditions.ttsSpeaking && !conditions.nativeSurfaceVisible &&
+            !conditions.voiceBusy && !conditions.ttsSpeaking &&
             handoffStartedAt == null && now >= resumeAfter
 
     fun accept(text: String, conditions: WakeWordConditions, now: Long): Boolean {
