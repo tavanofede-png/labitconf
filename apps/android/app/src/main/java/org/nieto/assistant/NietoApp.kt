@@ -35,6 +35,7 @@ data class ChatAttachmentLabel(val name: String, val mimeType: String)
 data class ChatLine(val fromUser: Boolean, val text: String, val attachments: List<ChatAttachmentLabel> = emptyList())
 data class AppState(
     val guide: GuideState = GuideState(),
+    val practiceFlow: org.nieto.assistant.demo.PracticeFlow? = null,
     val answer: String = "Contame qué querés hacer y te acompaño en la pantalla actual.",
     val status: String = "Tu ritmo. Tus decisiones.",
     val busy: Boolean = false,
@@ -399,7 +400,7 @@ class NietoApp : Application() {
     fun sendMessage(text: String, attachments: List<ChatAttachment> = emptyList(), onComplete: (Boolean) -> Unit = {}) {
         val clean = text.trim().take(1000).ifBlank { if (attachments.isNotEmpty()) "Ayudame a entender los archivos que adjunté." else "" }
         if (clean.isBlank() || state.value.busy || state.value.screenCapturePending || state.value.voice.active) { onComplete(false); return }
-        if(!settings.openAiConsent){tellUser("Autorizá las consultas con IA en Ajustes para conversar con TINO.");onComplete(false);return}
+        if(!settings.openAiConsent && !settings.juryDemo){tellUser("Autorizá las consultas con IA en Ajustes para conversar con TINO.");onComplete(false);return}
         if (attachments.size > ChatAttachment.MAX_COUNT || attachments.sumOf { it.byteSize } > ChatAttachment.MAX_TOTAL_BYTES) { onComplete(false); return }
         mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean, attachments.map { ChatAttachmentLabel(it.name,it.mimeType) })).takeLast(30), busy = true, suggestedFlow = null)
         scope.launch {
@@ -557,7 +558,14 @@ class NietoApp : Application() {
         sessionId = null
         updateGuide(engine.cancel())
         conversationId = UUID.randomUUID().toString()
-        mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null, familyInbox = emptyList())
+        mutable.value = mutable.value.copy(practiceFlow = null, chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null, familyInbox = emptyList())
+    }
+
+    fun openPractice(flow: org.nieto.assistant.demo.PracticeFlow) { stopSpeaking(); mutable.value=mutable.value.copy(practiceFlow=flow) }
+    fun closePractice() { stopSpeaking(); mutable.value=mutable.value.copy(practiceFlow=null) }
+    fun recordPractice(flow: org.nieto.assistant.demo.PracticeFlow,id:String) {
+        if(!settings.juryDemo)return
+        scope.launch { runCatching { api.request("/demo/practice/report","POST",JSONObject().put("flowId",if(flow==org.nieto.assistant.demo.PracticeFlow.WHATSAPP)"whatsapp-group" else "email-send").put("id",id)) } }
     }
 
     fun tellUser(text: String) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, text)).takeLast(30)); speak(text) }
@@ -632,6 +640,7 @@ class NietoApp : Application() {
     }
 
     fun sendScreenMessage(text: String,onCaptured: () -> Unit = {}) {
+        if(settings.juryDemo) { sendMessage(text);onCaptured();return }
         val clean = text.trim().take(1000)
         if (clean.isBlank() || !state.value.assistanceEnabled || !settings.remoteScreenConsent || !settings.openAiConsent || state.value.busy || state.value.screenCapturePending || state.value.voice.active) { onCaptured(); return }
         followUp?.cancel()
@@ -666,6 +675,7 @@ class NietoApp : Application() {
     }
 
     fun startConversationVoice() {
+        if(settings.juryDemo) { tellUser("Las prácticas funcionan en este dispositivo. Podés escribir tu consulta o elegir una práctica desde el chat.");return }
         if(state.value.busy || state.value.voice.active || !settings.openAiConsent)return
         stopSpeaking()
         scope.launch { try { api.register();realtime.start(settings.baseUrl,settings.token) } catch(_:Exception){status("No pude conectar la voz. Podés escribir tu consulta.")} }

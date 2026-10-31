@@ -98,6 +98,10 @@ private val Background = Color(0xFFF3F6F6)
         TinoOnboardingScreen(s, vm, pickPhoto = { photo.launch(arrayOf("image/*")) })
         return
     }
+    if (s.page == EntryPage.HOME && device.practiceFlow != null) {
+        org.nieto.assistant.ui.PracticeScreen(app, device.practiceFlow!!, app::closePractice)
+        return
+    }
     if (s.page == EntryPage.HOME) {
         AppMenu(app, s, beforeWakeStart, vm::openSpace, vm::logout) { openMenu ->
             when (s.role) {
@@ -111,7 +115,7 @@ private val Background = Color(0xFFF3F6F6)
     Scaffold(containerColor = Background, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(110.dp).height(46.dp))
-            TextButton(onClick = { vm.move(EntryPage.CONNECTION) }) { Text("Conexión", color = Teal, fontSize = 15.sp) }
+            Image(painterResource(R.drawable.tino_mascot), null, Modifier.size(44.dp))
         }
     }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {

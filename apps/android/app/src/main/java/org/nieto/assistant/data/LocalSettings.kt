@@ -15,6 +15,9 @@ import org.nieto.assistant.BuildConfig
 
 /** Private installation state. Tokens and profiles never leave this app's encrypted preferences. */
 class LocalSettings(context: Context) {
+    private val appContext=context.applicationContext
+    internal fun asset(name: String)=appContext.assets.open(name).use{it.readBytes()}
+    val juryDemo: Boolean get()=read("juryActive")=="true"
     private val prefs = context.getSharedPreferences("tino.private.v1", Context.MODE_PRIVATE)
     private val alias = "tino.preferences.v1"
     private fun key(): SecretKey {

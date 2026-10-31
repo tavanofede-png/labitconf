@@ -2,7 +2,7 @@
   "name": "nieto",
   "version": "2.0.0",
   "private": true,
-  "description": "NIETO para LABITCONF: acompañamiento digital Android y contexto público mediante OpenArg MCP.",
+  "description": "NIETO para LABITCONF: acompa\u00f1amiento digital Android y contexto p\u00fablico mediante OpenArg MCP.",
   "type": "module",
   "engines": {
     "node": ">=22.15"
@@ -22,7 +22,8 @@
     "check": "node scripts/check.mjs",
     "verify:openarg": "npm run verify:openarg --workspace @nieto/api",
     "verify:realtime": "npm run verify:realtime --workspace @nieto/api",
-    "verify:screen": "npm run verify:screen --workspace @nieto/api"
+    "verify:screen": "npm run verify:screen --workspace @nieto/api",
+    "prepare:jury": "node scripts/prepare-jury-demo.mjs"
   },
   "overrides": {
     "rollup": "4.59.0"

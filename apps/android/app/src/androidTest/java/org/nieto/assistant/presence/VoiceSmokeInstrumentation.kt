@@ -14,6 +14,11 @@ class VoiceSmokeInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); suite=arguments?.getString("suite"); start() }
     override fun onStart() {
         val output = Bundle()
+        if (suite=="jury-demo") {
+            try { val checks=juryDemoSmoke(targetContext); output.putString("stream","\nPASS: $checks offline jury checks; login, expiry, replay, privacy, messages, 225 public-context filters, both interactive practice engines and logout.\n");output.putInt("tests",checks);finish(Activity.RESULT_OK,output) }
+            catch(error:Throwable) { output.putString("stream","\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n${error.stackTraceToString().take(3000)}\n");finish(Activity.RESULT_CANCELED,output) }
+            return
+        }
         if (suite=="family-audio") {
             try {
                 val file=familyAudioSmoke(targetContext)

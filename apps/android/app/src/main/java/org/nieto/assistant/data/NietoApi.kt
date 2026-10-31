@@ -12,6 +12,11 @@ class ApiFailure(val status: Int, val code: String, message: String) : Exception
 
 class NietoApi(private val settings: LocalSettings) {
     private val registration = Mutex()
+    private val juryBundle by lazy {
+        val compressed=android.util.Base64.decode(settings.asset("jury-demo-v1.gz.b64"),android.util.Base64.DEFAULT)
+        java.util.zip.GZIPInputStream(compressed.inputStream()).use{JSONObject(it.bufferedReader(Charsets.UTF_8).readText())}
+    }
+    private val jury=org.nieto.assistant.demo.JuryDemoStore(settings::read,settings::write,{juryBundle})
     suspend fun register() = registration.withLock {
         if (settings.token.isBlank()) {
             val reply = request("/devices", "POST", JSONObject().put("name", settings.deviceName).put("territoryId", settings.territoryId), authenticated = false)
@@ -22,6 +27,8 @@ class NietoApi(private val settings: LocalSettings) {
         authenticated: Boolean = true, serverUrl: String = settings.baseUrl,
         installationToken: String = settings.token): JSONObject = withContext(Dispatchers.IO) {
         require(path.startsWith('/') && !path.startsWith("//") && !path.contains("..")) { "Ruta de API inválida." }
+        jury.request(path,method,body)?.let{return@withContext it}
+        if(installationToken.startsWith("jury-"))throw ApiFailure(401,"demo_session_expired","Volvé a ingresar a tu cuenta de demostración.")
         require(serverUrl.isNotBlank()) { "Configurá la conexión del servidor." }
         if (authenticated) require(installationToken.isNotBlank()) { "Primero conectá tu cuenta o este dispositivo." }
         val connection = URI(serverUrl.trimEnd('/') + "/api" + path).toURL().openConnection() as HttpURLConnection

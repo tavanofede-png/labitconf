@@ -54,11 +54,11 @@ private val Paper = Color(0xFFF3F6F6)
     val guideSuggested = state.suggestedFlow != null
     var consentText by remember { mutableStateOf<String?>(null) }
     var consentVoice by remember { mutableStateOf(false) }
-    val send = { if (message.isNotBlank() && !state.busy && !state.voice.active) { if(app.settings.openAiConsent){app.sendMessage(message);message=""} else consentText=message } }
+    val send = { if (message.isNotBlank() && !state.busy && !state.voice.active) { if(app.settings.openAiConsent || app.settings.juryDemo){app.sendMessage(message);message=""} else consentText=message } }
     if(consentText!=null || consentVoice) AlertDialog(onDismissRequest={consentText=null;consentVoice=false},title={Text("Hablar con TINO")},text={Text("Para responder, TINO envía tu consulta y, si elegís hablar, tu voz a OpenAI. Podés revocar este permiso en Ajustes. Tu grupo familiar no recibe la conversación.")},confirmButton={TextButton(onClick={app.settings.openAiConsent=true;val draft=consentText;val voice=consentVoice;consentText=null;consentVoice=false;if(draft!=null){app.sendMessage(draft);message=""};if(voice)onVoice()}){Text("Aceptar y continuar")}},dismissButton={TextButton(onClick={consentText=null;consentVoice=false}){Text("Volver")}})
     LaunchedEffect(state.foreground) { while (isActive && state.foreground) { app.refreshFamilyInbox(); delay(15000) } }
     LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task, state.familyInbox.isNotEmpty()) {
-        list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0) + (if (state.familyInbox.isNotEmpty()) 1 else 0))
+        if(state.chat.size>1) list.animateScrollToItem(1 + state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0) + (if (state.familyInbox.isNotEmpty()) 1 else 0))
     }
     Scaffold(containerColor = Paper, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -78,7 +78,7 @@ private val Paper = Color(0xFFF3F6F6)
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, lineHeight = 26.sp, color = Ink),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }),
                                 colors = TextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, cursorColor = Ink))
-                            FilledIconButton(onClick = { if(app.settings.openAiConsent)onVoice() else consentVoice=true }, enabled = !state.busy || listening, modifier = Modifier.size(52.dp).semantics { contentDescription = if (listening) "Terminar de hablar" else "Hablar con TINO" },
+                            FilledIconButton(onClick = { if(app.settings.openAiConsent || app.settings.juryDemo)onVoice() else consentVoice=true }, enabled = !state.busy || listening, modifier = Modifier.size(52.dp).semantics { contentDescription = if (listening) "Terminar de hablar" else "Hablar con TINO" },
                                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (listening) Cyan else Color(0xFFE3F9F6), contentColor = Ink)) { ChatIcon("mic") }
                             FilledIconButton(onClick = send, enabled = message.isNotBlank() && !state.busy && !state.voice.active, modifier = Modifier.size(52.dp).semantics { contentDescription = "Enviar mensaje" },
                                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = Cyan, contentColor = Ink, disabledContainerColor = Paper, disabledContentColor = Muted)) { ChatIcon("send") }
@@ -94,6 +94,18 @@ private val Paper = Color(0xFFF3F6F6)
                     Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Surface(shape = CircleShape, color = Cyan.copy(alpha = .08f), modifier = Modifier.size(148.dp)) { Image(painterResource(R.drawable.tino_mascot), "TINO, tu asistente", Modifier.fillMaxSize()) }
                         Text("¿En qué te ayudo hoy?", color = Ink, fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    }
+                }
+                item {
+                    Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                        Text("Aprendé con TINO",color=Ink,fontSize=19.sp,fontWeight=FontWeight.SemiBold)
+                        Text("Dos prácticas guiadas, paso a paso y a tu ritmo.",color=Muted,fontSize=14.sp)
+                        org.nieto.assistant.demo.PracticeFlow.entries.forEach { flow ->
+                            OutlinedButton(onClick={app.openPractice(flow)},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp),shape=RoundedCornerShape(18.dp),border=BorderStroke(1.dp,Color(0xFFB8DCD5))) {
+                                Text(flow.title,Modifier.weight(1f),fontSize=17.sp,color=Ink)
+                                Text("→",color=Color(0xFF006B64),fontSize=22.sp)
+                            }
+                        }
                     }
                 }
                 if (state.familyInbox.isNotEmpty()) item {

@@ -1,0 +1,60 @@
+name: TINO Android jury release
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/tino-instituciones]
+    paths:
+      - 'apps/android/**'
+      - 'apps/api/src/dashboard-*.mjs'
+      - 'apps/api/src/public-data/**'
+      - 'scripts/prepare-jury-demo.mjs'
+      - '.github/workflows/tino-jury-release.yml'
+permissions:
+  contents: write
+concurrency:
+  group: tino-jury-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install project dependencies and validate API/web
+        run: |
+          npm ci
+          npm run check
+      - name: Verify reproducible fictional data and public snapshot
+        run: |
+          node scripts/prepare-jury-demo.mjs
+          git diff --exit-code -- apps/android/app/src/main/assets/jury-demo-v1.gz.b64
+      - name: Prepare Android SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Build and verify Android
+        run: apps/android/gradlew -p apps/android :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug --no-daemon
+      - name: Prepare distribution
+        run: |
+          mkdir -p distribution
+          cp artifacts/nieto-debug.apk distribution/tino-demo.apk
+          cp artifacts/android-build.json distribution/android-build.json
+          cp docs/DEMO.md distribution/LEEME.md
+          cd distribution
+          sha256sum tino-demo.apk > SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: tino-android-jury
+          path: distribution/
+          compression-level: 0
+      - name: Publish public APK release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "tino-demo-0.6.0-${GITHUB_RUN_NUMBER}" distribution/tino-demo.apk distribution/android-build.json distribution/SHA256SUMS distribution/LEEME.md --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'TINO · La tech, de todos. · Demo Android 0.6.0' --notes-file docs/DEMO.md --latest

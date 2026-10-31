@@ -74,7 +74,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun stopManualVoice() { recognizer?.cancel(); recognizer?.destroy(); recognizer = null; listening = false }
     private fun beginListening() {
-        if(app.settings.openAiConsent) { app.startConversationVoice();return }
+        if(app.settings.openAiConsent && !app.settings.juryDemo) { app.startConversationVoice();return }
         app.stopSpeaking()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             app.status("Este teléfono no tiene un servicio de reconocimiento de voz. Podés escribir tu consulta."); return
@@ -144,7 +144,8 @@ private val Turquoise = Color(0xFF00D6C9)
     var disclosure by remember { mutableStateOf(false) }
     BackHandler(enabled = tab != 0) { onSection(0) }
     val startFlow: (String) -> Unit = { flowId ->
-        if (flowId == GuidanceEngine.FLOW_ID) { onSection(2); app.startGuide(onReady = onWhatsApp) }
+        if(app.settings.juryDemo && flowId in setOf("whatsapp-group","email-send")) { app.openPractice(if(flowId=="whatsapp-group") org.nieto.assistant.demo.PracticeFlow.WHATSAPP else org.nieto.assistant.demo.PracticeFlow.EMAIL) }
+        else if (flowId == GuidanceEngine.FLOW_ID) { onSection(2); app.startGuide(onReady = onWhatsApp) }
         else { onSection(0); app.startTask(flowId) { if (flowId == "email-send") onEmail(app.state.value.emailDraft, true) else onWhatsApp() } }
     }
     val reopenTask: () -> Unit = { if (app.state.value.task?.flowId == "email-send") onEmail(null, false) else onWhatsApp() }
@@ -156,6 +157,7 @@ private val Turquoise = Color(0xFF00D6C9)
         Scaffold(containerColor = WarmWhite, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 TinoHomeLogo(Modifier.width(116.dp).height(48.dp))
+                Image(painterResource(R.drawable.tino_mascot), null, Modifier.size(40.dp))
                 IconButton(onClick = onMenu, modifier = Modifier.semantics { contentDescription = "Abrir menú" }) { Text("☰", color = Ink, fontSize = 24.sp) }
             }
         }) { insets ->

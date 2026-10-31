@@ -59,7 +59,8 @@ private val WelcomeSecondary = Color(0xFF4C5B61)
                     Image(painterResource(R.drawable.tino_mascot), contentDescription = "TINO, tu asistente",
                         modifier = Modifier.fillMaxSize())
                 }
-                Spacer(Modifier.height(if (compactHeight) 26.dp else 36.dp))
+                Text("La tech, de todos.", color = WelcomeInk, fontSize = if (tablet) 30.sp else 25.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp))
+                Spacer(Modifier.height(if (compactHeight) 22.dp else 30.dp))
                 Column(Modifier.widthIn(max = if (tablet) 420.dp else 320.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
                     AccountRole.entries.forEach { role ->
                         Button(onClick = { onRole(role) }, enabled = !state.busy,

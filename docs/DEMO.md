@@ -1,51 +1,60 @@
-# Demo NIETO para LABITCONF
+# TINO · La tech, de todos.
 
-Este guion usa datos producidos por la aplicación y respuestas del MCP oficial. No requiere simular usuarios, progreso, cifras de inclusión ni una consulta autenticada inexistente.
+Demo Android 0.6.0 para LABITCONF. El frontend es nativo (Kotlin + Compose), no una página web dentro de una APK.
 
-## Preparación
+## Ingreso de jurados
 
-1. Instalá dependencias y conservá el `.env` local. Configurá el token institucional, `OPENARG_API_KEY` y `OPENAI_API_KEY` según las funciones que vayas a mostrar. Ejecutá `npm run check`.
-2. Corré `npm run verify:openarg`. Distinguí el handshake y descubrimiento de herramientas de una consulta de datos autorizada. Si falta clave o cupo, comunicá ese estado y no prometas la parte pública como disponible.
-3. Iniciá `npm run dev`. Abrí el portal y comprobá `/api/health`.
-4. Compilá e instalá Android con `./scripts/android-build.ps1` o Android Studio. Configurá la URL de la API y verificá conectividad con el teléfono. Para conversar, aceptá el aviso de OpenAI y concedé permiso de micrófono. Habilitá accesibilidad para la guía local.
-5. Usá dispositivos y cuentas de prueba con consentimiento. Para compartir ubicación, elegí un destinatario de prueba y comprobá quién está en la conversación antes de confirmar.
+1. Abrir TINO → **Ya tengo cuenta**.
+2. Seleccionar Usuario y escribir **test@labitconf.com**.
+3. Solicitar el código e ingresar **000000** en las seis casillas. La verificación es automática y abre directamente el chat, sin onboarding.
+4. El menú superior derecho permite pasar a Grupo familiar e Instituciones sin volver a ingresar.
 
-## Recorrido sugerido, 4–6 minutos
+Este acceso es una cuenta ficticia local. No envía correos, no depende del backend ni requiere una clave de IA. Cerrar sesión vuelve a la bienvenida. El resto de las cuentas conserva el flujo del backend.
 
-**Problema y propuesta.** «Muchas personas necesitan que alguien les explique dónde tocar. NIETO acompaña el aprendizaje en el teléfono: explica un paso, señala el control y espera a que la persona lo haga».
+## Dos recorridos que se pueden probar
 
-**Teléfono.** Registrá una instalación con nombre y jurisdicción declarada. Autorizá la asistencia remota de pantalla desde Ajustes. Abrí una app compatible de prueba, tocá la burbuja y pedí ayuda por voz. Mostrá el control señalado y realizá el toque manualmente; el cambio debe invalidar la indicación anterior antes del siguiente paso. Repetí un pedido por escrito con respuesta escrita, sin activar micrófono. NIETO mantiene el contexto de esa tarea, sin guardar historial. No muestres contraseñas ni información personal. Si no encuentra controles suficientes, mostrale al jurado el límite real.
+Desde el chat, **Aprendé con TINO** abre prácticas interactivas. También se puede escribir “crear un grupo de WhatsApp” o “enviar un mail”.
 
-**Conversación.** La respuesta usa `gpt-realtime-2.1-mini` y puede reproducirse por voz o leerse. Con permiso remoto, el modelo recibe controles saneados y una captura efímera disponible desde Android 11; nunca ejecuta acciones. Antes de la demo, probá voz, captura, redacción, cambios de pantalla y cancelación en ese teléfono. La prueba real con imagen artificial y los límites están en [MVP_FUNCTIONAL_SCOPE.md](MVP_FUNCTIONAL_SCOPE.md).
+- **Grupo:** abrir WhatsApp en la práctica → nuevo chat → nuevo grupo → elegir participantes → escribir nombre → revisar → confirmar. Se puede retroceder, repetir la indicación o volver a empezar.
+- **Correo:** abrir Correo en la práctica → redactar → destinatario válido → asunto → mensaje → revisión explícita → enviar dentro de la práctica. El resumen conserva exactamente los datos ingresados.
 
-**Familia.** En otro teléfono, abrí Familia nativa y creá o recuperá el grupo. Generá una invitación y aceptala desde el teléfono asistido con sus permisos elegidos. Solicitá ayuda y abrí Familia en el otro teléfono para consultar inmediatamente y marcar el pedido atendido. Mostrá la activación de notificaciones; la comprobación en segundo plano es periódica desde 15 minutos y puede retrasarse por Android. No prometas una notificación instantánea en una demo de pocos minutos. Revocá el vínculo para demostrar el control de la persona.
+Las prácticas están identificadas en pantalla. **No crean grupos reales ni envían correos fuera de TINO.** El marco verde señala controles reales del ejercicio y los botones responden a las acciones. La voz usa el sintetizador de Android; su disponibilidad depende de las voces instaladas. El dictado depende del servicio de reconocimiento del dispositivo.
 
-**Institución.** Ingresá con el token institucional local. Mostrá el territorio, las fuentes públicas y la fecha o período que entregue OpenArg. Formulá una consulta pública y abrí una fuente. Explicá que OpenArg se integra mediante su MCP y que la clave permanece en el backend.
+## Familia e instituciones
 
-**Cohorte.** El consentimiento institucional es independiente y está desactivado por defecto. Cada indicador necesita al menos cinco contribuyentes efectivos que lo hayan autorizado en ese territorio y período. Mostrá las métricas disponibles y los valores suprimidos; no reduzcas el umbral ni cargues identidades ficticias para obtener un gráfico. Uso y dificultades sirven para planificar acompañamientos, sin afirmar autonomía demostrada.
+Familia contiene perfiles y actividad ficticios, edad, tablas de asistencia y permisos por persona. Lucía comparte únicamente ubicación; las demás métricas están bloqueadas. Los pings y avisos de voz del perfil Marta pueden verse en TINO Chat en este mismo dispositivo. No simulan entrega a un segundo teléfono. Requieren autorización de ayuda, vencen y no se duplican al reintentar.
 
-Se corrigió el umbral de instalaciones vacías señalado en la auditoría. El mínimo de cohorte sigue sin constituir una garantía de anonimato frente a todas las comparaciones. La guía local opcional mantiene limitaciones en la evidencia de finalización; revisá [AUDIT.md](AUDIT.md) antes de afirmar que una tarea quedó completada.
+Instituciones incluye mapa animado, 25 filtros territoriales y nueve períodos (225 combinaciones), métricas de seis meses y exportación con fechas. La actividad TINO es ficticia. El contexto territorial es un **snapshot verificado de OpenARG**, consultado el 31/10/2026: población del Censo 2022 y conectividad ENACOM, con enlaces y períodos de origen. La versión sin conexión no realiza consultas en vivo ni presenta el mapa como telemetría real.
 
-**Cierre.** «La guía genera eventos de aprendizaje. La familia ve lo que la persona autoriza. La institución puede combinar agregados permitidos con contexto público trazable de OpenArg».
+Los reportes CSV/PDF usan el fixture estable y muestran el rango elegido, tal como se pidió para la demo. No contienen conversaciones ni datos personales reales.
 
-## Qué afirmar y qué comprobar
+## Guía real sobre otras apps: estado comprobado
 
-| Afirmación | Evidencia necesaria |
-| --- | --- |
-| «Usamos el MCP oficial de OpenArg» | Handshake, lista de herramientas y llamada real; ver documento de verificación MCP. |
-| «Consultamos datos públicos» | Clave vigente y respuesta real con su fuente; no basta `tools/list`. |
-| «Conversamos con OpenAI Realtime» | Audio y texto reales del modelo solicitado; pruebas del relay y comprobación física del teléfono. |
-| «La guía acompaña esta versión de WhatsApp» | Ejecución en el teléfono concreto, con controles identificados. |
-| «La familia recibió una solicitud de ayuda» | Acción explícita desde Android y alerta visible con permiso vigente. |
-| «El portal muestra progreso» | Sesiones reales completadas y permiso de progreso aceptado. |
-| «El portal aplica cohortes de contribuyentes efectivos» | Consentimiento institucional vigente y al menos cinco personas por métrica; valores y subgrupos insuficientes permanecen suprimidos. |
+La ruta de asistencia sobre WhatsApp/Gmail reales permanece en el proyecto para cuentas normales. Necesita backend disponible, credencial válida del proveedor, consentimiento para la asistencia visual y Accesibilidad habilitada por la persona en Android. No se debe presentar una práctica como evidencia de un envío real.
 
-## Recuperación durante la demo
+La última comprobación del proveedor en esta Mac devolvió `invalid_api_key`. No quedó certificado un recorrido externo completo con esa credencial. El permiso de Accesibilidad de la Samsung estaba desactivado al revisarlo. Los tests de protocolo con respuestas simuladas no sustituyen esa prueba real.
 
-- **Sin clave, cuota o conectividad OpenArg:** mostrale al jurado el estado real y la integración de transporte verificada. No reemplaces la respuesta por datos precargados que parezcan en vivo.
-- **Sin conexión Android a la API:** revisá URL, red y `adb reverse`. La IP del emulador no sirve para un teléfono físico.
-- **WhatsApp no reconocido:** regresá a un paso conocido o cancelá. Las pantallas cambian entre versiones e idiomas.
-- **Conversación no disponible:** comprobá clave, cuota y conexión OpenAI. Usá texto si falla el micrófono; también necesita el modelo remoto. Las instrucciones de la guía usan el TTS local del dispositivo.
-- **Pocos participantes:** presentá la supresión como comportamiento esperado. Las sesiones acompañadas no representan todo el uso del teléfono ni un indicador probado de autonomía poblacional.
+## Compilar y verificar
 
-La demo local no incluye pagos reales, cuentas empresariales ni certificación de cumplimiento. Esas funciones no deben presentarse como terminadas.
+Requiere Node 22+, JDK 17 y SDK Android 36.
+
+```sh
+npm ci
+npm run check
+npm run prepare:jury
+apps/android/gradlew -p apps/android :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest :app:lintDebug
+```
+
+APK: `artifacts/nieto-debug.apk`; versión/hash/tamaño: `artifacts/android-build.json`. La APK no contiene `.env` ni claves de proveedor. La firma debug de GitHub Actions difiere de una compilación local: Android puede impedir actualizar una instalación con otra firma. No borrar datos para resolverlo sin permiso de la persona.
+
+Pruebas nativas adicionales, sin abrir micrófono ni enviar mensajes externos:
+
+```sh
+adb -s SERIAL install -r artifacts/nieto-debug.apk
+adb -s SERIAL install -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s SERIAL shell am instrument -w -e suite jury-demo org.nieto.assistant.test/org.nieto.assistant.presence.VoiceSmokeInstrumentation
+adb -s SERIAL shell am instrument -w -e suite family-audio org.nieto.assistant.test/org.nieto.assistant.presence.VoiceSmokeInstrumentation
+adb -s SERIAL shell am instrument -w -e suite reports org.nieto.assistant.test/org.nieto.assistant.presence.VoiceSmokeInstrumentation
+```
+
+El visor local muestra solamente Android en su ruta principal. Los controles técnicos existen únicamente en `?debug=1` para pruebas. La landing no se despliega desde este workflow. GitHub Actions publica una APK descargable y su SHA-256 después de pasar los checks.

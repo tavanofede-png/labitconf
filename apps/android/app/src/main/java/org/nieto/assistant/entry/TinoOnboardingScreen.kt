@@ -51,6 +51,7 @@ private val Paper = Color(0xFFF3F6F6)
         Column(Modifier.statusBarsPadding().fillMaxWidth()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(108.dp).height(44.dp))
+                Image(painterResource(R.drawable.tino_mascot), null, Modifier.size(40.dp))
                 Text(s.role.label, color = Grey, fontSize = 14.sp)
             }
             LinearProgressIndicator(progress = { (index + 1f) / count }, color = Cyan, trackColor = Color(0xFFE0E8E7), modifier = Modifier.fillMaxWidth().height(4.dp))
