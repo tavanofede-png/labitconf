@@ -42,6 +42,14 @@ La clave de firma y su contraseña están exclusivamente en archivos ignorados d
 
 ## Verificación realizada y pendiente
 
+### Corrección del saludo · 31 de octubre de 2026
+
+El usuario confirmó que la activación responde después de habilitarla, pero el saludo por voz sugería una prueba de WhatsApp. Se reprodujo con `gpt-realtime-2.1-mini`, audio sintético de «Hola Tino» y una pantalla artificial con botones «Probar WhatsApp» y «Probar Gmail»: el modelo propuso esas aplicaciones sin un pedido de tarea.
+
+Se aclaró la prioridad de la intención actual: la activación y el saludo no crean una tarea, y los controles visibles no son peticiones. El contenido de la respuesta sigue siendo generado por Realtime; no hay una frase de respuesta obligatoria ni un clasificador local que reemplace lo hablado. Se identifican además las observaciones automáticas de pantalla como tales. No se modificó la UI ni el APK.
+
+Con las mismas entradas, las dos comprobaciones posteriores respondieron al saludo y a la pregunta de presencia, sin proponer aplicaciones, señalar controles ni crear un objetivo. La suite API actual, integrada con los cambios remotos de main, aprobó **200 pruebas**, incluyendo la separación entre una pantalla pasiva de prácticas y el audio original. `node scripts/verify-cloud-assistant.mjs --greeting` permite repetir dos consultas sintéticas por el servicio desplegado, con revocación posterior del dispositivo de verificación y sin grabar a la persona. La prueba física del saludo después de desplegar esta corrección debe confirmarse con el usuario.
+
 - Identificación de la tablet por ADB: SM-X820, Android 16, One UI 8.5.
 - Android: 146 pruebas unitarias aprobadas, con activación, cierre, expiración, acciones, generación y límites de audio, prueba de reconocimiento independiente y ausencia de audio previo a la activación. Compilación release firmada e instalación correctas.
 - Seis pruebas nativas en la Tab S10+ aprobadas: activación confirmada, rechazo de habla ajena, reconocimiento de consulta, cierre local, rechazo de «todavía no terminé» y conservación de la pregunta completa sin pausa. Las muestras son sintéticas y no acreditan por sí solas precisión para todas las voces o condiciones acústicas.

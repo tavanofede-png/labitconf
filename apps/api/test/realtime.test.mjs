@@ -153,6 +153,30 @@ test('streaming voice validates PCM, forwards incremental output, and does not p
   assert.equal(upstream.messages.filter(event => event.type === 'input_audio_buffer.commit').length, 1);
 });
 
+test('a passive practice screen never replaces greeting audio with a task or generates its own turn', async t => {
+  const upstream = await fakeOpenAi(t);
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'screen.context', requestGuidance: false, screen: {
+    id: 'settings-greeting', packageName: 'org.nieto.assistant.tino', width: 1080, height: 1920,
+    controls: [{ id: 'practice', label: 'Probar WhatsApp', role: 'button', bounds: [20, 20, 500, 120] }],
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(upstream.messages.some(event => event.type === 'response.create'), false);
+  const fixture = await readFile(new URL('../../../apps/android/app/src/androidTest/assets/wake-positive.pcm', import.meta.url));
+  conversation.handleClient({ type: 'audio.start' });
+  for (let index = 0; index < fixture.length; index += MAX_AUDIO_CHUNK) conversation.handleClient({ type: 'audio.append', audio: fixture.subarray(index, index + MAX_AUDIO_CHUNK).toString('base64') });
+  conversation.handleClient({ type: 'audio.commit' });
+  await output.wait(event => event.type === 'response.done');
+  const forwarded = upstream.messages.filter(event => event.type === 'input_audio_buffer.append').map(event => Buffer.from(event.audio, 'base64'));
+  assert.deepEqual(Buffer.concat(forwarded), fixture);
+  assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1);
+  const userItems = upstream.messages.filter(event => event.type === 'conversation.item.create' && event.item.role === 'user');
+  assert.equal(userItems.length, 1);
+  assert.equal(conversation.taskContext, null);
+  assert.equal(output.seen.some(event => event.type === 'guidance.step'), false);
+});
+
 test('late cancelled response chunks cannot be labelled as the next turn', async t => {
   const responses = [];
   const upstream = await fakeOpenAi(t, (socket, event) => {
