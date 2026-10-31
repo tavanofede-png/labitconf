@@ -146,8 +146,9 @@ private val Background = Color(0xFFF3F6F6)
                     }
                     EntryPage.CODE -> {
                         Title("Te llegó un código\na tu mail.", "Ingresá el código acá para verificar ${s.field("email")}.")
-                        EntryField("Código de seis dígitos", s.code, vm::code, KeyboardType.NumberPassword, enabled = !s.busy)
-                        Primary("Verificar código", !s.busy && s.code.length == 6, vm::verify)
+                        TinoCodeInput(s.code, enabled = !s.busy, onChange = vm::code)
+                        if (s.busy) Text("Verificando…", color = Teal, fontSize = 16.sp)
+                        if (!s.busy && s.error != null && s.code.length == 6) TextButton(onClick = vm::verify) { Text("Volver a intentar") }
                         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
                         LaunchedEffect(s.resendAt) { while (now < s.resendAt) { delay(1000); now = System.currentTimeMillis() } }
                         TextButton(onClick = vm::requestCode, enabled = !s.busy && now >= s.resendAt) { Text(if (now < s.resendAt) "Reenviar en ${(s.resendAt - now) / 1000 + 1} s" else "Reenviar código") }

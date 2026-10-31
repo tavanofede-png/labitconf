@@ -123,7 +123,14 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     fun firstTime(value: Boolean) = change { it.copy(firstTime = value) }
     fun loginRole(role: AccountRole) = change { it.copy(role = role, challengeId = "", code = "", demoPassword = "") }
     fun demoPassword(value: String) = change { it.copy(demoPassword = value.filter(Char::isDigit).take(4), error = null) }
-    fun code(value: String) = change { it.copy(code = value.filter(Char::isDigit).take(6), error = null) }
+    fun code(value: String) {
+        val s = state.value
+        if (s.busy || s.page != EntryPage.CODE) return
+        val digits = value.filter { it in '0'..'9' }.take(6)
+        if (digits == s.code) return
+        change { it.copy(code = digits, error = null) }
+        if (digits.length == 6) verify()
+    }
     fun message(value: String) = change { it.copy(message = value) }
     fun login() { change { it.copy(login = true, firstTime = false) }; move(EntryPage.LOGIN) }
     fun family(mode: String) { change { it.copy(familyMode = mode, login = mode == "join", firstTime = true) }; move(if (mode == "join") EntryPage.JOIN_FAMILY else EntryPage.FIND_PERSON) }
@@ -140,6 +147,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             try { block() } catch (e: CancellationException) { throw e }
             catch (e: Exception) { if (generation == current) change {
                 if (e is ApiFailure && e.code == "username_unavailable") it.copy(page = EntryPage.PROFILE, profileStep = profileStepsFor(it.role, it.emailVerified).indexOf(ProfileStep.USERNAME), usernameEdited = true, usernameStatus = "taken", error = e.message)
+                else if (e is ApiFailure && e.code == "invalid_code" && it.page == EntryPage.CODE) it.copy(code = "", error = e.message)
                 else it.copy(error = e.message ?: "No pude completar la acción.")
             } }
             finally { if (generation == current) change { it.copy(busy = false) } }
@@ -178,7 +186,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     }
     fun verify() {
         val s = state.value
-        if (s.code.length != 6 || s.challengeId.isBlank()) return
+        if (s.busy || s.page != EntryPage.CODE || s.code.length != 6 || s.challengeId.isBlank()) return
         if (runCatching { Instant.parse(s.expiresAt).toEpochMilli() <= System.currentTimeMillis() }.getOrDefault(true)) { change { it.copy(error = "El código venció. Solicitá uno nuevo.") }; return }
         work {
             val reply = app.api.request("/auth/code/verify", "POST", JSONObject().put("challengeId", s.challengeId).put("code", s.code), authenticated = false)
