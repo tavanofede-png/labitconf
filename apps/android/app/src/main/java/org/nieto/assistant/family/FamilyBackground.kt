@@ -44,7 +44,7 @@ object FamilyNotifications {
         val open = PendingIntent.getActivity(context, 7001, Intent(context, FamilyActivity::class.java).putExtra("caregiver", true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("NIETO Familia").setContentText("Hay pedidos de acompañamiento pendientes. Abrí Familia para revisarlos.")
+            .setContentTitle("TINO Familia").setContentText("Hay pedidos de acompañamiento pendientes. Abrí Familia para revisarlos.")
             .setContentIntent(open).setAutoCancel(true).setCategory(NotificationCompat.CATEGORY_SOCIAL)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setNumber(count).build()
         // Permission can change between the check and notify; never crash a worker for that race.

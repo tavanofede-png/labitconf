@@ -60,12 +60,22 @@ async function remoteChecks(base, indexAssets) {
     assert.doesNotMatch(response.headers.get('content-type') ?? '', /text\/html/i, 'Un asset fue reemplazado por el index de la SPA.');
     await response.arrayBuffer();
   }
-  for (const path of ['/api/health', '/api/assistant/message', '/downloads/nieto-debug.apk', '/.env', '/apps/api/data/nieto.json']) {
+  const health = await request('/api/health');
+  assert.equal(health.status, 200, 'El backend de producción no está disponible.');
+  const healthJson = await health.json();
+  assert.equal(healthJson.storage, 'vercel_blob_private_cas', 'El sitio debe usar almacenamiento persistente en la nube.');
+  assert.equal(healthJson.assistant?.model, 'gpt-realtime-2.1-mini');
+  for (const path of ['/api/devices/me', '/api/institution/devices']) {
+    const response = await request(path);
+    assert.equal(response.status, 401, `${path} debe exigir autenticación.`);
+    await response.arrayBuffer();
+  }
+  for (const path of ['/downloads/nieto-debug.apk', '/.env', '/apps/api/data/nieto.json']) {
     const response = await request(path);
     assert.equal(response.status, 404, `${path} debe quedar fuera de esta publicación estática.`);
     await response.arrayBuffer();
   }
-  return { origin: origin.origin, htmlRoutes: expectedRoutes.length + 1, protectedPaths: 5, assets: indexAssets.length };
+  return { origin: origin.origin, htmlRoutes: expectedRoutes.length + 1, protectedPaths: 5, assets: indexAssets.length, backend: healthJson.storage };
 }
 
 let knownSecrets = [];
@@ -78,8 +88,9 @@ try {
   assert.equal(config.outputDirectory, 'apps/web/dist');
   assert.equal(config.functions, undefined, 'Esta demo no despliega Functions de la API local.');
   assert.equal(config.services, undefined, 'Esta demo no despliega el backend local.');
-  assert.deepEqual(config.rewrites.map(route => route.source).sort(), expectedRoutes.map(path => `${path}/:path*`).sort(), 'Las reescrituras deben limitarse a las rutas de la demo; /api no puede caer en la SPA.');
-  assert.ok(config.rewrites.every(route => route.destination === '/index.html'));
+  assert.deepEqual(config.rewrites.map(route => route.source).sort(), [...expectedRoutes.map(path => `${path}/:path*`), '/api/:path*'].sort());
+  assert.ok(config.rewrites.filter(route => route.source !== '/api/:path*').every(route => route.destination === '/index.html'));
+  assert.equal(config.rewrites.find(route => route.source === '/api/:path*')?.destination, 'https://tino-api-labitconf.vercel.app/api/:path*');
 
   const output = resolve(root, config.outputDirectory);
   const files = await filesWithin(output);

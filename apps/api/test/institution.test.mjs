@@ -1,55 +1,131 @@
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { institutionOverview } from '../src/institution.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer } from '../src/server.mjs';
+import { JsonStore } from '../src/store.mjs';
+import { OpenArgClient } from '../src/openarg.mjs';
 
-const now = Date.parse('2026-10-30T12:00:00Z');
-const at = days => new Date(now - days * 86_400_000).toISOString();
-function state() {
-  return { users: Array.from({ length: 10 }, (_, i) => ({ id: `u${i}`, territoryId: 'AR-C', institutionMetricsConsent: i < 5 })),
-    sessions: Array.from({ length: 5 }, (_, i) => ({ id: `s${i}`, userId: `u${i}`, flowId: 'screen-assistance', createdAt: at(1), state: 'active', eventCounts: { flow_started: 1 }, durationSeconds: 60 })), alerts: [] };
+const NOW = Date.parse('2026-10-30T12:00:00Z');
+const TOKEN = 'institution-isolated-test';
+async function fixture(t) {
+  const folder = await mkdtemp(join(tmpdir(), 'tino-institution-'));
+  const store = new JsonStore(join(folder, 'test.json'));
+  const server = createServer({ store, institutionToken: TOKEN, now: () => NOW, rateLimit: 2000, openarg: new OpenArgClient({ apiKey: '' }) });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(folder, { recursive: true, force: true }); });
+  const request = async (path, { token = TOKEN, method = 'GET', body } = {}) => {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, { method,
+      headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return { status: response.status, data: await response.json() };
+  };
+  const devices = [];
+  for (let i = 0; i < 5; i++) { const invite=await request('/institution/device-invitations',{method:'POST',body:{}});devices.push((await request('/devices', { method: 'POST', body: { name: `Private person ${i}`, territoryId: 'AR-C',enrollmentCode:invite.data.enrollmentCode } })).data); }
+  request.store=store;
+  for(const device of devices) await request("/devices/me",{token:device.token,method:"PATCH",body:{institutionMetricsConsent:true}});
+  return { request, store, devices };
 }
-test('empty installations, nonconsenting activity and session creation never unlock a cohort', () => {
-  const data = state(); data.sessions = data.sessions.slice(0, 1);
-  data.sessions.push(...data.users.slice(5).map(user => ({ userId: user.id, state: 'active', createdAt: at(1), eventCounts: { flow_started: 1 } })));
-  data.sessions.push(...data.users.slice(1, 5).map(user => ({ userId: user.id, state: 'created', createdAt: at(1), eventCounts: {} })));
-  const result = institutionOverview(data, 'AR-C', now);
-  assert.equal(result.suppressed, true); assert.equal(result.participants, null); assert.equal(result.metrics, null); assert.deepEqual(result.flows, []);
-});
-test('each result, difficulty step, help and trend subgroup requires its own effective people', () => {
-  const data = state(); data.sessions[0].state = 'completed'; data.sessions[0].completedAt = at(1); data.sessions[0].autonomyCompleted = true;
-  data.sessions[0].eventCounts.user_lost = 9; data.sessions[0].difficultyByStep = { attach: 9 };
-  data.alerts.push({ userId: 'u0', createdAt: at(1), resolvedAt: at(0) });
-  let result = institutionOverview(data, 'AR-C', now);
-  assert.equal(result.activity.activePeople, 5); assert.equal(result.activity.startedFlows, 5); assert.equal(result.metrics.accompaniedMinutes, 5);
-  for (const key of ['reportedFlows', 'practiceReports', 'completedFlows', 'autonomyChecks', 'helpRequests']) assert.equal(result.metrics[key], null);
-  assert.equal(result.difficulties.events, null); assert.deepEqual(result.difficulties.steps, []); assert.equal(result.familyResponse.resolvedRequests, null);
-  assert.equal(result.trend.filter(bucket => !bucket.suppressed).length, 1);
-  data.sessions[1].createdAt = at(8);
-  result = institutionOverview(data, 'AR-C', now); assert.equal(result.activity.activePeople, 5); assert.equal(result.trend.every(bucket => bucket.suppressed), true);
-});
-test('thirty-day period excludes older sessions, revoked consent and other territories', () => {
-  const data = state(); data.sessions[4].createdAt = at(31);
-  assert.equal(institutionOverview(data, 'AR-C', now).suppressed, true);
-  data.sessions[4].createdAt = at(1); data.users[4].territoryId = 'AR-B';
-  assert.equal(institutionOverview(data, 'AR-C', now).suppressed, true);
-  data.users[4].territoryId = 'AR-C'; data.users[4].institutionMetricsConsent = false;
-  assert.equal(institutionOverview(data, 'AR-C', now).suppressed, true);
+async function session(request,device,autonomy=true) {
+  const result=await request('/assistant/sessions',{token:device.token,method:'POST',body:{flowId:'whatsapp-location',clientSessionId:randomUUID()}});
+  assert.equal(result.status,201);
+  const steps=['open_chat','attach','location','confirm','share','verify'];
+  for(const event of [{type:'flow_started'},...steps.flatMap(stepId=>[{type:'step_shown',stepId},{type:'step_completed',stepId}]),{type:'flow_reported',durationSeconds:120}])
+    assert.equal((await request(`/assistant/sessions/${result.data.id}/events`,{token:device.token,method:'POST',body:{eventId:randomUUID(),...event}})).status,200);
+  // Explicit synthetic verified records exercise aggregation math only. The public API cannot mint them.
+  await request.store.update(state=>{const row=state.sessions.find(s=>s.id===result.data.id);row.state='completed';row.resultSource='verified';row.autonomyCompleted=autonomy;});
+}
+
+test('new institution routes require credentials, validate dates and periods, and use active rather than registered cohorts', async t => {
+  const { request, devices } = await fixture(t);
+  for (const path of ['/institution/analytics', '/institution/territories', '/institution/programs']) assert.equal((await request(path, { token: 'bad' })).status, 401);
+  assert.equal((await request('/institution/analytics?days=1')).status, 400);
+  assert.equal((await request('/institution/analytics?territoryId=unknown')).status, 400);
+  let result = (await request('/institution/analytics')).data;
+  assert.equal(result.suppressed, true); assert.equal(result.participants, null); assert.equal(result.metrics, null);
+  for (let i = 0; i < devices.length; i++) await session(request, devices[i], i < 3);
+  result = (await request('/institution/analytics')).data;
+  assert.equal(result.suppressed, false); assert.equal(result.participants, 5);
+  assert.equal(result.metrics.completedFlows, 5); assert.equal(result.metrics.autonomyRate, null); assert.equal(result.metrics.autonomyChecks,null);
+  assert.equal(result.metrics.accompaniedMinutes, 10); assert.equal(result.metrics.completionRate, 100);
+  assert.equal(result.usage, null); assert.equal(result.safety, null);
+  assert.equal(result.trend.length, 1); assert.equal(result.flows[0].steps[0].completed, 5);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('Private person'), false);
+  for (const device of devices) { assert.equal(serialized.includes(device.deviceId), false); assert.equal(serialized.includes(device.token), false); }
 });
 
-test('reports and practice attempts have their own cohorts and legacy claims never unlock verified outcomes', () => {
-  const data = state();
-  for (const session of data.sessions) {
-    session.state = 'reported'; session.reportedAt = at(1); session.resultSource = 'self_reported';
-    session.practiceAttempts = [{ state: 'reported', reportedAt: at(1) }];
+test('sparse distribution and out-of-period sessions remain suppressed; territory counts never leak identities', async t => {
+  const { request, devices, store } = await fixture(t);
+  for (const device of devices) await session(request, device);
+  await store.update(s => { s.sessions[0].createdAt = '2026-10-01T10:00:00Z'; });
+  let result = (await request('/institution/analytics?days=30')).data;
+  assert.equal(result.suppressed, false); assert.deepEqual(result.trend, []);
+  result = (await request('/institution/analytics?days=7')).data;
+  assert.equal(result.suppressed, true); assert.equal(result.metrics, null);
+  const map = (await request('/institution/territories?days=30')).data;
+  assert.equal(map.territories.length, 24);
+  assert.equal(map.territories.find(row => row.territoryId === 'AR-C').participants, 5);
+  assert.ok(map.territories.filter(row => row.territoryId !== 'AR-C').every(row => row.participants === null));
+});
+
+test('usage is consent-gated, idempotent and non-overlapping; unaccompanied time is independent of autonomy checks', async t => {
+  const { request, devices } = await fixture(t);
+  const interval = { id: 'interval-001', category: 'communication', startedAt: '2026-10-30T10:00:00Z', endedAt: '2026-10-30T10:10:00Z', accompaniedSeconds: 120 };
+  const send = (device, body) => request('/usage/batch', { token: device.token, method: 'POST', body });
+  assert.equal((await send(devices[0], { consent: false, intervals: [interval] })).status, 400);
+  assert.equal((await send(devices[0], { consent: true, intervals: [{ ...interval, url: 'https://private.example' }] })).status, 400);
+  for (const device of devices) {
+    assert.equal((await send(device, { consent: true, intervals: [interval] })).status, 200);
+    assert.equal((await send(device, { consent: true, intervals: [interval] })).status, 200);
   }
-  let result = institutionOverview(data, 'AR-C', now);
-  assert.equal(result.metrics.reportedFlows, 5); assert.equal(result.metrics.practiceReports, 5);
-  assert.equal(result.metrics.completedFlows, null); assert.equal(result.metrics.autonomyChecks, null);
-  assert.equal(result.cohorts.autonomyChecks.suppressionReason, 'verification_unavailable');
-  data.sessions[0].practiceAttempts = [];
-  result = institutionOverview(data, 'AR-C', now); assert.equal(result.metrics.reportedFlows, 5); assert.equal(result.metrics.practiceReports, null);
-  for (const session of data.sessions) { session.state = 'completed'; session.completedAt = at(1); session.autonomyCompleted = true; session.practiceAttempts = []; }
-  result = institutionOverview(data, 'AR-C', now);
-  assert.equal(result.metrics.reportedFlows, 5); assert.equal(result.metrics.practiceReports, 5);
-  assert.equal(result.metrics.completedFlows, null); assert.equal(result.metrics.autonomyChecks, null);
+  assert.equal((await send(devices[0], { consent: true, intervals: [{ ...interval, id: 'interval-002' }] })).status, 409);
+  assert.equal((await send(devices[0], { consent: true, intervals: [{ ...interval, category: 'learning' }] })).status, 409);
+  const result = (await request('/institution/analytics')).data;
+  assert.equal(result.usage.screenMinutes, 50); assert.equal(result.usage.accompaniedMinutes, 10); assert.equal(result.usage.unaccompaniedMinutes, 40);
+  assert.equal(result.metrics, null); assert.equal(result.usage.categories[0].minutes, 50);
+  assert.equal((await send(devices[0], { consent: true, intervals: [{ ...interval, id: 'interval-003', accompaniedSeconds: 700 }] })).status, 400);
+});
+
+test('safety events are scoped to a device and contain only closed categories', async t => {
+  const { request, devices } = await fixture(t);
+  const event = { id: 'safety-event-1', kind: 'suspicious_link', category: 'browser' };
+  for (const device of devices) {
+    assert.equal((await request('/safety/events', { token: device.token, method: 'POST', body: event })).status, 200);
+    assert.equal((await request('/safety/events', { token: device.token, method: 'POST', body: event })).status, 200);
+  }
+  assert.equal((await request('/safety/events', { token: devices[0].token, method: 'POST', body: { ...event, url: 'private' } })).status, 400);
+  assert.equal((await request('/safety/events/safety-event-1', { token: TOKEN, method: 'PATCH', body: { resolved: true } })).status, 401);
+  assert.equal((await request('/safety/events/safety-event-1', { token: devices[0].token, method: 'PATCH', body: { resolved: true } })).status, 200);
+  const result = (await request('/institution/analytics')).data;
+  assert.equal(result.safety.total, 5); assert.equal(result.safety.resolved, 1); assert.equal(result.safety.pending, 4);
+  assert.equal(JSON.stringify(result).includes('safety-event-1'), false);
+});
+
+test('programs persist, validate dates, compare equal windows and suppress small baselines', async t => {
+  const { request, store, devices } = await fixture(t);
+  const body = { name: 'Taller accesible', territoryId: 'AR-C', startDate: '2026-10-25', endDate: '2026-10-29', goal: 70 };
+  assert.equal((await request('/institution/programs', { method: 'POST', body: { ...body, startDate: '2026-02-30' } })).status, 400);
+  assert.equal((await request('/institution/programs', { method: 'POST', body: { ...body, goal: 101 } })).status, 400);
+  const created = await request('/institution/programs', { method: 'POST', body });
+  assert.equal(created.status, 201);
+  await request(`/institution/programs/${created.data.program.id}`, { method: 'PATCH', body: { status: 'active' } });
+  let programs = (await request('/institution/programs')).data.programs;
+  assert.equal(programs[0].status, 'active'); assert.equal(programs[0].evaluation.status, 'insufficient_cohort');
+  for (const device of devices) await session(request, device);
+  await store.update(s => {
+    const original = s.sessions.map(session => ({ ...session }));
+    s.sessions.forEach(session => { session.createdAt = '2026-10-27T12:00:00Z'; });
+    s.sessions.push(...original.map((session, index) => ({ ...session, id: `baseline-${index}`, createdAt: '2026-10-22T12:00:00Z', autonomyCompleted: index < 2 })));
+  });
+  programs = (await request('/institution/programs')).data.programs;
+  const evaluation = programs[0].evaluation;
+  assert.equal(evaluation.status, 'insufficient_cohort'); assert.equal(evaluation.before.metrics.autonomyRate, null);
+  assert.equal(evaluation.after.metrics.autonomyRate, 100); assert.equal(evaluation.changePoints, null);
+  await store.update(s=>{s.sessions.filter(row=>row.id.startsWith('baseline-')).forEach(row=>{row.autonomyCompleted=true})});
+  const publishable=(await request('/institution/programs')).data.programs[0].evaluation;
+  assert.equal(publishable.status,'available');assert.equal(publishable.changePoints,0);
+  assert.equal(Date.parse(evaluation.before.period.to) - Date.parse(evaluation.before.period.from), Date.parse(evaluation.after.period.to) - Date.parse(evaluation.after.period.from));
+  assert.equal((await request('/institution/programs?territoryId=AR-X')).data.programs.length, 0);
 });

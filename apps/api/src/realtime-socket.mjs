@@ -9,12 +9,17 @@ export function attachRealtimeSocket(server, app) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 450_000, perMessageDeflate: false });
   const clients = new Set();
   server.on('upgrade', async (req, socket, head) => {
-    const reject = (status, message) => { if (!socket.destroyed) socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); };
+    const reject = (status, message, routingFailure = '') => { if (!socket.destroyed) socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n${routingFailure ? `X-Tino-Realtime-Rejection: ${routingFailure}\r\n` : ''}\r\n`); };
     socket.on('error', () => {});
     let conversation;
     try {
       const url = new URL(req.url, 'http://localhost');
-      if (url.pathname !== '/api/assistant/realtime' || url.search) { reject(404, 'Not Found'); return; }
+      if (!app.realtimePaths.has(url.pathname)) { reject(404, 'Not Found', 'route'); return; }
+      const query = [...url.searchParams.entries()];
+      const rewrite = app.realtimeRewriteQuery;
+      const mappedQuery = rewrite && query.length === Object.keys(rewrite).length
+        && query.every(([key, value]) => Object.hasOwn(rewrite, key) && rewrite[key] === value);
+      if (query.length && !mappedQuery) { reject(404, 'Not Found', 'query'); return; }
       const deviceId = await app.authorizeRealtime(req);
       if (socket.destroyed) return;
       if (!app.realtime.status().configured) throw new RealtimeError('openai_not_configured', 'Falta OPENAI_API_KEY en el servidor.', 503);

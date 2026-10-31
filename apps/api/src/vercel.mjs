@@ -14,7 +14,14 @@ export function createCloudServer(options = {}) {
   const store = options.store ?? new BlobStore({ pathname: process.env.BLOB_STATE_PATH || 'tino/production-state.json',
     token: process.env.BLOB_READ_WRITE_TOKEN, storeId: process.env.BLOB_STORE_ID });
   const realtime = options.realtime ?? new RealtimeService({ conversationOptions: { maxSessionMs: 270_000 } });
-  return createServer({ clientAddress: vercelClientAddress, ...options, store, realtime });
+  return createServer({ clientAddress: vercelClientAddress, ...options, store, realtime,
+    // Prototype logins and fixed instructional answers never reach production,
+    // even if local/demo flags accidentally exist in the cloud environment.
+    accountOptions: { ...options.accountOptions, localDemo: false, judgesDemo: false }, allowLocalAssistant: false,
+    // Vercel preserves HTTP URLs but can pass the rewritten Function URL when
+    // forwarding an upgrade. Both paths use the same authentication/protocol.
+    realtimePaths: ['/api/assistant/realtime', '/api/index'],
+    realtimeRewriteQuery: { path: 'assistant/realtime' } });
 }
 
 export default createCloudServer();

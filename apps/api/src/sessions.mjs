@@ -1,9 +1,10 @@
+import { TASK_FLOWS } from './assistant.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const GUIDED_STEPS = ['open_chat', 'attach', 'location', 'confirm', 'share', 'verify'];
-const EVENTS = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_reported', 'practice_started', 'practice_reported', 'cancelled', 'flow_completed', 'practice_completed', 'autonomy_completed']);
+const EVENTS = new Set(['flow_started', 'assistance_ended', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_reported', 'practice_started', 'practice_reported', 'cancelled', 'flow_completed', 'practice_completed', 'autonomy_completed']);
 const VERIFIED_RESULTS = new Set(['flow_completed', 'practice_completed', 'autonomy_completed']);
 export class SessionError extends Error {
   constructor(status, code, message) { super(message); this.name = 'SessionError'; this.status = status; this.code = code; }
@@ -15,7 +16,7 @@ const reported = session => session.state === 'reported' || session.state === 'c
 
 export function createSession(state, userId, body, now) {
   keys(body, ['flowId', 'clientSessionId']);
-  requireThat(['whatsapp-location', 'screen-assistance'].includes(body.flowId), 400, 'unsupported_flow', 'Flujo no disponible.');
+  requireThat((['whatsapp-location', 'screen-assistance'].includes(body.flowId) || Object.hasOwn(TASK_FLOWS,body.flowId)), 400, 'unsupported_flow', 'Flujo no disponible.');
   const clientSessionKey = hash(uuid(body.clientSessionId, 'clientSessionId'));
   const existing = state.sessions.find(session => session.userId === userId && session.clientSessionKey === clientSessionKey);
   if (existing) {
@@ -29,8 +30,8 @@ export function createSession(state, userId, body, now) {
   return { id: session.id, flowId: session.flowId, createdAt: session.createdAt };
 }
 
-function stepEvent(record, body, screenAssistance) {
-  const allowed = screenAssistance ? ['screen-step'] : GUIDED_STEPS;
+function stepEvent(record, body, screenAssistance, steps = GUIDED_STEPS) {
+  const allowed = screenAssistance ? ['screen-step'] : steps;
   if (body.stepId !== undefined) requireThat(allowed.includes(body.stepId), 400, 'invalid_step', 'El paso no pertenece al recorrido.');
   if (['step_shown', 'step_completed', 'step_repeated'].includes(body.type)) requireThat(body.stepId, 400, 'missing_step', 'Este evento requiere stepId.');
   if (screenAssistance) {
@@ -38,12 +39,12 @@ function stepEvent(record, body, screenAssistance) {
     if (body.type === 'step_completed') throw new SessionError(409, 'verification_unavailable', 'El asistente de pantalla no verifica pasos ejecutados en otra aplicación.');
     return;
   }
-  const index = GUIDED_STEPS.indexOf(body.stepId);
-  const current = GUIDED_STEPS.indexOf(record.currentStep);
+  const index = steps.indexOf(body.stepId);
+  const current = steps.indexOf(record.currentStep);
   if (body.type === 'step_shown') {
-    requireThat(current === -1 ? index === 0 : index <= current || (index === current + 1 && record.completedSteps.includes(GUIDED_STEPS[current])), 409, 'invalid_transition', 'Mostrá los pasos del recorrido en orden antes de avanzar.');
+    requireThat(current === -1 ? index === 0 : index <= current || (index === current + 1 && record.completedSteps.includes(steps[current])), 409, 'invalid_transition', 'Mostrá los pasos del recorrido en orden antes de avanzar.');
     // Backtracking invalidates this step and every later confirmation.
-    if (index <= current) record.completedSteps = record.completedSteps.filter(step => GUIDED_STEPS.indexOf(step) < index);
+    if (index <= current) record.completedSteps = record.completedSteps.filter(step => steps.indexOf(step) < index);
     record.currentStep = body.stepId;
   } else if (body.type === 'step_completed') {
     requireThat(record.currentStep === body.stepId && record.completedSteps.length === index, 409, 'invalid_transition', 'Completá únicamente el paso vigente después de los anteriores.');
@@ -97,10 +98,15 @@ export function applySessionEvent(state, userId, sessionId, body, now) {
     session.state = 'active'; session.startedAt = timestamp;
   } else if (body.type !== 'practice_started') {
     requireThat(record.state === 'active', 409, 'flow_not_started', 'Iniciá el recorrido antes de registrar pasos o resultados.');
-    if (['step_shown', 'step_completed', 'step_repeated', 'user_lost'].includes(body.type)) stepEvent(record, body, screenAssistance);
+    if (body.type === 'assistance_ended') {
+      requireThat(screenAssistance && !attemptId, 409, 'invalid_transition', 'Esta decisión corresponde a la asistencia visual activa.');
+      requireThat(!session.assistanceEndedAt, 409, 'assistance_already_ended', 'Ya registraste que vas a seguir por tu cuenta.');
+      session.assistanceEndedAt = timestamp; session.assistanceEndReason = 'user_continued_alone';
+    }
+    if (['step_shown', 'step_completed', 'step_repeated', 'user_lost'].includes(body.type)) stepEvent(record, body, screenAssistance, TASK_FLOWS[session.flowId]?.steps.map(s=>s.id) ?? GUIDED_STEPS);
     if (body.type === 'flow_reported' || body.type === 'practice_reported') {
       requireThat(!screenAssistance, 409, 'verification_unavailable', 'La asistencia de pantalla no acredita tareas completadas.');
-      requireThat(record.currentStep === 'verify' && GUIDED_STEPS.every((step, index) => record.completedSteps[index] === step), 409, 'flow_incomplete', 'Recorré y confirmá todos los pasos antes de registrar el reporte.');
+      requireThat(record.currentStep === (TASK_FLOWS[session.flowId]?.steps.at(-1).id ?? 'verify') && (TASK_FLOWS[session.flowId]?.steps.map(s=>s.id) ?? GUIDED_STEPS).every((step,index)=>record.completedSteps[index]===step), 409, 'flow_incomplete', 'Recorré y confirmá todos los pasos antes de registrar el reporte.');
       record.state = 'reported'; record.reportedAt = timestamp; record.resultSource = 'self_reported';
     } else if (body.type === 'cancelled') { record.state = 'cancelled'; record.cancelledAt = timestamp; }
   }
@@ -122,6 +128,8 @@ export function publicSession(session) {
     createdAt: session.createdAt, startedAt: session.startedAt, reportedAt: session.reportedAt ?? (legacy ? session.completedAt : undefined),
     durationSeconds: session.durationSeconds ?? 0, completedSteps: session.completedSteps ?? [], autonomyCompleted: false,
     resultSource: legacy ? 'legacy_unverified' : session.resultSource ?? null,
+    assistanceLevel: session.assistanceEndReason === 'user_continued_alone' ? 'partial' : 'full',
+    assistanceEndedAt: session.assistanceEndedAt, assistanceEndReason: session.assistanceEndReason,
     practiceAttempts: (session.practiceAttempts ?? []).map(({ id, state, startedAt, reportedAt, cancelledAt, durationSeconds, completedSteps, assisted, resultSource }) => ({ id, state, startedAt, reportedAt, cancelledAt, durationSeconds, completedSteps, assisted, resultSource })),
     legacyPracticeReported: legacy && session.autonomyCompleted === true };
 }

@@ -3,17 +3,21 @@ package org.nieto.assistant.voice
 import android.annotation.SuppressLint
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.media.ToneGenerator
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -334,7 +338,7 @@ class RealtimeVoice(
                 emit(VoiceState(message = "Respuesta cancelada."))
             }
             "error" -> {
-                // This string is the NIETO server's sanitized public error, never the upstream object.
+                // This string is the TINO server's sanitized public error, never the upstream object.
                 fail(event.optString("message").takeIf { it.isNotBlank() } ?: "La voz no está disponible. Podés usar texto.")
             }
         }
@@ -350,25 +354,22 @@ class RealtimeVoice(
         recording = true
         val activity = VoiceActivityPolicy()
         val silentTimeout = AtomicBoolean(false)
-        emit(VoiceState(VoicePhase.LISTENING, "Te escucho. Hablá con naturalidad; envío tu consulta cuando hacés una pausa."))
-        captureDeadline = scope.launch {
-            delay(VoiceActivityPolicy.NO_SPEECH_TIMEOUT_MS)
-            if (generation == connectionGeneration && recording && !activity.hasSpeech) {
-                silentTimeout.set(true)
-                commitCapture = false
-                recording = false
-                synchronized(captureLock) { runCatching { recorder?.stop() } }
-                return@launch
-            }
-            delay(RealtimePolicy.MAX_INPUT_SECONDS * 1000L - VoiceActivityPolicy.NO_SPEECH_TIMEOUT_MS)
-            if (generation == connectionGeneration && recording) finishInput()
-        }
+        emit(VoiceState(VoicePhase.CONNECTING, "Preparando el micrófono. Hablá después de la señal."))
         val captureSocket = socket
         captureJob = scope.launch(Dispatchers.IO) {
             var captured = 0
             var problem: String? = null
             var local: AudioRecord? = null
             try {
+                if (!isActive || !recording || generation != connectionGeneration) return@launch
+                // This cue is emitted only after the server is ready. No microphone exists yet,
+                // so neither the greeting nor the tone can be uploaded as the person's speech.
+                try { playListeningCue() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: RuntimeException) {
+                    problem = "No pude reproducir la señal para empezar a escuchar. Volvé a activar TINO."
+                    return@launch
+                }
                 if (!isActive || !recording || generation != connectionGeneration) return@launch
                 val minimum = AudioRecord.getMinBufferSize(RealtimePolicy.SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 check(minimum > 0)
@@ -381,6 +382,22 @@ class RealtimeVoice(
                     local.startRecording()
                 }
                 check(local.recordingState == AudioRecord.RECORDSTATE_RECORDING)
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation != connectionGeneration || !recording) throw CancellationException("Voice input cancelled")
+                    emit(VoiceState(VoicePhase.LISTENING, "Te escucho. Hablá con naturalidad; envío tu consulta cuando hacés una pausa."))
+                    captureDeadline = scope.launch captureClock@ {
+                        delay(VoiceActivityPolicy.NO_SPEECH_TIMEOUT_MS)
+                        if (generation == connectionGeneration && recording && !activity.hasSpeech) {
+                            silentTimeout.set(true)
+                            commitCapture = false
+                            recording = false
+                            synchronized(captureLock) { runCatching { recorder?.stop() } }
+                            return@captureClock
+                        }
+                        delay(RealtimePolicy.MAX_INPUT_SECONDS * 1000L - VoiceActivityPolicy.NO_SPEECH_TIMEOUT_MS)
+                        if (generation == connectionGeneration && recording) finishInput()
+                    }
+                }
                 val chunk = ByteArray(RealtimePolicy.CHUNK_BYTES)
                 while (isActive && recording && generation == connectionGeneration && captured < RealtimePolicy.MAX_INPUT_BYTES) {
                     val size = minOf(chunk.size, RealtimePolicy.MAX_INPUT_BYTES - captured)
@@ -411,7 +428,8 @@ class RealtimeVoice(
                     }
                 }
                 if (generation == connectionGeneration && captured >= RealtimePolicy.MAX_INPUT_BYTES) commitCapture = true
-            } catch (_: Exception) { if (generation == connectionGeneration) problem = "No pude iniciar el micrófono. Revisá su permiso o usá texto." }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (generation == connectionGeneration) problem = "No pude iniciar el micrófono. Revisá su permiso o usá texto." }
             finally {
                 if (generation == connectionGeneration) recording = false
                 synchronized(captureLock) {
@@ -440,6 +458,15 @@ class RealtimeVoice(
                 }
             }
         }
+    }
+
+    private suspend fun playListeningCue() {
+        val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+        try {
+            check(tone.startTone(ToneGenerator.TONE_PROP_BEEP, 100))
+            delay(100)
+        } finally { tone.release() }
+        delay(150)
     }
 }
 

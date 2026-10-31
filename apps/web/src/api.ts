@@ -1,4 +1,4 @@
-export type Page = 'instituciones' | 'familia' | 'aplicacion' | 'conexion';
+export type Page = 'bienvenida' | 'instituciones' | 'familia' | 'aplicacion' | 'conexion';
 export interface Health {
   status: string;
   version: string;
@@ -24,7 +24,33 @@ export interface Overview {
   gaps?: string[];
   updatedAt: string;
 }
-export interface MetricCohort { suppressed: boolean; suppressionReason: string | null; contributors: number | null; minimumCohort: number }
+export interface FlowMetric {
+  flowId: string; name: string; started: number; completed: number; cancelled: number;
+  autonomyChecks: number; averageMinutes: number; repeatedSteps: number; lostEvents: number;
+  steps: { stepId: string; completed: number }[];
+}
+export interface Analytics {
+  territoryId: string; period: { from: string; to: string; days?: number }; minimumCohort: number;
+  suppressed: boolean; participants: number | null; updatedAt?: string;
+  metrics: null | { sessions: number; completedFlows: number; autonomyChecks: number; accompaniedMinutes: number;
+    completionRate: number | null; autonomyRate: number | null; averageMinutes: number | null };
+  flows: FlowMetric[];
+  trend: { date: string; sessions: number; completed: number; autonomyChecks: number }[];
+  usage: null | { screenMinutes: number; accompaniedMinutes: number; unaccompaniedMinutes: number;
+    categories: { category: string; minutes: number }[] };
+  safety: null | { total: number; resolved: number; pending: number; categories: { kind: string; count: number }[] };
+  help: null | { total: number; resolved: number };
+  definitions?: Record<string, string>;
+}
+export interface TerritorySummary {
+  territoryId: string; name: string; suppressed: boolean; participants: number | null;
+  completedFlows: number | null; autonomyRate: number | null;
+}
+export interface Program {
+  id: string; name: string; territoryId: string; startDate: string; endDate: string;
+  goal: number; status: 'planned' | 'active' | 'completed'; createdAt: string;
+  evaluation: { status: string; before: Analytics | null; after: Analytics | null; changePoints: number | null; note?: string };
+}
 export interface Source { title: string; url: string }
 export interface Dataset {
   id: string; title: string; description: string; sourceUrl: string;
@@ -33,7 +59,7 @@ export interface Dataset {
 }
 export interface PublicContext {
   territoryId?: string; query?: string; status?: string;
-  indicators?: { id: string; label: string; value: number | string; unit: string; period: string; sourceUrl: string; sourceTitle: string; freshness?: { historical: boolean; dataPeriod: string; sourceReadAt: string | null; retrievedAt: string }; method?: { note?: string } }[];
+  indicators?: { territoryId?: string; id: string; label: string; value: number | string; unit: string; period: string; sourceUrl: string; sourceTitle: string; freshness?: { historical: boolean; dataPeriod: string; sourceReadAt: string | null; retrievedAt: string }; method?: { note?: string } }[];
   datasets: Dataset[]; sources: Source[]; warnings: string[];
   cached: boolean; fetchedAt: string; rawText?: string;
   gaps?: string[];
@@ -82,3 +108,5 @@ export function localDate(date: string | null | undefined, time = false) {
   const d = new Date(date);
   return Number.isNaN(d.getTime()) ? 'Sin fecha informada' : new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', ...(time ? { timeStyle: 'short' as const } : {}) }).format(d);
 }
+
+export interface MetricCohort { suppressed: boolean; suppressionReason: string | null; contributors: number | null; minimumCohort: number }

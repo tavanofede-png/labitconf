@@ -1,17 +1,23 @@
-# NIETO 2.0
+# TINO
 
-NIETO acompaña a personas con poca experiencia digital para que puedan aprender a usar su teléfono. Esta versión para LABITCONF reúne una aplicación Android, un portal familiar e institucional y un backend que consulta datos públicos mediante el MCP oficial de OpenArg.
+TINO es un asistente de voz para Android que acompaña dentro de Gmail, WhatsApp y las aplicaciones instaladas. La persona dice «Hola Tino», conversa por voz y realiza cada acción; TINO observa los controles autorizados y puede encerrarlos con un señalador. No pulsa botones ni sustituye las aplicaciones con formularios propios.
 
-El usuario hace cada acción. Desde la burbuja, pide ayuda por voz o texto; OpenAI Realtime analiza la pantalla actual autorizada y propone un paso vinculado a un control real. Android lo señala sin pulsarlo. La tarea conserva contexto efímero, sin historial guardado. El mismo APK incluye acceso familiar nativo y avisos periódicos fuera del navegador. OpenArg aporta contexto público para instituciones con fuentes y períodos verificables.
+La configuración inicial permite elegir TINO como asistente predeterminado, autorizar micrófono y accesibilidad y conectar el dispositivo al servicio. La frase de activación se reconoce localmente con Vosk; las consultas posteriores usan OpenAI Realtime, modelo exacto gpt-realtime-2.1-mini. La restauración tras reiniciar depende del enlace del asistente por Android y del primer desbloqueo. La validación específica se registra en el [informe de Galaxy Tab S10+](docs/TINO-PRODUCTION-TAB-S10.md).
 
-## Probar la demostración en el navegador
+## Instalación Android y servicio
 
-- [Celular interactivo](https://labitconf-demo.vercel.app/emulador): pantalla Android de práctica con marco de teléfono o tablet.
-- [Vista web normal](https://labitconf-demo.vercel.app/demo): los mismos recorridos sin el marco.
+- [Instalar TINO para Android](https://labitconf-demo.vercel.app/).
+- [APK firmado v0.7.0-tino](https://github.com/tavanofede-png/labitconf/releases/download/v0.7.0-tino/tino-release.apk).
+- [Estado HTTPS del servicio](https://tino-api-labitconf.vercel.app/api/health).
+- [Portal institucional](https://labitconf-demo.vercel.app/portal#instituciones) y [familia](https://labitconf-demo.vercel.app/portal#familia).
 
-Ambas vistas permiten practicar crear un grupo de WhatsApp, compartir una ubicación de muestra y crear una cuenta Gmail ficticia. Funcionan desde el enlace, sin instalar nada ni mantener una computadora local encendida. La guía señala el próximo control y puede leer los pasos con la voz del navegador. Son mockups interactivos con datos de prueba: esta demo estática no usa el agente OpenAI ni OpenArg y no realiza operaciones en WhatsApp o Google. El APK conserva la integración real descrita arriba. Ver [alcance, publicación y comprobaciones](docs/WEB_DEMO.md).
+La entrada pública ya no monta el tutorial del navegador. La aplicación real se instala en Android; la web sirve la descarga, el estado y los portales. La versión release usa HTTPS y almacenamiento privado persistente en Vercel. No depende de un servidor local. Las claves del proveedor quedan en el servidor y el acceso de cada tablet se autoriza con un código de un solo uso.
 
-## Inicio rápido
+El proyecto conserva los nombres internos de paquete NIETO y los módulos del equipo para familia, instituciones y OpenArg. El APK release usa org.nieto.assistant.tino y no reemplaza la instalación anterior de desarrollo durante la validación.
+
+## Desarrollo local
+
+
 
 Requisitos: Node.js **24 LTS** recomendado, mínimo **22.15**, y npm. Desde la raíz:
 
@@ -27,7 +33,7 @@ Si todavía no hay una credencial institucional, pegá el resultado del último 
 npm run dev
 ```
 
-Abrí [la demo local](http://localhost:5173) o [el portal local](http://localhost:5173/portal#instituciones). La API escucha en [localhost:8787/api/health](http://localhost:8787/api/health). `Ctrl+C` cierra ambos servicios. También podés usar `./scripts/start-local.ps1`. Desde Bash, el equivalente a copiar la configuración es `cp .env.example .env`.
+Abrí [la página de instalación local](http://localhost:5173) o [el portal local](http://localhost:5173/portal#instituciones). La API escucha en [localhost:8787/api/health](http://localhost:8787/api/health). `Ctrl+C` cierra ambos servicios. También podés usar `./scripts/start-local.ps1`. Desde Bash, el equivalente a copiar la configuración es `cp .env.example .env`.
 
 Ingresá el token institucional en **Conexión**. El portal conserva por separado las credenciales institucional y familiar en `sessionStorage`, hasta cerrar la pestaña o cerrar sesión; no forman parte del bundle. Un familiar crea su propio grupo y recibe una credencial distinta, un código de invitación y su vencimiento. Guardá la credencial familiar desde el botón explícito de respaldo: permite restaurar el acceso a ese grupo.
 

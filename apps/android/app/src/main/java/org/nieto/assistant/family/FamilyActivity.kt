@@ -62,7 +62,7 @@ class FamilyActivity : ComponentActivity() {
         state = FamilyViewState(signedIn = store.access() != null, notifications = store.notificationsEnabled,
             permission = FamilyNotifications.permitted(this), lastChecked = store.lastCheckedAt)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF264C3B), background = Color(0xFFFAF8F2))) {
+            MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF006B64), background = Color(0xFFFAF8F2))) {
                 FamilyScreen(application as NietoApp, intent.getBooleanExtra("caregiver", false), state, store.serverUrl,
                     onBack = ::finish, onCreate = ::createGroup, onRestore = ::restore,
                     onRefresh = ::refresh, onInvitation = ::invitation, onResolve = ::resolve,
@@ -183,8 +183,8 @@ private fun FamilyScreen(app: NietoApp, initialCaregiver: Boolean, state: Family
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState())
             .padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            TextButton(onClick = onBack) { Text("Volver a NIETO") }
-            Text("NIETO Familia", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            TextButton(onClick = onBack) { Text("Volver a TINO") }
+            Text("TINO Familia", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             Text("Acompañá desde esta app, con los permisos que cada persona elige.", fontSize = 19.sp)
             OutlinedButton(onClick = { caregiver = false }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                 Text(if (!caregiver) "✓ Este teléfono recibe ayuda" else "Este teléfono recibe ayuda")
@@ -226,7 +226,7 @@ private fun FamilyScreen(app: NietoApp, initialCaregiver: Boolean, state: Family
                 }
                 HorizontalDivider()
                 Text("Invitar a una persona", fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
-                Text("La persona abre NIETO → Familia en su teléfono, ingresa el código y decide si comparte progreso y ayuda.")
+                Text("La persona abre TINO → Familia en su teléfono, ingresa el código y decide si comparte progreso y ayuda.")
                 if (state.invitationCode.isNotBlank()) {
                     Text(state.invitationCode, fontSize = 26.sp, fontWeight = FontWeight.Bold)
                     Text("Un solo uso. Vence: ${familyDate(state.expiresAt)}")
@@ -260,7 +260,7 @@ private fun FamilyScreen(app: NietoApp, initialCaregiver: Boolean, state: Family
                 TextButton(onClick = { confirmClose = true }, modifier = Modifier.fillMaxWidth()) { Text("Cerrar y borrar acceso de este teléfono") }
             }
             }
-            Text("La familia no recibe conversaciones, capturas ni mensajes de WhatsApp. La persona asistida puede revocar su vínculo desde NIETO.", fontSize = 16.sp)
+            Text("La familia no recibe conversaciones, capturas ni mensajes de WhatsApp. La persona asistida puede revocar su vínculo desde TINO.", fontSize = 16.sp)
         }
     }
     if (confirmClose) AlertDialog(onDismissRequest = { confirmClose = false }, title = { Text("¿Borrar el acceso local?") },

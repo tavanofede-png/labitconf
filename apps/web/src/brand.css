@@ -1,0 +1,4 @@
+.brand-logo{display:block;width:136px;height:auto;object-fit:contain;max-width:100%}
+.brand{min-height:55px;letter-spacing:normal}
+@media(max-width:960px){.brand-logo{width:123px}.brand{min-height:49px}}
+@media(max-width:700px){.brand-logo{width:108px}.brand{min-height:43px}}

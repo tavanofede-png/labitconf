@@ -288,7 +288,7 @@ test('a recording is bounded at 45 seconds of PCM and invalid capture never asks
   assert.equal(upstream.messages.some(event => event.type === 'response.create'), false);
   conversation.handleClient({ type: 'audio.start' });
   const chunk = Buffer.alloc(12_000).toString('base64');
-  for (let index = 0; index < 180; index++) conversation.handleClient({ type: 'audio.append', audio: chunk });
+  for (let index = 0; index < 180; index++) { conversation.handleClient({ type: 'audio.append', audio: chunk }); if(index%10===0) await new Promise(resolve=>setTimeout(resolve,1)); }
   assert.throws(() => conversation.handleClient({ type: 'audio.append', audio: Buffer.alloc(2).toString('base64') }), /45 segundos/);
   assert.equal(conversation.recording, false); assert.equal(conversation.inputBytes, 0);
   assert.equal(upstream.messages.some(event => event.type === 'response.create'), false);
@@ -310,6 +310,79 @@ test('a response timeout closes its provider connection without retrying', async
   const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint, responseTimeoutMs: 25 } });
   await assert.rejects(realtime.reply({ deviceId: 'timeout-device', text: 'Hola' }), error => error.code === 'openai_timeout');
   assert.equal(upstream.requests.length, 1); assert.equal(realtime.active.size, 0);
+});
+
+
+test('curated group and email journeys remain available without opening an AI connection',async t=>{
+ const upstream=await fakeOpenAi(t);const realtime=new RealtimeService({apiKey:'test-key',conversationOptions:{endpoint:upstream.endpoint}});
+ const {request,device}=await apiFixture(t,realtime);
+ const send=text=>request('/assistant/message',{token:device.token,body:{text,conversationId:'guided-demo'}});
+ assert.equal((await send('Quiero crear un grupo de WhatsApp')).body.flowId,'whatsapp-group');
+ assert.equal((await send('Quiero enviar un correo')).body.clearEmailDraft,true);
+ await send('persona@example.com');await send('Asunto sintético');
+ const result=await send('Mensaje sintético para probar el borrador.');
+ assert.equal(result.body.flowId,'email-send');assert.equal(result.body.emailDraft.to,'persona@example.com');
+ assert.equal(upstream.requests.length,0);assert.equal(realtime.active.size,0);
+});
+
+test('visual assistance advances from launcher to WhatsApp using a fresh control from each screen',async t=>{
+ let round=0;
+ const upstream=await fakeOpenAi(t,(socket,event,helper)=>{
+  ++round;
+  if(round%2===0){helper.sendResponse(socket,event);return;}
+  const first=round===1;
+  const args={screenId:first?'launcher_screen':'whatsapp_screen',controlId:first?'whatsapp_icon':'new_group',instruction:first?'Tocá WhatsApp.':'Tocá Nuevo grupo.'};
+  const responseId=`visual-${round}`;
+  socket.send(JSON.stringify({type:'response.created',response:{id:responseId,metadata:event.response.metadata}}));
+  socket.send(JSON.stringify({type:'response.done',response:{id:responseId,status:'completed',output:[{type:'function_call',name:'point_to_control',call_id:`point-${round}`,arguments:JSON.stringify(args)}]}}));
+ });
+ const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text'});t.after(()=>conversation.close());
+ const output=eventsFrom(conversation);await conversation.connect();
+ conversation.handleClient({type:'screen.context',screen:{id:'launcher_screen',packageName:'org.synthetic.launcher',width:360,height:640,controls:[{id:'whatsapp_icon',label:'WhatsApp',role:'button',bounds:[20,100,120,200]}]}});
+ conversation.handleClient({type:'text',text:'Ayudame a crear un grupo de WhatsApp.'});
+ const firstDone=await output.wait(e=>e.type==='response.done');const oldItem=conversation.screenItemId;
+ // Respect the production snapshot rate limit rather than disabling it in this integration test.
+ await new Promise(resolve=>setTimeout(resolve,800));
+ conversation.handleClient({type:'screen.context',requestGuidance:true,screen:{id:'whatsapp_screen',packageName:'com.whatsapp',width:360,height:640,controls:[{id:'new_group',label:'Nuevo grupo',role:'button',bounds:[180,50,350,105]}]}});
+ await output.wait(e=>e.type==='response.done'&&e.turnId!==firstDone.turnId);
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>[e.screenId,e.controlId]),[['launcher_screen','whatsapp_icon'],['whatsapp_screen','new_group']]);
+ assert.ok(upstream.messages.some(e=>e.type==='conversation.item.delete'&&e.item_id===oldItem));
+ const acknowledgements=upstream.messages.filter(e=>e.item?.type==='function_call_output').map(e=>JSON.parse(e.item.output));
+ assert.equal(acknowledgements.length,2);assert.ok(acknowledgements.every(e=>e.pointed===true&&e.executed===false));
+});
+
+test('mail visual protocol preserves explicit review before pointing to Send and never executes it',async t=>{
+ let round=0;
+ const upstream=await fakeOpenAi(t,(socket,event,helper)=>{
+  ++round;
+  if(round%2===0){helper.sendResponse(socket,event);return;}
+  const compose=round===1;
+  const args={screenId:compose?'mail_inbox':'mail_draft',controlId:compose?'compose':'send',instruction:compose?'Tocá Redactar.':'Como confirmaste que revisaste todo, podés tocar Enviar cuando quieras.'};
+  const id=`mail-${round}`;
+  socket.send(JSON.stringify({type:'response.created',response:{id,metadata:event.response.metadata}}));
+  socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[{type:'function_call',name:'point_to_control',call_id:id,arguments:JSON.stringify(args)}]}}));
+ });
+ const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text'});t.after(()=>conversation.close());
+ const output=eventsFrom(conversation);await conversation.connect();
+ const instructions=upstream.messages.find(e=>e.type==='session.update').session.instructions;
+ assert.match(instructions,/Antes de señalar Enviar.*confirmación explícita/);
+ assert.match(instructions,/campos editables llegan ocultos/);
+ assert.match(instructions,/borrador.*sin duplicar pasos/);
+ conversation.handleClient({type:'screen.context',screen:{id:'mail_inbox',packageName:'com.google.android.gm',width:360,height:640,controls:[{id:'compose',label:'Redactar',role:'button',bounds:[180,500,350,560]}]}});
+ conversation.handleClient({type:'text',text:'Ayudame a mandar un mail paso por paso.'});
+ const first=await output.wait(e=>e.type==='response.done');
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>e.controlId),['compose']);
+ await new Promise(resolve=>setTimeout(resolve,800));
+ conversation.handleClient({type:'screen.context',screen:{id:'mail_draft',packageName:'com.google.android.gm',width:360,height:640,controls:[{id:'recipient',label:'Campo de texto',role:'input',bounds:[20,100,340,150]},{id:'subject',label:'Campo de texto',role:'input',bounds:[20,180,340,230]},{id:'body',label:'Campo de texto',role:'input',bounds:[20,250,340,450]},{id:'send',label:'Enviar',role:'button',bounds:[280,20,340,70]}]}});
+ // A screen alone does not create a turn or certify any editable value.
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>e.controlId),['compose']);
+ const confirmation='Ya revisé destinatario, asunto y mensaje. No lleva adjuntos. Quiero enviarlo.';
+ conversation.handleClient({type:'text',text:confirmation});
+ await output.wait(e=>e.type==='response.done'&&e.turnId!==first.turnId);
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>[e.screenId,e.controlId]),[['mail_inbox','compose'],['mail_draft','send']]);
+ assert.ok(upstream.messages.some(e=>e.item?.role==='user'&&e.item.content?.[0]?.text===confirmation));
+ const acknowledgements=upstream.messages.filter(e=>e.item?.type==='function_call_output').map(e=>JSON.parse(e.item.output));
+ assert.ok(acknowledgements.every(e=>e.executed===false));
 });
 
 async function eventually(predicate) {

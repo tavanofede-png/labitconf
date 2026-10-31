@@ -22,6 +22,20 @@ local.properties
 Thumbs.db
 artifacts/qa/
 artifacts/*.apk
+artifacts/tino-release.json
+artifacts/SHA256SUMS.release.txt
 artifacts/android-build*.json
 artifacts/SHA256SUMS*.txt
 *.tsbuildinfo
+.vercel/
+
+# The Android source package named data is code, not runtime data.
+!apps/android/app/src/main/java/org/nieto/assistant/data/
+!apps/android/app/src/main/java/org/nieto/assistant/data/**
+
+# Locally generated reports and previews.
+/output/
+
+artifacts/*.part
+.vercel
+.env*

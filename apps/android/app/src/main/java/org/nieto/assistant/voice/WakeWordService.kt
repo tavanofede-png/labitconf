@@ -158,12 +158,12 @@ class WakeWordService : Service() {
             return
         }
         val now = SystemClock.elapsedRealtime()
-        policy.updateVoice(state.voice.active || state.busy, now)
+        policy.updateVoice(state.voice.active || state.busy || state.recordingVoiceNote || state.screenCapturePending, now)
         scheduleCheck(now)
         if (!policy.canListen(conditions(state), now)) {
             stopCapture()
             publishStatus(when {
-                state.voice.active || state.busy -> "TINO está atendiendo tu consulta."
+                state.voice.active || state.busy || state.recordingVoiceNote || state.screenCapturePending -> "TINO está atendiendo tu consulta."
                 state.ttsSpeaking -> "TINO está hablando."
                 state.nativeSurfaceVisible -> "Abrí otra aplicación para usar Hola Tino."
                 !state.accessibilityConnected -> "Esperando la conexión del servicio de accesibilidad…"
@@ -230,7 +230,7 @@ class WakeWordService : Service() {
         enabled = state.wakeEnabled,
         assistanceEnabled = state.assistanceEnabled,
         accessibilityConnected = state.accessibilityConnected,
-        voiceBusy = state.voice.active || state.busy,
+        voiceBusy = state.voice.active || state.busy || state.recordingVoiceNote || state.screenCapturePending,
         ttsSpeaking = state.ttsSpeaking,
         nativeSurfaceVisible = state.nativeSurfaceVisible,
     )

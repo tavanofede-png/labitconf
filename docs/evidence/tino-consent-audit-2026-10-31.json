@@ -1,0 +1,8 @@
+{
+  "verification": "isolated in-memory fixture against current summarize function",
+  "allContributorsDemo": true,
+  "allAggregatePreferencesFalse": true,
+  "published": true,
+  "publishedParticipants": 5,
+  "publishedSessionCount": 5
+}

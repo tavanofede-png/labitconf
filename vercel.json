@@ -5,6 +5,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "apps/web/dist",
   "rewrites": [
+    { "source": "/api/:path*", "destination": "https://tino-api-labitconf.vercel.app/api/:path*" },
     { "source": "/demo/:path*", "destination": "/index.html" },
     { "source": "/emulador/:path*", "destination": "/index.html" },
     { "source": "/web/:path*", "destination": "/index.html" },

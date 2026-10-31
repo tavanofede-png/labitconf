@@ -18,6 +18,26 @@ function fixture(flowId = 'whatsapp-location') {
 }
 const code = expected => error => error.code === expected;
 
+test('partial assistance requires an explicit decision and never implies task completion',()=>{
+ const interrupted=fixture('screen-assistance');interrupted.event({type:'flow_started'});interrupted.event({type:'cancelled'});
+ assert.equal(publicSession(interrupted.record).assistanceEndReason,undefined);
+ assert.equal(interrupted.record.resultSource,null);
+ const partial=fixture('screen-assistance');
+ assert.throws(()=>partial.event({type:'assistance_ended'}),code('flow_not_started'));
+ partial.event({type:'flow_started'});
+ const body={eventId:randomUUID(),type:'assistance_ended'};
+ applySessionEvent(partial.state,'user-one',partial.session.id,body,now+1000);
+ assert.equal(applySessionEvent(partial.state,'user-one',partial.session.id,body,now+2000).duplicate,true);
+ assert.equal(publicSession(partial.record).assistanceLevel,'partial');
+ assert.equal(publicSession(partial.record).assistanceEndReason,'user_continued_alone');
+ assert.throws(()=>partial.event({type:'assistance_ended'}),code('assistance_already_ended'));
+ partial.event({type:'cancelled'});
+ assert.equal(partial.record.state,'cancelled');assert.equal(partial.record.resultSource,null);
+ assert.equal(operationalMetrics(partial.state.sessions).completedFlows,0);
+ const manual=fixture();manual.event({type:'flow_started'});
+ assert.throws(()=>manual.event({type:'assistance_ended'}),code('invalid_transition'));
+});
+
 test('creation and event delivery require bounded IDs and reject arbitrary telemetry', () => {
   const f = fixture();
   assert.throws(() => createSession(f.state, 'user-one', { flowId: 'whatsapp-location' }, now), code('invalid_idempotency_id'));

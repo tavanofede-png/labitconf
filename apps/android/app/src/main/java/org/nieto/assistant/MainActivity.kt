@@ -94,7 +94,7 @@ private val Cream=Color(0xFFFAF8F2)
         }
         if(settings) SettingsContent(app,state,{consent=true},onAccessibility) else {
             Text("Decí «Hola Tino». Estoy para ayudarte.",fontSize=34.sp,lineHeight=42.sp,fontWeight=FontWeight.SemiBold,color=Forest)
-            Text("Después de esta configuración, usá Gmail, WhatsApp o la aplicación que necesites. TINO escucha la frase de activación en la tablet y te responde por voz sin abrir una pantalla de chat.")
+            Text("Después de esta configuración, usá Gmail, WhatsApp o la aplicación que necesites. Decí Hola Tino y hablá después de la señal. TINO te responde por voz sin abrir una pantalla de chat.")
             Text("Configuración inicial",fontWeight=FontWeight.Bold,fontSize=23.sp)
             Text(if(app.settings.token.isBlank()) "1. Falta conectar esta tablet al servicio." else "1. Tablet conectada al servicio.")
             if(app.settings.token.isBlank()) BigButton("Conectar tablet",{settings=true})

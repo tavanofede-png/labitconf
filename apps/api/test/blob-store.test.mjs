@@ -47,6 +47,18 @@ test('distributed CAS does not lose writes across independently queued function 
   assert.equal(state.users.length, 64); assert.equal(new Set(state.users.map(user => user.id)).size, 64);
 });
 
+test('Blob reads request identity encoding so a compressed weak ETag cannot break conditional writes', async () => {
+  const fake = fakeBlob(JSON.stringify(emptyState())); const originalGet = fake.client.get;
+  fake.client.get = async (...args) => {
+    const result = await originalGet(...args);
+    if (args[1].headers?.['accept-encoding'] !== 'identity') result.blob.etag = 'W/' + result.blob.etag;
+    return result;
+  };
+  await storeOf(fake).update(state => state.users.push({ id: 'strong-etag-write' }));
+  assert.equal(JSON.parse(fake.content()).users.length, 1);
+  assert.ok(fake.calls.filter(call => call.type === 'get').every(call => call.options.headers?.['accept-encoding'] === 'identity'));
+});
+
 test('conflict retries reevaluate budget checks against latest durable state and cannot overspend', async () => {
   const initial = emptyState(); initial.reservations = 0;
   const fake = fakeBlob(JSON.stringify(initial)); const instances = Array.from({ length: 8 }, () => storeOf(fake));

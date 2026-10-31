@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import org.json.JSONObject
 import java.net.URI
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -12,65 +13,72 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import org.nieto.assistant.BuildConfig
 
+/** Private installation state. Tokens and profiles never leave this app's encrypted preferences. */
 class LocalSettings(context: Context) {
-    private val preferences = context.getSharedPreferences("nieto_private", Context.MODE_PRIVATE)
-    var baseUrl: String
-        get() = preferences.getString("base_url", BuildConfig.API_BASE_URL)!!
-        set(value) {
-            val normalized = value.trim().trimEnd('/')
-            val uri = URI(normalized)
-            require(uri.host != null && uri.userInfo == null && uri.rawQuery == null && uri.rawFragment == null &&
-                uri.path in listOf("", "/") && (uri.scheme == "https" || (BuildConfig.DEBUG && uri.scheme == "http"))) {
-                "Ingresá la dirección del servidor, por ejemplo http://192.168.1.10:8787. HTTPS es obligatorio en producción."
-            }
-            if (normalized != baseUrl) preferences.edit().putString("base_url", normalized).remove("token")
-                .remove("device_id").apply()
-        }
-    var deviceName: String
-        get() = preferences.getString("device_name", "Mi teléfono")!!
-        set(value) { preferences.edit().putString("device_name", value.take(60)).apply() }
-    var wakeOptIn: Boolean
-        get() = preferences.getBoolean("tino_wake_opt_in_v1", false)
-        set(value) { preferences.edit().putBoolean("tino_wake_opt_in_v1", value).apply() }
-    var deviceId: String
-        get() = preferences.getString("device_id", "")!!
-        set(value) { preferences.edit().putString("device_id", value).apply() }
-    var territoryId: String
-        get() = preferences.getString("territory_id", "AR-C")!!
-        set(value) { require(Territories.names.containsKey(value)); preferences.edit().putString("territory_id", value).apply() }
-    var screenConsent: Boolean
-        get() = preferences.getBoolean("screen_consent_v1", false)
-        set(value) { preferences.edit().putBoolean("screen_consent_v1", value).apply() }
-    var openAiConsent: Boolean
-        get() = preferences.getBoolean("openai_voice_and_text_consent_v1", false)
-        set(value) { preferences.edit().putBoolean("openai_voice_and_text_consent_v1", value).apply() }
-    var remoteScreenConsent: Boolean
-        get() = preferences.getBoolean("openai_remote_screen_consent_v2", false)
-        set(value) { preferences.edit().putBoolean("openai_remote_screen_consent_v2", value).apply() }
-    var screenImagesConsent: Boolean
-        get() = preferences.getBoolean("openai_screen_images_consent_v2", false)
-        set(value) { preferences.edit().putBoolean("openai_screen_images_consent_v2", value).apply() }
-    var token: String
-        get() = runCatching {
-            val encrypted = preferences.getString("token", null) ?: return@runCatching ""
-            val parts = encrypted.split(':')
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP)))
-            String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
-        }.getOrDefault("")
-        set(value) {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.ENCRYPT_MODE, key())
-            val encrypted = Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" +
-                Base64.encodeToString(cipher.doFinal(value.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
-            preferences.edit().putString("token", encrypted).apply()
-        }
+    private val appContext=context.applicationContext
+    internal fun asset(name: String)=appContext.assets.open(name).use{it.readBytes()}
+    val juryDemo: Boolean get()=read("juryActive")=="true"
+    private val prefs = context.getSharedPreferences("tino.private.v1", Context.MODE_PRIVATE)
+    private val alias = "tino.preferences.v1"
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getKey("nieto_installation_token", null) as? SecretKey)?.let { return it }
+        (store.getKey(alias, null) as? SecretKey)?.let { return it }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
-            init(KeyGenParameterSpec.Builder("nieto_installation_token", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
+    @Synchronized fun read(name: String): String {
+        val value = prefs.getString(name, null) ?: return ""
+        val pieces = value.split(':', limit = 2)
+        require(pieces.size == 2) { "No se pudo leer la configuración protegida." }
+        return Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(pieces[0], Base64.NO_WRAP)))
+            updateAAD(name.toByteArray(Charsets.UTF_8))
+            String(doFinal(Base64.decode(pieces[1], Base64.NO_WRAP)), Charsets.UTF_8)
+        }
+    }
+    @Synchronized fun write(name: String, value: String) {
+        if (value.isEmpty()) { check(prefs.edit().remove(name).commit()); return }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()); updateAAD(name.toByteArray(Charsets.UTF_8)) }
+        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        check(prefs.edit().putString(name, Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit())
+    }
+    var baseUrl: String
+        get() = read("baseUrl").ifBlank { BuildConfig.API_BASE_URL }
+        set(value) {
+            val url = URI(value.trim().trimEnd('/').removeSuffix("/api"))
+            require(url.scheme == "https" || (BuildConfig.DEBUG && url.scheme == "http")) { "Usá una dirección HTTPS válida (HTTP solo en debug)." }
+            require(!url.host.isNullOrBlank() && url.userInfo == null && url.query == null && url.fragment == null && url.path.isNullOrEmpty()) { "Ingresá solo la dirección del servidor, sin rutas, claves ni parámetros." }
+            val clean = url.toASCIIString()
+            if (baseUrl != clean) {
+                listOf("installation", "accountSession", "caregiverToken", "institutionToken", "onboardingComplete").forEach { write(it, "") }
+            }
+            write("baseUrl", clean)
+        }
+    var deviceName: String
+        get() = read("deviceName").ifBlank { "Mi teléfono TINO" }
+        set(value) = write("deviceName", value.trim().take(60).ifBlank { "Mi teléfono TINO" })
+    var territoryId: String
+        get() = read("territoryId").ifBlank { "AR-C" }
+        set(value) = write("territoryId", value)
+    val token: String get() = read("installation").takeIf { it.isNotEmpty() }?.let { JSONObject(it).optString("token") }.orEmpty()
+    val deviceId: String get() = read("installation").takeIf { it.isNotEmpty() }?.let { JSONObject(it).optString("deviceId") }.orEmpty()
+    var wakeOptIn: Boolean
+        get() = read("tinoWakeOptIn") == "true"
+        set(value) = write("tinoWakeOptIn", value.toString())
+    fun installation(deviceId: String, token: String) = write("installation", JSONObject().put("deviceId", deviceId).put("token", token).toString())
+    var screenConsent: Boolean
+        get() = read("screenConsent") == "true"
+        set(value) = write("screenConsent", value.toString())
+
+    var openAiConsent: Boolean
+        get() = read("openAiConsent") == "true"
+        set(value) = write("openAiConsent", value.toString())
+    var remoteScreenConsent: Boolean
+        get() = read("remoteScreenConsent") == "true"
+        set(value) = write("remoteScreenConsent", value.toString())
+    var screenImagesConsent: Boolean
+        get() = read("remoteImageConsent") == "true"
+        set(value) = write("remoteImageConsent", value.toString())
 }

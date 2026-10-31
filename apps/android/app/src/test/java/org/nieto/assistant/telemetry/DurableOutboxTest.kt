@@ -17,6 +17,17 @@ class DurableOutboxTest {
         TelemetrySession(UUID.randomUUID().toString(), "whatsapp-location", TelemetryOrigin(server, token))
     private fun event(session: TelemetrySession, type: String = "flow_started") = TelemetryEvent(UUID.randomUUID().toString(), session, type)
 
+    @Test fun explicitEndOfAssistanceIsRetainedBeforeCancellation() {
+        val queue=DurableOutbox(storage(File(folder.root,"partial.bin")))
+        val visual=session().copy(flowId="screen-assistance")
+        val ended=event(visual,"assistance_ended")
+        val cancelled=event(visual,"cancelled")
+        queue.enqueue(ended);queue.enqueue(cancelled)
+        assertEquals(ended,queue.due(0)!!.event)
+        queue.acknowledge(ended.eventId)
+        assertEquals(cancelled,queue.due(0)!!.event)
+    }
+
     @Test fun encryptedQueueSurvivesRestartWithoutWritingCredentialsOrScreenContent() = runBlocking {
         val file = File(folder.root, "queue.bin"); val original = session(); val event = event(original)
         DurableOutbox(storage(file)).enqueue(event)
@@ -106,4 +117,15 @@ class DurableOutboxTest {
             assertNull(queue.due(Long.MAX_VALUE))
         }
     }
+    @Test fun manualFlowsRemainDurableAndRejectUnknownSteps() {
+        listOf("whatsapp-group" to "check_group", "email-send" to "check_email").forEach { (flow, step) ->
+            val origin=session().copy(flowId=flow)
+            val item=event(origin,"step_completed").copy(stepId=step)
+            val file=File(folder.root,"$flow.bin")
+            DurableOutbox(storage(file)).enqueue(item)
+            assertEquals(item,DurableOutbox(storage(file)).due(0)!!.event)
+            assertThrows(IllegalArgumentException::class.java){DurableOutbox.validate(item.copy(stepId="invented"))}
+        }
+    }
+
 }

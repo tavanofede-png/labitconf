@@ -17,9 +17,12 @@ android {
         targetSdk = 36
         versionCode = 8
         versionName = "0.7.0-tino"
+        testInstrumentationRunner = "org.nieto.assistant.presence.VoiceSmokeInstrumentation"
+        testApplicationId = "org.nieto.assistant.tino.test"
         buildConfigField("String", "API_BASE_URL", "\"${providers.environmentVariable("TINO_API_URL").getOrElse("https://tino-api-labitconf.vercel.app")}\"")
     }
     buildFeatures { compose = true; buildConfig = true }
+    testBuildType = "release"
     signingConfigs {
         create("production") {
             providers.environmentVariable("TINO_KEYSTORE_FILE").orNull?.let { storeFile = file(it) }
@@ -95,8 +98,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-savedstate:2.9.3")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.3")
     implementation("androidx.savedstate:savedstate:1.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("com.google.zxing:core:3.5.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation("com.alphacephei:vosk-android:0.3.75@aar")

@@ -3,6 +3,16 @@ import { emptyState } from './store.mjs';
 const collections = ['users', 'groups', 'invitations', 'relationships', 'consents', 'sessions', 'alerts', 'audit'];
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const unavailable = () => new Error('No se pudo acceder al almacenamiento privado persistente. No se reemplazaron sus datos.');
+const storageFailure = (operation, error) => {
+  if (process.env.VERCEL === '1') {
+    const allowed = new Set(['BlobAccessError', 'BlobStoreNotFoundError', 'BlobStoreSuspendedError', 'BlobUnknownError',
+      'BlobNotFoundError', 'BlobServiceNotAvailable', 'BlobServiceRateLimited', 'BlobRequestAbortedError', 'BlobPreconditionFailedError', 'SyntaxError', 'TypeError', 'Error']);
+    const type = error?.constructor?.name;
+    console.error(JSON.stringify({ component: 'tino_storage', operation, type: allowed.has(type) ? type : 'StorageError',
+      ...(Number.isFinite(error?.retryAfter) ? { retryAfter: error.retryAfter } : {}) }));
+  }
+  return unavailable();
+};
 
 function validateState(value) {
   if (!value || typeof value !== 'object' || value.version !== 1 || collections.some(key => !Array.isArray(value[key]))) throw unavailable();
@@ -37,7 +47,9 @@ export class BlobStore {
 
   async readVersion() {
     const client = await this.sdk();
-    const options = { ...this.credentials, access: 'private', useCache: false };
+    // Compressed downloads can turn a strong storage ETag into W/"...".
+    // Conditional writes require the strong ETag of the original bytes.
+    const options = { ...this.credentials, access: 'private', useCache: false, headers: { 'accept-encoding': 'identity' } };
     let found;
     try {
       found = await client.get(this.pathname, options);
@@ -62,7 +74,7 @@ export class BlobStore {
       } finally { reader.releaseLock(); }
       const state = validateState(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       return { state, etag: found.blob.etag };
-    } catch { throw unavailable(); }
+    } catch (error) { throw storageFailure('read', error); }
   }
 
   async init() { await this.readVersion(); }
@@ -88,7 +100,7 @@ export class BlobStore {
         } catch (error) {
           const isConflict = (client.BlobPreconditionFailedError && error instanceof client.BlobPreconditionFailedError)
             || error?.name === 'BlobPreconditionFailedError';
-          if (!isConflict) throw unavailable();
+          if (!isConflict) throw storageFailure('write', error);
           if (attempt + 1 < this.maxAttempts) await this.sleep(Math.min(100, 4 * (attempt + 1)) + Math.floor(Math.random() * 8));
         }
       }

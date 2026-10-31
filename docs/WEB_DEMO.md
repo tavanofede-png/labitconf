@@ -1,3 +1,5 @@
+> **Informe histórico.** La publicación de mockups descrita aquí fue reemplazada por la instalación de la aplicación Android real. Consultá [la entrega vigente de TINO](TINO-PRODUCTION-TAB-S10.md). Las rutas antiguas muestran ahora la instalación y /api se conecta al backend persistente.
+
 # Demostración web pública de NIETO
 
 La demostración funciona dentro del navegador y tiene dos presentaciones del mismo recorrido: una pantalla con marco de teléfono Android y una vista web normal. No necesita instalar el APK, conectar un teléfono, usar ADB ni arrancar un emulador del sistema operativo.

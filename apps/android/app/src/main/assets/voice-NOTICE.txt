@@ -1,0 +1,14 @@
+TINO local voice recognition
+
+Vosk Android 0.3.75 — Alpha Cephei Inc. — Apache License 2.0
+https://github.com/alphacep/vosk-api
+
+Spanish acoustic model vosk-model-small-es-0.42 — Alpha Cephei — Apache License 2.0
+https://alphacephei.com/vosk/models
+Original archive SHA-256: 09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f
+The model files are included without modification.
+
+JNA 5.18.1 — Java Native Access contributors — Apache License 2.0 / LGPL 2.1 dual license (Apache option).
+https://github.com/java-native-access/jna
+
+See voice-APACHE-2.0.txt for the Apache License 2.0 text.

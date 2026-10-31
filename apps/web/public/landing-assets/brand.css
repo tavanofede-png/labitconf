@@ -1,0 +1,5 @@
+.brand-logo{display:block;width:112px;height:auto;object-fit:contain}
+.wordmark-logo{display:block;width:75px;height:auto;object-fit:contain;flex-shrink:0}
+.phone-heading .wordmark-logo{width:64px}
+.footer .brand-logo{width:100px}
+@media(max-width:480px){.brand-logo{width:92px}.footer .brand-logo{width:92px}.institutions>.button{margin-left:56px}}

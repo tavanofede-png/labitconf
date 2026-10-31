@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_open" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="horizontal" android:gravity="center_vertical" android:padding="16dp" android:background="#E3F9F6" android:contentDescription="Hablar con TINO">
+    <ImageView android:layout_width="64dp" android:layout_height="64dp" android:src="@drawable/tino_mascot" android:contentDescription="TINO" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="12dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TINO" android:textColor="#101416" android:textSize="22sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="¿En qué te ayudo?" android:textColor="#006B64" android:textSize="14sp" />
+    </LinearLayout>
+</LinearLayout>

@@ -1,0 +1,5 @@
+Vosk API y vosk-model-small-es-0.42
+Proyecto: https://alphacephei.com/vosk/
+Modelo: https://alphacephei.com/vosk/models
+Licencia del modelo: Apache License 2.0 (copia adjunta VOSK-APACHE-2.0.txt).
+Archivo original del modelo SHA256: 09b239888f633ef2f0b4e09736e3d9936acfd810bc65d53fad45261762c6511f

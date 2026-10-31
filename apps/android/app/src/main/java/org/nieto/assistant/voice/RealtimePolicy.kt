@@ -3,7 +3,7 @@ package org.nieto.assistant.voice
 import java.net.URI
 import java.util.Base64
 
-/** The public NIETO wire format, deliberately independent of Android and OpenAI events. */
+/** The public TINO wire format, deliberately independent of Android and OpenAI events. */
 object RealtimePolicy {
     const val MODEL = "gpt-realtime-2.1-mini"
     const val SAMPLE_RATE = 24_000

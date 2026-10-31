@@ -1,0 +1,603 @@
+{
+  "scenario": "tino_demo_fixed_v1",
+  "referencePeriod": "Mayo a octubre de 2026",
+  "metrics": {
+    "activeUsers": 7757,
+    "requests": 265656,
+    "completed": 201931,
+    "independent": 93028,
+    "unsafeLinks": 59087,
+    "checkedLinks": 577863,
+    "screenMinutes": 44113738,
+    "tinoMinutes": 13020063,
+    "personDays": 1169170,
+    "averageAge": 62.8,
+    "screenMinutesPerDay": 37.7,
+    "tinoMinutesPerDay": 11.1,
+    "autonomyRate": 46.1,
+    "completionRate": 76,
+    "unsafePerThousand": 102.3
+  },
+  "flows": [
+    {
+      "id": "whatsapp-group",
+      "name": "Crear un grupo de WhatsApp",
+      "count": 50402
+    },
+    {
+      "id": "email-send",
+      "name": "Enviar un correo",
+      "count": 42435
+    },
+    {
+      "id": "whatsapp-location",
+      "name": "Compartir ubicación",
+      "count": 34467
+    },
+    {
+      "id": "video-call",
+      "name": "Hacer una videollamada",
+      "count": 29148
+    },
+    {
+      "id": "share-photo",
+      "name": "Compartir una foto",
+      "count": 26499
+    },
+    {
+      "id": "health-appointment",
+      "name": "Pedir un turno de salud",
+      "count": 23835
+    },
+    {
+      "id": "check-link",
+      "name": "Revisar un enlace",
+      "count": 21185
+    },
+    {
+      "id": "phone-settings",
+      "name": "Ajustar letra y sonido",
+      "count": 15868
+    },
+    {
+      "id": "online-form",
+      "name": "Completar un formulario",
+      "count": 13215
+    },
+    {
+      "id": "maps-route",
+      "name": "Encontrar una dirección",
+      "count": 8602
+    }
+  ],
+  "territories": [
+    {
+      "id": "AR-C",
+      "name": "Ciudad Autónoma de Buenos Aires",
+      "point": [
+        -58.4459,
+        -34.6144
+      ],
+      "activeUsers": 1102,
+      "requests": 37087,
+      "completed": 28267,
+      "independent": 13026,
+      "unsafeLinks": 7005,
+      "checkedLinks": 82888,
+      "screenMinutes": 6309759,
+      "tinoMinutes": 1983880,
+      "personDays": 164070,
+      "averageAge": 63.1,
+      "autonomyRate": 46.1,
+      "screenMinutesPerDay": 38.5,
+      "tinoMinutesPerDay": 12.1,
+      "unsafePerThousand": 84.5
+    },
+    {
+      "id": "AR-Q",
+      "name": "Neuquén",
+      "point": [
+        -70.1199,
+        -38.642
+      ],
+      "activeUsers": 156,
+      "requests": 5053,
+      "completed": 3848,
+      "independent": 1774,
+      "unsafeLinks": 965,
+      "checkedLinks": 10100,
+      "screenMinutes": 897957,
+      "tinoMinutes": 246711,
+      "personDays": 22731,
+      "averageAge": 63.6,
+      "autonomyRate": 46.1,
+      "screenMinutesPerDay": 39.5,
+      "tinoMinutesPerDay": 10.9,
+      "unsafePerThousand": 95.5
+    },
+    {
+      "id": "AR-D",
+      "name": "San Luis",
+      "point": [
+        -66.0252,
+        -33.7611
+      ],
+      "activeUsers": 189,
+      "requests": 6512,
+      "completed": 4921,
+      "independent": 2218,
+      "unsafeLinks": 1486,
+      "checkedLinks": 13644,
+      "screenMinutes": 1032888,
+      "tinoMinutes": 296085,
+      "personDays": 28277,
+      "averageAge": 63,
+      "autonomyRate": 45.1,
+      "screenMinutesPerDay": 36.5,
+      "tinoMinutesPerDay": 10.5,
+      "unsafePerThousand": 108.9
+    },
+    {
+      "id": "AR-S",
+      "name": "Santa Fe",
+      "point": [
+        -60.9507,
+        -30.7088
+      ],
+      "activeUsers": 679,
+      "requests": 25775,
+      "completed": 19536,
+      "independent": 8978,
+      "unsafeLinks": 6429,
+      "checkedLinks": 54814,
+      "screenMinutes": 3725061,
+      "tinoMinutes": 1153258,
+      "personDays": 103807,
+      "averageAge": 62.5,
+      "autonomyRate": 46,
+      "screenMinutesPerDay": 35.9,
+      "tinoMinutesPerDay": 11.1,
+      "unsafePerThousand": 117.3
+    },
+    {
+      "id": "AR-F",
+      "name": "La Rioja",
+      "point": [
+        -67.1818,
+        -29.6849
+      ],
+      "activeUsers": 147,
+      "requests": 5279,
+      "completed": 4007,
+      "independent": 1843,
+      "unsafeLinks": 1523,
+      "checkedLinks": 11361,
+      "screenMinutes": 818182,
+      "tinoMinutes": 245998,
+      "personDays": 22783,
+      "averageAge": 63.8,
+      "autonomyRate": 46,
+      "screenMinutesPerDay": 35.9,
+      "tinoMinutesPerDay": 10.8,
+      "unsafePerThousand": 134.1
+    },
+    {
+      "id": "AR-K",
+      "name": "Catamarca",
+      "point": [
+        -66.9479,
+        -27.336
+      ],
+      "activeUsers": 186,
+      "requests": 6284,
+      "completed": 4788,
+      "independent": 2252,
+      "unsafeLinks": 1291,
+      "checkedLinks": 14991,
+      "screenMinutes": 1010327,
+      "tinoMinutes": 261965,
+      "personDays": 27745,
+      "averageAge": 60.7,
+      "autonomyRate": 47,
+      "screenMinutesPerDay": 36.4,
+      "tinoMinutesPerDay": 9.4,
+      "unsafePerThousand": 86.1
+    },
+    {
+      "id": "AR-T",
+      "name": "Tucumán",
+      "point": [
+        -65.3648,
+        -26.9483
+      ],
+      "activeUsers": 285,
+      "requests": 9462,
+      "completed": 7188,
+      "independent": 3301,
+      "unsafeLinks": 1957,
+      "checkedLinks": 20336,
+      "screenMinutes": 1649649,
+      "tinoMinutes": 490465,
+      "personDays": 43106,
+      "averageAge": 62.8,
+      "autonomyRate": 45.9,
+      "screenMinutesPerDay": 38.3,
+      "tinoMinutesPerDay": 11.4,
+      "unsafePerThousand": 96.2
+    },
+    {
+      "id": "AR-H",
+      "name": "Chaco",
+      "point": [
+        -60.7651,
+        -26.387
+      ],
+      "activeUsers": 152,
+      "requests": 5167,
+      "completed": 3931,
+      "independent": 1833,
+      "unsafeLinks": 1324,
+      "checkedLinks": 12003,
+      "screenMinutes": 891196,
+      "tinoMinutes": 237468,
+      "personDays": 23154,
+      "averageAge": 63.8,
+      "autonomyRate": 46.6,
+      "screenMinutesPerDay": 38.5,
+      "tinoMinutesPerDay": 10.3,
+      "unsafePerThousand": 110.3
+    },
+    {
+      "id": "AR-P",
+      "name": "Formosa",
+      "point": [
+        -59.9322,
+        -24.8951
+      ],
+      "activeUsers": 186,
+      "requests": 6477,
+      "completed": 4942,
+      "independent": 2338,
+      "unsafeLinks": 1763,
+      "checkedLinks": 14682,
+      "screenMinutes": 1099502,
+      "tinoMinutes": 286580,
+      "personDays": 28019,
+      "averageAge": 63.8,
+      "autonomyRate": 47.3,
+      "screenMinutesPerDay": 39.2,
+      "tinoMinutesPerDay": 10.2,
+      "unsafePerThousand": 120.1
+    },
+    {
+      "id": "AR-Z",
+      "name": "Santa Cruz",
+      "point": [
+        -69.9558,
+        -48.8155
+      ],
+      "activeUsers": 115,
+      "requests": 3773,
+      "completed": 2869,
+      "independent": 1345,
+      "unsafeLinks": 1051,
+      "checkedLinks": 7794,
+      "screenMinutes": 699178,
+      "tinoMinutes": 207405,
+      "personDays": 17783,
+      "averageAge": 60.3,
+      "autonomyRate": 46.9,
+      "screenMinutesPerDay": 39.3,
+      "tinoMinutesPerDay": 11.7,
+      "unsafePerThousand": 134.8
+    },
+    {
+      "id": "AR-U",
+      "name": "Chubut",
+      "point": [
+        -68.5267,
+        -43.7886
+      ],
+      "activeUsers": 154,
+      "requests": 5233,
+      "completed": 3977,
+      "independent": 1832,
+      "unsafeLinks": 1100,
+      "checkedLinks": 12673,
+      "screenMinutes": 934834,
+      "tinoMinutes": 246091,
+      "personDays": 23031,
+      "averageAge": 64.4,
+      "autonomyRate": 46.1,
+      "screenMinutesPerDay": 40.6,
+      "tinoMinutesPerDay": 10.7,
+      "unsafePerThousand": 86.8
+    },
+    {
+      "id": "AR-M",
+      "name": "Mendoza",
+      "point": [
+        -68.5829,
+        -34.6304
+      ],
+      "activeUsers": 379,
+      "requests": 12931,
+      "completed": 9758,
+      "independent": 4440,
+      "unsafeLinks": 2935,
+      "checkedLinks": 29249,
+      "screenMinutes": 2112567,
+      "tinoMinutes": 557897,
+      "personDays": 58772,
+      "averageAge": 62.3,
+      "autonomyRate": 45.5,
+      "screenMinutesPerDay": 35.9,
+      "tinoMinutesPerDay": 9.5,
+      "unsafePerThousand": 100.3
+    },
+    {
+      "id": "AR-E",
+      "name": "Entre Ríos",
+      "point": [
+        -59.2013,
+        -32.0589
+      ],
+      "activeUsers": 116,
+      "requests": 3833,
+      "completed": 2915,
+      "independent": 1357,
+      "unsafeLinks": 889,
+      "checkedLinks": 8225,
+      "screenMinutes": 676676,
+      "tinoMinutes": 179155,
+      "personDays": 17203,
+      "averageAge": 64.6,
+      "autonomyRate": 46.6,
+      "screenMinutesPerDay": 39.3,
+      "tinoMinutesPerDay": 10.4,
+      "unsafePerThousand": 108.1
+    },
+    {
+      "id": "AR-J",
+      "name": "San Juan",
+      "point": [
+        -68.8882,
+        -30.8657
+      ],
+      "activeUsers": 151,
+      "requests": 5181,
+      "completed": 3942,
+      "independent": 1842,
+      "unsafeLinks": 1219,
+      "checkedLinks": 10062,
+      "screenMinutes": 861723,
+      "tinoMinutes": 243965,
+      "personDays": 22633,
+      "averageAge": 63.1,
+      "autonomyRate": 46.7,
+      "screenMinutesPerDay": 38.1,
+      "tinoMinutesPerDay": 10.8,
+      "unsafePerThousand": 121.1
+    },
+    {
+      "id": "AR-Y",
+      "name": "Jujuy",
+      "point": [
+        -65.7644,
+        -23.32
+      ],
+      "activeUsers": 182,
+      "requests": 6000,
+      "completed": 4575,
+      "independent": 2139,
+      "unsafeLinks": 1630,
+      "checkedLinks": 12292,
+      "screenMinutes": 1046870,
+      "tinoMinutes": 308038,
+      "personDays": 27751,
+      "averageAge": 60.8,
+      "autonomyRate": 46.8,
+      "screenMinutesPerDay": 37.7,
+      "tinoMinutesPerDay": 11.1,
+      "unsafePerThousand": 132.6
+    },
+    {
+      "id": "AR-G",
+      "name": "Santiago del Estero",
+      "point": [
+        -63.2526,
+        -27.7834
+      ],
+      "activeUsers": 120,
+      "requests": 4149,
+      "completed": 3142,
+      "independent": 1427,
+      "unsafeLinks": 764,
+      "checkedLinks": 8792,
+      "screenMinutes": 663767,
+      "tinoMinutes": 183401,
+      "personDays": 17847,
+      "averageAge": 62.1,
+      "autonomyRate": 45.4,
+      "screenMinutesPerDay": 37.2,
+      "tinoMinutesPerDay": 10.3,
+      "unsafePerThousand": 86.9
+    },
+    {
+      "id": "AR-R",
+      "name": "Río Negro",
+      "point": [
+        -67.2297,
+        -40.4051
+      ],
+      "activeUsers": 145,
+      "requests": 5092,
+      "completed": 3859,
+      "independent": 1755,
+      "unsafeLinks": 1095,
+      "checkedLinks": 11268,
+      "screenMinutes": 834937,
+      "tinoMinutes": 236965,
+      "personDays": 22537,
+      "averageAge": 59.9,
+      "autonomyRate": 45.5,
+      "screenMinutesPerDay": 37,
+      "tinoMinutesPerDay": 10.5,
+      "unsafePerThousand": 97.2
+    },
+    {
+      "id": "AR-W",
+      "name": "Corrientes",
+      "point": [
+        -57.8011,
+        -28.7742
+      ],
+      "activeUsers": 188,
+      "requests": 6833,
+      "completed": 5179,
+      "independent": 2364,
+      "unsafeLinks": 1637,
+      "checkedLinks": 14897,
+      "screenMinutes": 1089904,
+      "tinoMinutes": 306886,
+      "personDays": 27783,
+      "averageAge": 63.8,
+      "autonomyRate": 45.6,
+      "screenMinutesPerDay": 39.2,
+      "tinoMinutesPerDay": 11,
+      "unsafePerThousand": 109.9
+    },
+    {
+      "id": "AR-N",
+      "name": "Misiones",
+      "point": [
+        -54.6516,
+        -26.8753
+      ],
+      "activeUsers": 120,
+      "requests": 3998,
+      "completed": 3054,
+      "independent": 1434,
+      "unsafeLinks": 1164,
+      "checkedLinks": 9532,
+      "screenMinutes": 682195,
+      "tinoMinutes": 210771,
+      "personDays": 17783,
+      "averageAge": 62.3,
+      "autonomyRate": 47,
+      "screenMinutesPerDay": 38.4,
+      "tinoMinutesPerDay": 11.9,
+      "unsafePerThousand": 122.1
+    },
+    {
+      "id": "AR-A",
+      "name": "Salta",
+      "point": [
+        -64.8142,
+        -24.2993
+      ],
+      "activeUsers": 148,
+      "requests": 5472,
+      "completed": 4161,
+      "independent": 1901,
+      "unsafeLinks": 1808,
+      "checkedLinks": 13239,
+      "screenMinutes": 914480,
+      "tinoMinutes": 248277,
+      "personDays": 22388,
+      "averageAge": 62.1,
+      "autonomyRate": 45.7,
+      "screenMinutesPerDay": 40.8,
+      "tinoMinutesPerDay": 11.1,
+      "unsafePerThousand": 136.6
+    },
+    {
+      "id": "AR-X",
+      "name": "Córdoba",
+      "point": [
+        -63.802,
+        -32.1448
+      ],
+      "activeUsers": 769,
+      "requests": 24734,
+      "completed": 18749,
+      "independent": 8514,
+      "unsafeLinks": 4822,
+      "checkedLinks": 55528,
+      "screenMinutes": 4106703,
+      "tinoMinutes": 1331897,
+      "personDays": 115925,
+      "averageAge": 62.4,
+      "autonomyRate": 45.4,
+      "screenMinutesPerDay": 35.4,
+      "tinoMinutesPerDay": 11.5,
+      "unsafePerThousand": 86.8
+    },
+    {
+      "id": "AR-B",
+      "name": "Buenos Aires",
+      "point": [
+        -60.5585,
+        -36.6774
+      ],
+      "activeUsers": 1755,
+      "requests": 60686,
+      "completed": 46216,
+      "independent": 21351,
+      "unsafeLinks": 12533,
+      "checkedLinks": 126608,
+      "screenMinutes": 10049802,
+      "tinoMinutes": 3001000,
+      "personDays": 263603,
+      "averageAge": 62.9,
+      "autonomyRate": 46.2,
+      "screenMinutesPerDay": 38.1,
+      "tinoMinutesPerDay": 11.4,
+      "unsafePerThousand": 99
+    },
+    {
+      "id": "AR-L",
+      "name": "La Pampa",
+      "point": [
+        -65.4476,
+        -37.1351
+      ],
+      "activeUsers": 152,
+      "requests": 4537,
+      "completed": 3454,
+      "independent": 1602,
+      "unsafeLinks": 1072,
+      "checkedLinks": 9763,
+      "screenMinutes": 884181,
+      "tinoMinutes": 239628,
+      "personDays": 22322,
+      "averageAge": 62.5,
+      "autonomyRate": 46.4,
+      "screenMinutesPerDay": 39.6,
+      "tinoMinutesPerDay": 10.7,
+      "unsafePerThousand": 109.8
+    },
+    {
+      "id": "AR-V",
+      "name": "Tierra del Fuego",
+      "point": [
+        -68.3,
+        -54.8
+      ],
+      "activeUsers": 181,
+      "requests": 6108,
+      "completed": 4653,
+      "independent": 2162,
+      "unsafeLinks": 1625,
+      "checkedLinks": 13122,
+      "screenMinutes": 1121400,
+      "tinoMinutes": 316277,
+      "personDays": 28117,
+      "averageAge": 63.6,
+      "autonomyRate": 46.5,
+      "screenMinutesPerDay": 39.9,
+      "tinoMinutesPerDay": 11.2,
+      "unsafePerThousand": 123.8
+    }
+  ]
+}

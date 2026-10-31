@@ -1,6 +1,11 @@
 package org.nieto.assistant
 
 import android.app.Application
+import org.json.JSONArray
+import java.util.UUID
+import org.nieto.assistant.presence.ChatAttachment
+import org.nieto.assistant.presence.FloatingBubbleService
+import org.nieto.assistant.presence.WakeVoiceService
 import android.app.KeyguardManager
 import android.Manifest
 import android.content.ComponentName
@@ -35,15 +40,18 @@ import org.nieto.assistant.telemetry.TelemetrySync
 import org.nieto.assistant.screen.*
 import java.util.Locale
 
-data class ChatLine(val fromUser: Boolean, val text: String)
+data class ChatAttachmentLabel(val name: String, val mimeType: String)
+data class ChatLine(val fromUser: Boolean, val text: String, val attachments: List<ChatAttachmentLabel> = emptyList())
 data class AppState(
     val guide: GuideState = GuideState(),
+    val practiceFlow: org.nieto.assistant.demo.PracticeFlow? = null,
     val answer: String = "Contame qué querés hacer y te acompaño en la pantalla actual.",
     val status: String = "Tu ritmo. Tus decisiones.",
     val busy: Boolean = false,
     val accessibilityConnected: Boolean = false,
     val overlayEnabled: Boolean = false,
     val familyName: String? = null,
+    val familyPermissions: JSONObject = JSONObject(), val familyPaused: Boolean = false,
     val shareProgress: Boolean = false,
     val allowHelp: Boolean = false,
     val telemetryPending: Int = 0,
@@ -56,12 +64,24 @@ data class AppState(
     val assistanceEnabled: Boolean = false,
     val screen: ScreenContext? = null,
     val screenValid: Boolean = false,
+    val screenCapturePending: Boolean = false,
     val screenStep: ScreenStep? = null,
     val institutionMetricsConsent: Boolean = false,
     val deviceSettingsLoaded: Boolean = false,
     val territoryId: String = "AR-C",
     val nativeSurfaceVisible: Boolean = false,
     val voiceSurfaceVisible: Boolean = false,
+    val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy TINO. Contame qué necesitás hacer con tu teléfono. Podés escribirme o hablarme.")),
+    val suggestedFlow: String? = null,
+    val task: GuidedTask? = null, val emailDraft: EmailDraft? = null,
+    val bubbleEnabled: Boolean = false,
+    val wakePhase: String = "off",
+    val presenceNotice: String? = null,
+    val foreground: Boolean = false,
+    val speaking: Boolean = false,
+    val openChatEpoch: Int = 0,
+    val recordingVoiceNote: Boolean = false,
+    val familyInbox: List<JSONObject> = emptyList(),
     val textOnly: Boolean = false,
     val realtimeApproved: Boolean = false,
     val wakeEnabled: Boolean = false,
@@ -77,6 +97,10 @@ class NietoApp : Application() {
     private val mutable = MutableStateFlow(AppState())
     val state = mutable.asStateFlow()
     private lateinit var engine: GuidanceEngine
+    private var sessionId: String? = null
+    private var conversationId = UUID.randomUUID().toString()
+    private var taskStartedAt = 0L
+    private var manualTelemetry: TelemetrySession? = null
     private var guideSession: TelemetrySession? = null
     private var startedAt = 0L
     private var practiceStartedAt = 0L
@@ -94,6 +118,7 @@ class NietoApp : Application() {
     private var messageJob: Job? = null
     var screenCapture: ScreenCaptureBridge? = null
     private var preparedVoiceScreen: ScreenContext? = null
+    private var screenCaptureWait: Job? = null
     private var hasTask = false
     private var followUp: Job? = null
     private var lastScreenSent: String? = null
@@ -121,8 +146,13 @@ class NietoApp : Application() {
         mutable.value = mutable.value.copy(territoryId = settings.territoryId)
         realtime = RealtimeVoice(scope,
             onState = { voice ->
+                val previous = state.value.voice
                 if (state.value.voice.phase == VoicePhase.LISTENING && voice.phase == VoicePhase.WAITING) hasTask = true
                 mutable.value = mutable.value.copy(voice = voice)
+                if (state.value.wakeEnabled && voice.phase == VoicePhase.ERROR &&
+                    (previous.phase != VoicePhase.ERROR || previous.message != voice.message)) {
+                    speak(voice.message)
+                }
                 if (!voice.active && voice.phase != VoicePhase.ERROR) scheduleScreenFollowUp()
             },
             onAnswer = { answer -> mutable.value = mutable.value.copy(answer = answer) },
@@ -193,7 +223,7 @@ class NietoApp : Application() {
         wakeGreetingJob?.cancel()
         val request = assistantRequest
         wakeGreetingJob = scope.launch {
-            speak(if (hasTask) "Te escucho." else "Hola, estoy acá. ¿En qué te ayudo?")
+            speak("Hola, estoy acá. Un momento.")
             // Release the local greeting before opening the remote microphone, without an Activity.
             var waited = 0
             delay(200)
@@ -210,9 +240,9 @@ class NietoApp : Application() {
             return
         }
         pendingSpeech = null
-        mutable.value = mutable.value.copy(ttsSpeaking = true)
+        mutable.value = mutable.value.copy(ttsSpeaking = true, speaking = true)
         if (runCatching { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nieto_instruction") ?: TextToSpeech.ERROR }.getOrDefault(TextToSpeech.ERROR) == TextToSpeech.ERROR)
-            { mutable.value = mutable.value.copy(ttsSpeaking = false); speechNotice("Android no pudo iniciar la lectura. Revisá el motor de voz y el idioma español; la instrucción sigue en pantalla.") }
+            { mutable.value = mutable.value.copy(ttsSpeaking = false, speaking = false); speechNotice("Android no pudo iniciar la lectura. Revisá el motor de voz y el idioma español; la instrucción sigue en pantalla.") }
     }
     private fun initializeSpeech(result: Int) {
         ttsInitialized = true
@@ -229,16 +259,16 @@ class NietoApp : Application() {
             return
         }
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = true) } }
-            override fun onDone(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = false) } }
-            @Deprecated("Android compatibility callback") override fun onError(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = false); speechNotice("La lectura por voz falló. Podés repetir el paso o leerlo en pantalla.") } }
+            override fun onStart(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = true, speaking = true) } }
+            override fun onDone(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = false, speaking = false) } }
+            @Deprecated("Android compatibility callback") override fun onError(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = false, speaking = false); speechNotice("La lectura por voz falló. Podés repetir el paso o leerlo en pantalla.") } }
             override fun onError(utteranceId: String?, errorCode: Int) { onError(utteranceId) }
         })
         ttsReady = true; speechNotice("")
         pendingSpeech?.let { speak(it) }
     }
     private fun speechNotice(message: String) { mutable.value = mutable.value.copy(ttsNotice = message) }
-    fun stopSpeaking() { pendingSpeech = null; runCatching { tts?.stop() }; mutable.value = mutable.value.copy(ttsSpeaking = false) }
+    fun stopSpeaking() { pendingSpeech = null; runCatching { tts?.stop() }; mutable.value = mutable.value.copy(ttsSpeaking = false, speaking = false) }
     fun retryTelemetry() { TelemetrySync.retryRetained(this) }
     fun enableAssistance() {
         if (!settings.remoteScreenConsent || !settings.openAiConsent) { status("Aceptá el permiso nuevo de asistencia con OpenAI."); return }
@@ -307,6 +337,8 @@ class NietoApp : Application() {
     }
     fun finishRealtimeInput() { realtime.finishInput() }
     fun cancelRealtimeVoice() {
+        screenCaptureWait?.cancel(); screenCaptureWait = null
+        mutable.value = mutable.value.copy(screenCapturePending = false)
         ++assistantRequest; ++voiceStartRequest
         voiceStartJob?.cancel(); voiceStartJob = null
         realtime.cancel()
@@ -318,8 +350,16 @@ class NietoApp : Application() {
         else if (state.value.voice.active) realtime.cancelResponseForScreenChange()
         stopSpeaking()
     }
+    fun continueWithoutTino() {
+        // An explicit decision is distinguishable from a lost connection or a closed popup.
+        assistantEvent("assistance_ended", withStep = false)
+        stopAssistance()
+        tellUser("Seguís por tu cuenta. Dejé de observar la pantalla; no voy a registrar un resultado que no confirmaste.")
+    }
     fun stopAssistance() {
         if (state.value.wakeEnabled) stopWakeListening()
+        screenCaptureWait?.cancel(); screenCaptureWait = null
+        mutable.value = mutable.value.copy(screenCapturePending = false)
         assistantEvent("cancelled", withStep = false, duration = true)
         assistantSession = null
         ++assistantRequest; ++voiceStartRequest
@@ -411,7 +451,7 @@ class NietoApp : Application() {
         assistantEvent("user_lost")
         if (state.value.voice.phase in listOf(VoicePhase.LISTENING, VoicePhase.CONNECTING)) cancelRealtimeVoice()
         else if (state.value.voice.active) realtime.cancelResponseForScreenChange()
-        sendMessage("Me perdí. Explicame el próximo paso de otra manera con la pantalla actual.", textOnly = state.value.textOnly)
+        sendVisualMessage("Me perdí. Explicame el próximo paso de otra manera con la pantalla actual.", textOnly = state.value.textOnly)
     }
     private fun assistantEvent(type: String, withStep: Boolean = true, duration: Boolean = false) {
         val session = assistantSession ?: return
@@ -458,10 +498,51 @@ class NietoApp : Application() {
     fun repeat() { updateGuide(engine.repeat(), forceSpeech = true) }
     fun lost() { updateGuide(engine.lost(), forceSpeech = true) }
     fun cancel() { stopSpeaking(); updateGuide(engine.cancel()) }
-    fun screenConnection(connected: Boolean) { mutable.value = mutable.value.copy(accessibilityConnected = connected) }
+    fun screenConnection(connected: Boolean) {
+        mutable.value = mutable.value.copy(accessibilityConnected = connected)
+        if (!connected) {
+            cancelRealtimeVoice()
+            stopSpeaking()
+            mutable.value = mutable.value.copy(screenValid = false, screenStep = null)
+        }
+    }
     fun setOverlay(enabled: Boolean) { mutable.value = mutable.value.copy(overlayEnabled = enabled) }
 
-    fun sendMessage(text: String, textOnly: Boolean = true, onSubmitted: (Boolean) -> Unit = {}): Boolean {
+    fun sendMessage(text: String, attachments: List<ChatAttachment> = emptyList(), onComplete: (Boolean) -> Unit = {}) {
+        val clean = text.trim().take(1000).ifBlank { if (attachments.isNotEmpty()) "Ayudame a entender los archivos que adjunté." else "" }
+        if (clean.isBlank() || state.value.busy || state.value.screenCapturePending || state.value.voice.active) { onComplete(false); return }
+        if(!settings.openAiConsent && !settings.juryDemo){tellUser("Autorizá las consultas con IA en Ajustes para conversar con TINO.");onComplete(false);return}
+        if(!settings.juryDemo && state.value.assistanceEnabled && attachments.isEmpty()) { sendVisualMessage(clean,onSubmitted=onComplete);return }
+        if (attachments.size > ChatAttachment.MAX_COUNT || attachments.sumOf { it.byteSize } > ChatAttachment.MAX_TOTAL_BYTES) { onComplete(false); return }
+        mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean, attachments.map { ChatAttachmentLabel(it.name,it.mimeType) })).takeLast(30), busy = true, suggestedFlow = null)
+        scope.launch {
+            try {
+                api.register()
+                val history = JSONArray()
+                state.value.chat.dropLast(1).takeLast(12).forEach { line -> history.put(JSONObject().put("role", if (line.fromUser) "user" else "assistant").put("content", line.text.take(1000))) }
+                val body = JSONObject().put("text", clean).put("conversationId", conversationId).put("history", history)
+                while (body.toString().toByteArray(Charsets.UTF_8).size > 14_000 && history.length() > 0) history.remove(0)
+                // Chat is independent of the local outbox session identifier.
+                if (attachments.isNotEmpty()) body.put("attachments", JSONArray().apply { attachments.forEach { put(it.wire()) } })
+                val reply = api.request("/assistant/message", "POST", body)
+                var answer = reply.optString("instruction", "No pude encontrar una guía para esa consulta.")
+                val sources = reply.optJSONArray("sources")
+                if (sources != null) for (index in 0 until sources.length().coerceAtMost(3)) {
+                    val source = sources.optJSONObject(index) ?: continue
+                    val title = source.optString("title")
+                    val url = source.optString("url")
+                    if (url.startsWith("https://")) answer += "\nFuente: $title\n$url"
+                }
+                val draft = reply.optJSONObject("emailDraft")?.let { EmailDraft(it.getString("to"), it.getString("subject"), it.getString("body")) }
+                mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() }, emailDraft = if (reply.optBoolean("clearEmailDraft")) null else draft ?: state.value.emailDraft)
+                speak(answer)
+                if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
+                onComplete(true)
+            } catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta."); onComplete(false) }
+            finally { mutable.value = mutable.value.copy(busy = false) }
+        }
+    }
+    fun sendVisualMessage(text: String, textOnly: Boolean = true, onSubmitted: (Boolean) -> Unit = {}): Boolean {
         val clean = text.trim().take(1000)
         if (clean.isBlank() || !state.value.assistanceEnabled || !settings.remoteScreenConsent || !settings.openAiConsent || state.value.busy || state.value.voice.active) {
             onSubmitted(false)
@@ -471,13 +552,19 @@ class NietoApp : Application() {
         val request = ++assistantRequest
         mutable.value = mutable.value.copy(busy = true, textOnly = textOnly)
         stopSpeaking()
+        screenCaptureWait?.cancel()
+        screenCaptureWait=scope.launch {
+            delay(6000)
+            if(request==assistantRequest) { assistantRequest++;mutable.value=mutable.value.copy(busy=false);status("No pude preparar la pantalla. Tu consulta escrita se conserva.");onSubmitted(false) }
+        }
         val ready: (ScreenContext?) -> Unit = { screen ->
             if (request == assistantRequest && state.value.assistanceEnabled) {
+                screenCaptureWait?.cancel();screenCaptureWait=null
                 if (screen?.blocked == true) {
                     mutable.value = mutable.value.copy(busy = false)
                     status(screen.notice)
                     onSubmitted(false)
-                } else { submitAssistant(clean, screen); onSubmitted(true) }
+                } else { mutable.value=mutable.value.copy(chat=(state.value.chat+ChatLine(true,clean)).takeLast(30));submitAssistant(clean, screen); onSubmitted(true) }
             } else onSubmitted(false)
         }
         try { screenCapture?.capture(ready) ?: ready(null) }
@@ -496,6 +583,7 @@ class NietoApp : Application() {
         if (changed && state.value.voice.phase in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING)) cancelRealtimeVoice()
         realtime.selectOutputMode(textOnly = true)
     }
+
     fun setInstitutionMetricsConsent(allowed: Boolean) = work {
         require(state.value.deviceSettingsLoaded) { "Primero consultá los permisos vigentes del servidor." }
         api.register()
@@ -556,7 +644,7 @@ class NietoApp : Application() {
         val response = api.request("/family/me")
         val group = response.optJSONObject("group")
         val permissions = response.optJSONObject("permissions")
-        mutable.value = mutable.value.copy(familyName = group?.optString("name"),
+        mutable.value = mutable.value.copy(familyName = group?.optString("name"), familyPermissions = permissions ?: JSONObject(), familyPaused = response.optBoolean("paused"),
             shareProgress = permissions?.optBoolean("progress") == true, allowHelp = permissions?.optBoolean("help") == true)
     }
     fun acceptFamily(code: String, progress: Boolean, help: Boolean) = work {
@@ -568,6 +656,7 @@ class NietoApp : Application() {
         status("Aceptaste la invitación y elegiste qué compartir. Podés revocar el acceso cuando quieras.")
     }
     fun revokeFamily() = work {
+        org.nieto.assistant.usage.DeviceUsage.enable(this,false)
         api.request("/family/link", "DELETE")
         refreshFamilyInternal()
         status("Acceso familiar revocado.")
@@ -588,4 +677,166 @@ class NietoApp : Application() {
             finally { mutable.value = mutable.value.copy(busy = false) }
         }
     }
+    fun foreground(visible: Boolean) { mutable.value = mutable.value.copy(foreground = visible) }
+
+    private var chatOpenPending = false
+    // Legacy entry points now use the foreground service handoff instead of opening a chat.
+    fun openChat() { requestSystemVoice() }
+    fun consumeChatOpen(): Boolean = chatOpenPending.also { chatOpenPending = false }
+
+    private val audioUse=org.nieto.assistant.presence.AudioUseGate()
+    fun pauseWakeForRecording(owner: String = "overlay-dictation") { audioUse.acquire(owner); mutable.value = mutable.value.copy(recordingVoiceNote = audioUse.active) }
+
+    fun resumeWakeAfterRecording(owner: String = "overlay-dictation") { audioUse.release(owner); mutable.value = mutable.value.copy(recordingVoiceNote = audioUse.active) }
+
+    suspend fun refreshFamilyInbox() {
+        if (settings.token.isBlank()) return
+        runCatching {
+            val messages = api.request("/family/messages").optJSONArray("messages")
+            val items = if (messages == null) emptyList() else (0 until messages.length()).map { messages.getJSONObject(it) }
+            if (items.map { it.toString() } != state.value.familyInbox.map { it.toString() }) mutable.value = mutable.value.copy(familyInbox = items)
+        }
+    }
+
+    fun bubbleState(enabled: Boolean) { mutable.value = mutable.value.copy(bubbleEnabled = enabled) }
+
+    fun wakeState(phase: String) { mutable.value = mutable.value.copy(wakePhase = phase) }
+
+    fun presenceNotice(text: String?) { mutable.value = mutable.value.copy(presenceNotice = text) }
+
+    fun stopPresence() {
+        if (state.value.wakeEnabled) stopWakeListening()
+        stopService(Intent(this, FloatingBubbleService::class.java))
+        stopService(Intent(this, WakeVoiceService::class.java))
+        mutable.value = mutable.value.copy(bubbleEnabled = false, wakePhase = "off", presenceNotice = null)
+    }
+
+    fun resetConversation() {
+        cancelRealtimeVoice(); stopAssistance(); guideSession = null; manualTelemetry = null
+        stopSpeaking()
+        sessionId = null
+        updateGuide(engine.cancel())
+        conversationId = UUID.randomUUID().toString()
+        mutable.value = mutable.value.copy(practiceFlow = null, chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null, familyInbox = emptyList())
+    }
+
+    fun openPractice(flow: org.nieto.assistant.demo.PracticeFlow) { stopSpeaking(); mutable.value=mutable.value.copy(practiceFlow=flow) }
+    fun closePractice() { stopSpeaking(); mutable.value=mutable.value.copy(practiceFlow=null) }
+    fun recordPractice(flow: org.nieto.assistant.demo.PracticeFlow,id:String) {
+        if(!settings.juryDemo)return
+        scope.launch { runCatching { api.request("/demo/practice/report","POST",JSONObject().put("flowId",if(flow==org.nieto.assistant.demo.PracticeFlow.WHATSAPP)"whatsapp-group" else "email-send").put("id",id)) } }
+    }
+
+    fun tellUser(text: String) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, text)).takeLast(30)); speak(text) }
+
+    fun startTask(flowId: String, onReady: () -> Unit) = work {
+        require(flowId in setOf("whatsapp-group", "email-send"))
+        require(state.value.task?.active != true) { "Terminá o cancelá la guía actual antes de empezar otra." }
+        cancel()
+        sessionId = null
+        if (flowId != "email-send" || state.value.suggestedFlow != "email-send") mutable.value = mutable.value.copy(emailDraft = null)
+        api.register()
+        manualTelemetry = TelemetrySync.session(settings.baseUrl, settings.token, flowId)
+        val task = GuidedTask.from(JSONObject().put("id", manualTelemetry!!.clientSessionId).put("flow", api.request("/assistant/flows").getJSONArray("flows").let { flows -> (0 until flows.length()).map { flows.getJSONObject(it) }.first { it.getString("id") == flowId } }))
+        manualEvent("flow_started")
+        manualEvent("step_shown", task.current.id)
+        taskStartedAt = android.os.SystemClock.elapsedRealtime()
+        mutable.value = mutable.value.copy(task = task, suggestedFlow = null)
+        speak(task.current.instruction)
+        onReady()
+    }
+
+    fun advanceTask() = work {
+        val task = state.value.task?.takeIf { it.active } ?: return@work
+        manualEvent("step_completed", task.current.id)
+        if (task.index == task.steps.lastIndex) {
+            val seconds = ((android.os.SystemClock.elapsedRealtime() - taskStartedAt) / 1000).coerceIn(0, 14400)
+            manualEvent("flow_reported", duration = seconds.toInt())
+            mutable.value = mutable.value.copy(task = task.copy(completed = true), emailDraft = null)
+            tellUser(if (task.flowId == "email-send") "Marcaste que el correo está en Enviados. Completaste la guía." else "Marcaste que ya ves tu grupo creado. Completaste la guía.")
+        } else {
+            val next = task.copy(index = task.index + 1)
+            manualEvent("step_shown", next.current.id)
+            mutable.value = mutable.value.copy(task = next)
+            speak(next.current.instruction)
+        }
+    }
+
+    fun repeatTask() { state.value.task?.takeIf{it.active}?.let { manualEvent("step_repeated",it.current.id);speak(it.current.instruction) } }
+
+    fun cancelTask() = work {
+        val task = state.value.task?.takeIf { it.active } ?: return@work
+        manualEvent("cancelled")
+        mutable.value = mutable.value.copy(task = task.copy(cancelled = true), emailDraft = null); stopSpeaking()
+    }
+
+    fun dismissTask() { if (state.value.task?.active != true) mutable.value = mutable.value.copy(task = null) }
+
+    private fun manualEvent(type: String, step: String? = null, duration: Int? = null) { manualTelemetry?.let { TelemetrySync.enqueue(this, it, type, step, duration) } }
+
+    fun acceptFamilyPermissions(code: String,permissions: JSONObject)=work {
+        api.register();api.request("/family/link","POST",JSONObject().put("invitationCode",code.trim()).put("permissions",permissions));refreshFamilyInternal()
+    }
+    fun updateFamilyPermissions(permissions: JSONObject)=work { api.request("/family/link","PATCH",JSONObject().put("permissions",permissions));if(!permissions.optBoolean("usage"))org.nieto.assistant.usage.DeviceUsage.enable(this,false);refreshFamilyInternal();status("Tus permisos quedaron actualizados.") }
+    fun pauseFamily(paused: Boolean)=work { api.request("/family/link","PATCH",JSONObject().put("paused",paused));refreshFamilyInternal();status(if(paused)"Se pausó lo compartido con tu grupo." else "Se reanudaron los permisos elegidos.") }
+    fun publishFamilyLocation(latitude: Double,longitude: Double,accuracy: Double)=work { api.request("/family/location","POST",JSONObject().put("latitude",latitude).put("longitude",longitude).put("accuracy",accuracy).put("minutes",15));status("Ubicación aproximada compartida por 15 minutos.") }
+    fun stopFamilyLocation()=work { api.request("/family/location","DELETE");status("Dejaste de compartir tu ubicación.") }
+
+    fun handleWakeCommand(text: String) {
+        val clean=text.trim().take(1000)
+        if(clean.isBlank())return
+        when(org.nieto.assistant.presence.WakeCommandPolicy.route(clean,state.value.nativeSurfaceVisible,
+            settings.remoteScreenConsent && settings.openAiConsent,state.value.accessibilityConnected && screenCapture!=null)) {
+            org.nieto.assistant.presence.WakeRoute.CONVERSATION -> sendMessage(clean)
+            org.nieto.assistant.presence.WakeRoute.STOP_SCREEN_ASSISTANCE -> {stopAssistance();tellUser("Dejé de observar la pantalla. Podés volver a pedirme ayuda cuando quieras.")}
+            org.nieto.assistant.presence.WakeRoute.NEEDS_ACCESSIBILITY -> tellUser("Para señalar botones, activá Accesibilidad de TINO desde Ajustes. Después volvemos a intentarlo.")
+            org.nieto.assistant.presence.WakeRoute.SCREEN_ASSISTANCE -> {
+                if(!state.value.assistanceEnabled)enableAssistance()
+                mutable.value=mutable.value.copy(textOnly=false)
+                realtime.selectOutputMode(textOnly=false)
+                automaticSteps=0
+                sendScreenMessage(clean)
+            }
+        }
+    }
+
+    fun sendScreenMessage(text: String,onCaptured: () -> Unit = {}) {
+        if(settings.juryDemo) { sendMessage(text);onCaptured();return }
+        val clean = text.trim().take(1000)
+        if (clean.isBlank() || !state.value.assistanceEnabled || !settings.remoteScreenConsent || !settings.openAiConsent || state.value.busy || state.value.screenCapturePending || state.value.voice.active) { onCaptured(); return }
+        followUp?.cancel()
+        val request = ++assistantRequest
+        var delivered=false
+        mutable.value=mutable.value.copy(screenCapturePending=true,screenStep=null)
+        screenCaptureWait?.cancel()
+        screenCaptureWait=scope.launch {
+            delay(6000)
+            if(!delivered && request==assistantRequest) {
+                delivered=true
+                mutable.value=mutable.value.copy(screenCapturePending=false)
+                onCaptured()
+                tellUser("No pude leer la pantalla actual. Volvé a intentarlo en una pantalla sin datos sensibles.")
+            }
+        }
+        val ready: (ScreenContext?) -> Unit = { screen ->
+            if(!delivered && request==assistantRequest) {
+                delivered=true;screenCaptureWait?.cancel();screenCaptureWait=null
+                mutable.value=mutable.value.copy(screenCapturePending=false)
+                onCaptured()
+                if(state.value.assistanceEnabled) {
+                    when {
+                        screen==null -> tellUser("No pude leer esta pantalla. No voy a señalar un botón sin poder identificarlo.")
+                        screen.blocked -> tellUser(screen.notice)
+                        else -> { mutable.value=mutable.value.copy(chat=(state.value.chat+ChatLine(true,clean)).takeLast(30));submitAssistant(clean,screen) }
+                    }
+                }
+            }
+        }
+        screenCapture?.capture(ready) ?: ready(null)
+    }
+
+    fun startConversationVoice() {
+        requestSystemVoice()
+    }
+
 }

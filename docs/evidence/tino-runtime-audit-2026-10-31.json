@@ -1,0 +1,146 @@
+{
+  "checkedAt": "2026-10-31T03:09:52.553Z",
+  "checks": {
+    "health": {
+      "status": "ok",
+      "version": "2.0.0",
+      "openarg": {
+        "configured": true,
+        "connected": false,
+        "endpoint": "https://mcp.openarg.org/mcp"
+      },
+      "privacy": {
+        "minimumCohort": 5,
+        "screenStorage": false,
+        "conversationStorage": false
+      },
+      "institutionConfigured": true,
+      "android": {
+        "apkAvailable": true,
+        "downloadUrl": "/downloads/nieto-debug.apk"
+      },
+      "assistant": {
+        "mode": "conversational",
+        "generalConversation": true,
+        "flows": [
+          "whatsapp-group",
+          "email-send",
+          "whatsapp-location"
+        ]
+      },
+      "storage": "local_json_single_process"
+    },
+    "institution": {
+      "status": 200,
+      "origin": "tino_simulated",
+      "metrics": {
+        "activeUsers": 7757,
+        "requests": 265656,
+        "completed": 201931,
+        "independent": 93028,
+        "unsafeLinks": 59087,
+        "checkedLinks": 577863,
+        "screenMinutes": 44113738,
+        "tinoMinutes": 13020063,
+        "personDays": 1169170,
+        "averageAge": 62.8,
+        "screenMinutesPerDay": 37.7,
+        "tinoMinutesPerDay": 11.1,
+        "autonomyRate": 46.1,
+        "completionRate": 76,
+        "unsafePerThousand": 102.3
+      },
+      "months": [
+        "2026-05",
+        "2026-06",
+        "2026-07",
+        "2026-08",
+        "2026-09",
+        "2026-10"
+      ],
+      "provinceCount": 24,
+      "exampleProvince": {
+        "id": "AR-C",
+        "name": "Ciudad Autónoma de Buenos Aires",
+        "point": [
+          -58.4459,
+          -34.6144
+        ],
+        "activeUsers": 1102,
+        "requests": 37087,
+        "completed": 28267,
+        "independent": 13026,
+        "unsafeLinks": 7005,
+        "checkedLinks": 82888,
+        "screenMinutes": 6309759,
+        "tinoMinutes": 1983880,
+        "personDays": 164070,
+        "averageAge": 63.1,
+        "autonomyRate": 46.1,
+        "screenMinutesPerDay": 38.5,
+        "tinoMinutesPerDay": 12.1,
+        "unsafePerThousand": 84.5,
+        "population": 3121707,
+        "populationPeriod": "2022",
+        "internetPer100Homes": 118.81,
+        "connectivityPeriod": "2026 T1",
+        "usersPer10000": 3.5,
+        "requestsPer10000": 118.8
+      },
+      "publicContext": {
+        "status": "verified_snapshot",
+        "retrievedAt": "2026-10-31T02:03:22.458Z",
+        "populationPeriod": "2022",
+        "connectivityPeriod": "2026 T1",
+        "nationalPopulation": 45892285,
+        "sources": [
+          {
+            "title": "INDEC · Censo 2022, resultados definitivos · publicación DGEyC Córdoba",
+            "url": "https://datosestadistica.cba.gov.ar/dataset/a047806e-e19a-4cdd-b800-b544d436f231/resource/ffaff001-83fd-4416-ad5f-13c33cc117b8/download/cnphv2022_resultados_definitivos_cordoba-1.xlsx",
+            "period": "2022",
+            "table": "raw.cordoba_estadistica__censo_2022__9e3466dc__v3",
+            "retrievedAt": "2026-10-31T02:03:22.458Z",
+            "readAt": "2026-05-07"
+          },
+          {
+            "title": "ENACOM · Accesos a Internet fijo por provincia",
+            "url": "https://indicadores.enacom.gob.ar/Files/DatosAbiertos/internet_accesos_penetracion_provincias.csv",
+            "period": "2026 T1",
+            "table": "cache_datos_gob_ar_internet_fija_r18e293e7ce",
+            "retrievedAt": "2026-10-31T02:03:22.790Z",
+            "readAt": "2026-07-30"
+          }
+        ],
+        "crosses": [
+          {
+            "territoryId": "AR",
+            "label": "Uso TINO por 10.000 habitantes · base censal 2022",
+            "value": 1.7,
+            "numerator": 7757,
+            "denominator": 45892285,
+            "denominatorPeriod": "2022",
+            "unit": "usuarios demo / 10.000 habitantes",
+            "sourceUrl": "https://datosestadistica.cba.gov.ar/dataset/a047806e-e19a-4cdd-b800-b544d436f231/resource/ffaff001-83fd-4416-ad5f-13c33cc117b8/download/cnphv2022_resultados_definitivos_cordoba-1.xlsx",
+            "note": "Numerador TINO simulado. Base censal 2022: no mide cobertura poblacional actual ni impacto."
+          }
+        ]
+      }
+    },
+    "openargLive": {
+      "ok": true,
+      "tool": "obtener_datos",
+      "table": "raw.cordoba_estadistica__censo_2022__9e3466dc__v3",
+      "rowCount": 28,
+      "total": "45892285",
+      "retrievedAt": "2026-10-31T03:09:54.775Z",
+      "cached": false
+    },
+    "model": {
+      "configured": true,
+      "status": 401,
+      "ok": false,
+      "code": "invalid_api_key",
+      "hasOutput": false
+    }
+  }
+}

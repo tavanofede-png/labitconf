@@ -318,7 +318,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
         }
         val bubble = Button(service).apply {
             text = "N"; textSize = 24f; setTextColor(cream); backgroundTintList = android.content.res.ColorStateList.valueOf(green)
-            contentDescription = "Abrir ayuda de NIETO"
+            contentDescription = "Abrir ayuda de TINO"
             setOnClickListener { expanded = !expanded; render(app.state.value.guide, true) }
         }
         add(bubble, WindowManager.LayoutParams(dp(60), dp(60), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -330,7 +330,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
             orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)); setBackgroundColor(cream)
             elevation = dp(6).toFloat()
         }
-        panel.addView(TextView(service).apply { text = "NIETO · un paso a la vez"; textSize = 16f; setTextColor(green); typeface = Typeface.DEFAULT_BOLD })
+        panel.addView(TextView(service).apply { text = "TINO · un paso a la vez"; textSize = 16f; setTextColor(green); typeface = Typeface.DEFAULT_BOLD })
         val message = guide.notice ?: guide.instruction
         panel.addView(TextView(service).apply { text = message; textSize = 20f; setTextColor(Color.rgb(35, 41, 37)); setPadding(0, dp(8), 0, dp(6)) })
         fun button(title: String, action: () -> Unit) { panel.addView(Button(service).apply {
@@ -347,14 +347,14 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
         if (guide.stage == Stage.COMPLETE) button("Practicar sin pistas") { app.startGuide(practice = true) }
         button("Pedir ayuda a mi familia") { app.requestHelp() }
         panel.addView(TextView(service).apply { text = app.state.value.status; textSize = 15f; setTextColor(green); setPadding(0, dp(6), 0, dp(6)) })
-        button("Hablar con NIETO") {
+        button("Hablar con TINO") {
             app.requestVoiceFromOverlay()
             service.startActivity(Intent(service, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }
         val controls = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("Abrir NIETO" to {
-            service.startActivity(Intent(service, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        listOf("Abrir TINO" to {
+            service.startActivity(Intent(service, MainActivity::class.java).putExtra("destination","chat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }, "Cerrar guía" to { app.cancel(); expanded = false; render(app.state.value.guide, true) }).forEach { (title, action) ->
             controls.addView(Button(service).apply { text = title; isAllCaps = false; minHeight = dp(48); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f))
         }
@@ -371,7 +371,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
         })
     }
     private fun add(view: View, params: WindowManager.LayoutParams) {
-        runCatching { manager.addView(view, params); views.add(view) }.onFailure { app.status("No pude mostrar la burbuja. Podés seguir desde NIETO.") }
+        runCatching { manager.addView(view, params); views.add(view) }.onFailure { app.status("No pude mostrar la burbuja. Podés seguir desde TINO.") }
     }
 }
 

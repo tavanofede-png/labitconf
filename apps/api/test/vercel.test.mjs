@@ -7,6 +7,7 @@ import { BlobStore } from '../src/blob-store.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
 import { RealtimeService, REALTIME_MODEL } from '../src/realtime.mjs';
 import { RealtimeAdmission } from '../src/admission.mjs';
+import { createServer } from '../src/server.mjs';
 
 // The exported default is a lazy, non-listening HTTP server, matching Vercel's
 // native HTTP/WebSocket entrypoint contract. No storage or provider request runs.
@@ -44,6 +45,25 @@ function durableClient() {
   };
 }
 
+test('cloud Function rewrite alias requires authentication and is unavailable on local servers', async t => {
+  const cloud = createCloudServer({ store: new BlobStore({ client: durableClient() }), realtime: new RealtimeService({ apiKey: '' }) });
+  const local = createServer({ realtime: new RealtimeService({ apiKey: '' }) });
+  await Promise.all([cloud, local].map(server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve))));
+  t.after(async () => { cloud.closeRealtime(); local.closeRealtime(); await Promise.all([cloud, local].map(server => new Promise(resolve => server.close(resolve)))); });
+  const status = (server, path = '/api/index') => new Promise((resolve, reject) => {
+    const client = new WebSocket(`ws://127.0.0.1:${server.address().port}${path}`, { handshakeTimeout: 2000 });
+    client.on('error', () => {});
+    client.once('unexpected-response', (_request, response) => { response.resume(); client.terminate(); resolve(response.statusCode); });
+    client.once('open', () => { client.terminate(); reject(Error('Alias opened without authentication')); });
+  });
+  assert.equal(await status(cloud), 401);
+  assert.equal(await status(local), 404);
+  assert.equal(await status(cloud, '/api/index?path=assistant%2Frealtime'), 401);
+  assert.equal(await status(cloud, '/api/index?path=assistant%2Frealtime&token=not-accepted'), 404);
+  assert.equal(await status(cloud, '/api/index?path=other'), 404);
+  assert.equal(await status(local, '/api/assistant/realtime?path=assistant%2Frealtime'), 404);
+});
+
 class TestConversation extends EventEmitter {
   closed = false;
   async connect() { this.emit('event', { type: 'ready', model: REALTIME_MODEL }); return this; }
@@ -74,7 +94,7 @@ test('cloud entrypoint serves HTTP and authenticated WS using state committed by
   const device = await post(1, '/api/devices', { name: 'Tablet', territoryId: 'AR-C', enrollmentCode: invitation.body.enrollmentCode });
   assert.equal(device.status, 201);
   assert.equal((await stores[0].read()).users[0].id, device.body.deviceId);
-  const socket = new WebSocket(bases[0].replace('http:', 'ws:') + '/api/assistant/realtime', { headers: { Authorization: `Bearer ${device.body.token}` } });
+  const socket = new WebSocket(bases[0].replace('http:', 'ws:') + '/api/index?path=assistant%2Frealtime', { headers: { Authorization: `Bearer ${device.body.token}` } });
   t.after(() => socket.terminate());
   const ready = once(socket, 'message');
   await once(socket, 'open');
@@ -129,7 +149,8 @@ test('HTTP cloud reply holds a durable lease until provider finishes and release
     };
     return conversation;
   } });
-  const server = createCloudServer({ store, realtime, institutionToken: 'operator-test', openarg: new OpenArgClient({ apiKey: '' }) });
+  const server = createCloudServer({ store, realtime, institutionToken: 'operator-test', openarg: new OpenArgClient({ apiKey: '' }),
+    allowLocalAssistant: true, accountOptions: { judgesDemo: true, localDemo: true } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { server.closeRealtime(); await new Promise(resolve => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -137,9 +158,15 @@ test('HTTP cloud reply holds a durable lease until provider finishes and release
     const response = await fetch(base + '/api' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
     return { status: response.status, body: await response.json() };
   };
+  const demoLogin = await post('/auth/demo/login', { email: 'test@labitconf.com', password: '0000' });
+  assert.equal(demoLogin.status, 404); assert.equal(demoLogin.body.error.code, 'demo_unavailable');
+  const localCode = await post('/auth/code/request', { email: 'person@example.com', role: 'user', purpose: 'login' });
+  assert.equal(localCode.status, 503); assert.equal(localCode.body.error.code, 'email_not_configured');
   const invitation = await post('/institution/device-invitations', {}, 'operator-test');
   const device = await post('/devices', { name: 'Tablet', enrollmentCode: invitation.body.enrollmentCode });
-  const reply = await post('/assistant/message', { text: 'Ayudame con Gmail' }, device.body.token);
+  const reply = await post('/assistant/message', { text: 'Quiero crear un grupo de WhatsApp' }, device.body.token);
   assert.equal(reply.status, 200); assert.equal(heldDuringProvider, true);
+  assert.equal(reply.body.instruction, 'Abrí Gmail para empezar.');
+  assert.equal(reply.body.model, REALTIME_MODEL);
   assert.equal((await store.read()).realtimeLeases.length, 0);
 });
