@@ -70,6 +70,7 @@ test('Realtime HTTP uses exact requested model and keeps queries and keys out of
   assert.equal(new URL(upstream.requests[0].url, 'http://localhost').searchParams.get('model'), REALTIME_MODEL);
   const config = upstream.messages.find(event => event.type === 'session.update').session;
   assert.deepEqual(config.output_modalities, ['text']); assert.equal(config.audio.input.turn_detection, null);
+  assert.equal(config.max_output_tokens, 800);
   const disk = await readFile(dataFile, 'utf8'); assert.equal(disk.includes('Mensaje privado'), false); assert.equal(disk.includes('fake-key'), false);
   assert.equal(realtime.active.size, 0);
 });
@@ -86,10 +87,14 @@ test('HTTP voice replies carry real PCM in a playable WAV and retain the exact R
   const pcm = Buffer.alloc(4800); for (let i = 0; i < pcm.length; i += 2) pcm.writeInt16LE(Math.round(Math.sin(i / 12) * 8000), i);
   const upstream = await fakeOpenAi(t, (socket, event) => {
     const id = 'http-voice';
+    // A normal spoken reply also spends tokens on reasoning and its transcript.
+    // Reproduce the provider's cut-off when the text-only budget is reused.
+    const complete = event.response.max_output_tokens >= 1200;
     socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
     socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'voice-item', delta: pcm.toString('base64') }));
     socket.send(JSON.stringify({ type: 'response.output_audio_transcript.done', response_id: id, transcript: 'Acá estoy. ¿En qué te ayudo?' }));
-    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: complete ? 'completed' : 'incomplete', output: [],
+      ...(!complete ? { status_details: { type: 'incomplete', reason: 'max_output_tokens' } } : {}) } }));
   });
   const service = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
   t.after(() => service.close());
@@ -107,6 +112,20 @@ test('an HTTP voice turn cannot claim speech when the provider only returned tex
   const service = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
   t.after(() => service.close());
   await assert.rejects(service.reply({ deviceId: 'jury-voice-empty', text: 'Hola TINO', outputMode: 'audio' }), error => error.code === 'voice_output_unavailable');
+  assert.equal(service.active.size, 0);
+});
+
+test('a partially generated voice reply is rejected when the provider did not complete it', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    const id = 'cut-off-voice';
+    socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'partial-item', delta: Buffer.alloc(4800).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.output_audio_transcript.done', response_id: id, transcript: 'Abrí Gmail y después...' }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'incomplete', status_details: { reason: 'max_output_tokens' }, output: [] } }));
+  });
+  const service = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
+  t.after(() => service.close());
+  await assert.rejects(service.reply({ deviceId: 'jury-voice-truncated', text: 'Quiero mandar un correo.', outputMode: 'audio' }), error => error.code === 'openai_response_incomplete');
   assert.equal(service.active.size, 0);
 });
 
