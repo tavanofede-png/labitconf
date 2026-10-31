@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -42,7 +43,7 @@ test('model hook receives an unseen request and context without restricting it t
 
 test('logged-in demo users can finish both task guides; ownership, explicit confirmation and private draft content stay protected', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'tino-tasks-')), file = join(dir, 'state.json');
-  const server = createServer({ dataFile: file, openarg: new OpenArgClient({ apiKey: '' }), institutionToken: '', accountOptions: { judgesDemo: true, demoEmail: 'test@labitconf.com' } });
+  const server = createServer({ dataFile: file, openarg: new OpenArgClient({ apiKey: '' }), institutionToken: '', assistantOptions: {}, accountOptions: { judgesDemo: true, demoEmail: 'test@labitconf.com' } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
   const request = async (path, { token, method = 'GET', body } = {}) => {
@@ -54,16 +55,17 @@ test('logged-in demo users can finish both task guides; ownership, explicit conf
   assert.equal(login.status, 200); const token = login.body.sessionToken;
   const other = await request('/devices', { method: 'POST', body: { name: 'Other', territoryId: 'AR-C' } });
   for (const flowId of ['whatsapp-group', 'email-send']) {
-    const task = await request('/assistant/sessions', { token, method: 'POST', body: { flowId } });
+    const task = await request('/assistant/sessions', { token, method: 'POST', body: { flowId, clientSessionId: randomUUID() } });
     assert.equal(task.status, 201); assert.equal(task.body.flow.steps.length, TASK_FLOWS[flowId].steps.length);
     const path = `/assistant/sessions/${task.body.id}/events`;
-    const event = (body, bearer = token) => request(path, { token: bearer, method: 'POST', body });
+    const event = (body, bearer = token) => request(path, { token: bearer, method: 'POST', body: {eventId: randomUUID(), ...body} });
     assert.equal((await event({ type: 'flow_started' }, other.body.token)).status, 404);
-    assert.equal((await event({ type: 'flow_completed', verification: 'user_confirmed' })).status, 409);
+    assert.equal((await event({ type: 'flow_completed', verification: 'user_confirmed' })).status, 400);
+    assert.equal((await event({ type: 'flow_started' })).status,200);
     assert.equal((await event({ type: 'step_completed', stepId: 'untrusted_step' })).status, 400);
-    for (const step of task.body.flow.steps) assert.equal((await event({ type: 'step_completed', stepId: step.id })).status, 200);
-    assert.equal((await event({ type: 'flow_completed' })).status, 400);
-    assert.equal((await event({ type: 'flow_completed', verification: 'user_confirmed', durationSeconds: 30 })).status, 200);
+    for (const step of task.body.flow.steps) { assert.equal((await event({type:'step_shown',stepId:step.id})).status,200); assert.equal((await event({ type: 'step_completed', stepId: step.id })).status, 200); }
+    assert.equal((await event({ type: 'flow_completed' })).status, 409);
+    assert.equal((await event({ type: 'flow_reported', durationSeconds: 30 })).status, 200);
   }
   const message = text => request('/assistant/message', { token, method: 'POST', body: { text, conversationId: 'private-draft' } });
   for (const text of ['quiero enviar un mail', 'private-recipient@example.com', 'Private subject', 'Private body never in metrics']) assert.equal((await message(text)).status, 200);
@@ -71,7 +73,7 @@ test('logged-in demo users can finish both task guides; ownership, explicit conf
   assert.equal(invalid.status, 400);
   const history = await request('/assistant/history', { token });
   assert.equal(history.body.sessions.length, 2);
-  assert.equal(history.body.sessions.every(s => s.state === 'completed' && s.verification === 'user_confirmed'), true);
+  assert.equal(history.body.sessions.every(s => s.state === 'reported' && s.resultSource === 'self_reported'), true);
   const disk = await readFile(file, 'utf8');
   for (const secret of ['private-recipient@example.com','Private subject','Private body never in metrics',token]) assert.equal(disk.includes(secret), false);
 });

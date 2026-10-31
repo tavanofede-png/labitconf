@@ -11,7 +11,7 @@ import { JsonStore } from '../src/store.mjs';
 async function fixture(t, overrides = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'tino-accounts-')); const file = join(dir, 'state.json');
   const codes = new Map(); let clock = Date.now();
-  const server = createServer({ dataFile: file, institutionToken: '', openarg: new OpenArgClient({ apiKey: '' }), now: () => clock,
+  const server = createServer({ assistantOptions:{generateReply:async()=> 'Respuesta sintética para probar autenticación.'}, dataFile: file, institutionToken: '', openarg: new OpenArgClient({ apiKey: '' }), now: () => clock,
     accountOptions: { authSecret: 'test-secret-not-a-production-credential', sendCode: ({ email, code }) => codes.set(email, code), institutionEmails: ['institution@example.com'], ...overrides } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });

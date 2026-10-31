@@ -24,7 +24,12 @@ import kotlin.math.hypot
 
 /** User-enabled chat head. Ordinary chat never launches an Activity or captures the other app. */
 class FloatingBubbleService : Service() {
-    companion object { internal var active: FloatingBubbleService? = null; private set }
+    companion object {
+        private var reference = java.lang.ref.WeakReference<FloatingBubbleService>(null)
+        internal var active: FloatingBubbleService?
+            get() = reference.get()
+            private set(value) { reference = java.lang.ref.WeakReference(value) }
+    }
     private val app get() = application as NietoApp
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val windows by lazy { getSystemService(WindowManager::class.java) }
@@ -80,7 +85,7 @@ class FloatingBubbleService : Service() {
         val layout = WindowManager.LayoutParams(size,size,WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.LEFT; x = area.left+point.x; y = area.top+point.y; title = "TINO · burbuja" }
-        val image = ImageView(this).apply {
+        val image = object: ImageView(this) { override fun performClick(): Boolean { super.performClick();return true } }.apply {
             setImageResource(R.drawable.tino_mascot); contentDescription = "Abrir chat flotante de TINO. Arrastrá para fijar a un borde."
             scaleType = ImageView.ScaleType.FIT_CENTER
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.rgb(227,249,246)); setStroke(dp(2),Color.rgb(0,214,201)) }
@@ -164,16 +169,22 @@ class FloatingBubbleService : Service() {
             }
             insets
         }
-        view.setOnTouchListener { _,event -> if(event.actionMasked==MotionEvent.ACTION_OUTSIDE) { closePanel(); true } else false }
+        view.setOnTouchListener { _,event -> if(event.actionMasked==MotionEvent.ACTION_OUTSIDE) { view.performClick();closePanel(); true } else false }
         try { windows.addView(view,layout); panel=view; panelParams=layout; view.requestApplyInsets(); view.attachments(pending); view.render(app.state.value); view.notice("Seguís en tu app. Escribí, dictá o adjuntá un archivo.") }
         catch (_: Exception) { notice("No pude abrir el chat flotante.") }
     }
     private fun send(text: String) {
         val view=panel ?: return
-        if (loadingFiles || dictating || app.state.value.busy || (text.isBlank() && pending.isEmpty())) return
+        if (loadingFiles || dictating || app.state.value.busy || app.state.value.voice.active || (text.isBlank() && pending.isEmpty())) return
+        if(!app.settings.openAiConsent){view.notice("Autorizá las consultas con IA desde Ajustes de TINO.");return}
         val files=pending.toList(); val saved=text
         view.input.setText(""); draft=""; pending=emptyList(); view.attachments(pending)
         getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(view.windowToken,0)
+        if(files.isEmpty() && app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) {
+            closePanel()
+            scope.launch { delay(300);app.sendScreenMessage(text) { openPanel() } }
+            return
+        }
         app.sendMessage(text,files) { sent ->
             if (!sent) {
                 if (draft.isBlank() && (panel?.input?.text?.isBlank() != false)) { draft=saved; panel?.input?.setText(saved) }
@@ -199,8 +210,11 @@ class FloatingBubbleService : Service() {
             try {
                 val selected=withContext(Dispatchers.IO) { uris.map { ChatAttachment.read(this@FloatingBubbleService,it) } }
                 require((pending+selected).sumOf { it.byteSize }<=ChatAttachment.MAX_TOTAL_BYTES) { "Los adjuntos pueden sumar hasta 4 MB por mensaje." }
-                pending=pending+selected; panel?.attachments(pending); notice("Archivos listos. Revisalos y tocá Enviar.")
-            } catch(error: Exception) { notice(error.message ?: "No pude abrir ese archivo.") }
+                pending = pending + selected
+                panel?.attachments(pending)
+                notice("Archivos listos. Revisalos y tocá Enviar.")
+            } catch(cancel: CancellationException) { throw cancel }
+            catch(error: Exception) { notice(error.message ?: "No pude abrir ese archivo.") }
             finally { loadingFiles=false }
         }
     }

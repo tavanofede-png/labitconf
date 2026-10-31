@@ -21,4 +21,5 @@ object ControlPolicy {
     )
     fun labelTarget(description: CharSequence?, text: CharSequence?): Target? = labels[normalize(description)] ?: labels[normalize(text)]
     fun accepts(target: Target, ancestorResourceIds: Collection<String>): Boolean = ancestorResourceIds.any { it in resourceIds.getValue(target) }
+    fun possibleControl(ancestorResourceIds: Collection<String>): Boolean = resourceIds.values.any { allowed -> ancestorResourceIds.any { it in allowed } }
 }

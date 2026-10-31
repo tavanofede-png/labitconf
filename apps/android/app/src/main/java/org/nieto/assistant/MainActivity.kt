@@ -51,16 +51,19 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if(intent.getStringExtra("destination")=="chat")app.openChat()
         setContent { NietoTheme { TinoEntryRoot(app, beforeWakeStart = ::stopManualVoice) { onMenu, section, onSection -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onMenu, section, onSection) } } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
-    override fun onStart() { super.onStart(); app.foreground(true) }
+    override fun onStart() { super.onStart(); app.foreground(true);app.surfaceVisible("main",true) }
     override fun onResume() {
         super.onResume()
+        org.nieto.assistant.usage.DeviceUsage.schedule(this)
         val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
         app.screenConnection(enabled.split(':').any { it.contains("org.nieto.assistant/") })
     }
     private fun toggleVoice() {
+        if(app.state.value.voice.active) { if(app.state.value.voice.phase==org.nieto.assistant.voice.VoicePhase.LISTENING)app.finishRealtimeInput() else app.cancelRealtimeVoice();return }
         if (app.state.value.wakePhase != "off") {
             if (app.state.value.wakePhase in listOf("waiting", "command")) startService(Intent(this, WakeVoiceService::class.java).setAction("command"))
             return
@@ -71,6 +74,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun stopManualVoice() { recognizer?.cancel(); recognizer?.destroy(); recognizer = null; listening = false }
     private fun beginListening() {
+        if(app.settings.openAiConsent) { app.startConversationVoice();return }
         app.stopSpeaking()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             app.status("Este teléfono no tiene un servicio de reconocimiento de voz. Podés escribir tu consulta."); return
@@ -119,7 +123,7 @@ class MainActivity : ComponentActivity() {
         app.openChat()
         if (app.consumeVoiceRequest()) toggleVoice()
     }
-    override fun onStop() { recognizer?.cancel(); listening = false; app.foreground(false); super.onStop() }
+    override fun onStop() { recognizer?.cancel(); listening = false; app.foreground(false);app.surfaceVisible("main",false); super.onStop() }
     override fun onDestroy() { recognizer?.destroy(); recognizer = null; super.onDestroy() }
 }
 
@@ -128,7 +132,7 @@ private val WarmWhite = Color(0xFFF3F6F6)
 private val Ink = Color(0xFF101416)
 private val Turquoise = Color(0xFF00D6C9)
 @Composable private fun NietoTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = lightColorScheme(primary = Turquoise, onPrimary = Ink, background = WarmWhite,
+    MaterialTheme(colorScheme = lightColorScheme(primary = Forest, onPrimary = Color.White, background = WarmWhite, surfaceTint = Forest, surfaceContainerHigh = WarmWhite, surfaceContainer = WarmWhite, surfaceContainerHighest = Color(0xFFE3E6E6),
         surface = WarmWhite, onBackground = Ink, onSurface = Ink, secondaryContainer = Color(0xFFE3F9F6),
         onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
@@ -144,9 +148,9 @@ private val Turquoise = Color(0xFF00D6C9)
     }
     val reopenTask: () -> Unit = { if (app.state.value.task?.flowId == "email-send") onEmail(null, false) else onWhatsApp() }
     if (tab == 0) {
-        TinoChatScreen(app, state, listening || state.wakePhase == "command", onVoice,
+        TinoChatScreen(app, state, listening || state.wakePhase == "command" || state.voice.phase == org.nieto.assistant.voice.VoicePhase.LISTENING, onVoice,
             onStartGuide = startFlow, onOpenTask = reopenTask,
-            onSettings = { onSection(3) }, onMenu = onMenu)
+            onSettings = { onSection(3) }, onFamily = { onSection(1) }, onMenu = onMenu)
     } else {
         Scaffold(containerColor = WarmWhite, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -158,9 +162,10 @@ private val Turquoise = Color(0xFF00D6C9)
                 Column(Modifier.widthIn(max = 800.dp).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
                     when (tab) {
-                        1 -> FamilyContent(app, state)
+                        1 -> org.nieto.assistant.ui.FamilyConsentScreen(app, state)
                         2 -> GuideContent(app, state, onWhatsApp, onStartFlow = startFlow, onSettings = { onSection(3) })
-                        else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
+                        4 -> org.nieto.assistant.ui.HistoryScreen(app)
+                        else -> { org.nieto.assistant.ui.ScreenAssistancePermissions(app); SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility) }
                     }
                 }
             }

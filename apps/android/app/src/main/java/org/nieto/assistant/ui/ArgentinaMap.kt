@@ -1,6 +1,7 @@
 package org.nieto.assistant.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
@@ -27,8 +28,12 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
     return Offset((width - 21f * .79f * scale) / 2 + (point.x + 74f) * .79f * scale,
         (height - 35f * scale) / 2 + (-point.y - 21f) * scale)
 }
-@Composable internal fun ArgentinaMap(territories: List<JSONObject>, selected: String, layer: Int, onSelect: (String) -> Unit) {
+@Composable internal fun ArgentinaMap(territories: List<JSONObject>, selected: String, layer: Int, simulated: Boolean = true, onSelect: (String) -> Unit) {
     val context = LocalContext.current
+    val motion = remember { android.provider.Settings.Global.getFloat(context.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)>0f }
+    val transition=rememberInfiniteTransition(label="Actividad territorial")
+    val animatedPulse by transition.animateFloat(1f,1.8f,infiniteRepeatable(tween(2200,easing=LinearEasing),RepeatMode.Restart),label="Pulso agregado")
+    val pulse=if(motion)animatedPulse else 1f
     val shapes = remember {
         val root = JSONObject(context.assets.open("argentina-provinces.json").bufferedReader().use { it.readText() })
         root.getJSONArray("provinces").objects().map { province ->
@@ -67,13 +72,13 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
             if (layer != 2 && metric(territory, "activeUsers") > 0) {
                 val radius = (4 + 13 * sqrt(metric(territory, "activeUsers") / maxUsers)).toFloat().dp.toPx()
                 val p = center + Offset(if (layer == 0) -5.dp.toPx() else 0f, 0f)
-                drawCircle(DashGreen.copy(alpha = .12f), radius * 1.5f, p)
+                drawCircle(DashGreen.copy(alpha = .18f*(2f-pulse)), radius * pulse, p)
                 drawCircle(DashGreen.copy(alpha = alpha), radius, p); drawCircle(Color.White, radius, p, style = Stroke(1.dp.toPx()))
             }
             if (layer != 1 && metric(territory, "unsafeLinks") > 0) {
                 val radius = (3 + 10 * sqrt(metric(territory, "unsafeLinks") / maxRisk)).toFloat().dp.toPx()
                 val p = center + Offset(if (layer == 0) 7.dp.toPx() else 0f, 2.dp.toPx())
-                drawCircle(DashRed.copy(alpha = alpha), radius, p); drawCircle(Color.White, radius, p, style = Stroke(1.dp.toPx()))
+                drawCircle(DashRed.copy(alpha = .16f*(2f-pulse)), radius * pulse, p); drawCircle(DashRed.copy(alpha = alpha), radius, p); drawCircle(Color.White, radius, p, style = Stroke(1.dp.toPx()))
             }
         }
     }
@@ -81,5 +86,5 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
         Text("● Uso de TINO", color = DashGreen, fontSize = 13.sp)
         Text("● Enlaces inseguros", color = DashRed, fontSize = 13.sp)
     }
-    Text("Tamaños relativos por capa · datos TINO simulados. Puntos provinciales agregados. Cartografía Georef / IGN; vista continental y Tierra del Fuego.", color = DashMuted, fontSize = 11.sp, lineHeight = 16.sp)
+    Text("Tamaños relativos por capa · " + (if(simulated) "datos TINO simulados" else "datos consentidos; se omiten cohortes pequeñas") + ". El pulso es visual. Puntos provinciales agregados. Cartografía Georef / IGN; vista continental y Tierra del Fuego.", color = DashMuted, fontSize = 11.sp, lineHeight = 16.sp)
 }

@@ -8,6 +8,6 @@ export default defineConfig(({ mode }) => {
   const target = `http://127.0.0.1:${/^\d{2,5}$/.test(port) ? port : '8787'}`;
   return {
     plugins: [react()],
-    server: { proxy: { '/api': target, '/downloads': target } },
+    server: { proxy: { '/api': { target, ws: true }, '/downloads': target } },
   };
 });

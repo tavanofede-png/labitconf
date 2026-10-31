@@ -2,6 +2,9 @@ import java.security.MessageDigest
 import java.util.zip.ZipFile
 import java.io.File
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.time.Instant
 
 plugins {
     id("com.android.application")
@@ -16,8 +19,8 @@ android {
         applicationId = "org.nieto.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-labitconf"
+        versionCode = 5
+        versionName = "0.5.0-tino"
         testInstrumentationRunner = "org.nieto.assistant.presence.VoiceSmokeInstrumentation"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -80,8 +83,26 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.3")
     implementation("androidx.savedstate:savedstate:1.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation("com.alphacephei:vosk-android:0.3.75@aar")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+}
+
+// Publish exactly the APK assembled here; API refuses missing or mismatched manifests.
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    doLast {
+        val apk=layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
+        val directory=rootProject.file("../../artifacts").apply { mkdirs() }
+        val hash=MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).joinToString("") { "%02x".format(it) }
+        val temporary=File(directory,"nieto-debug.apk.part")
+        apk.copyTo(temporary,overwrite=true)
+        Files.move(temporary.toPath(),File(directory,"nieto-debug.apk").toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE)
+        val manifest=File(directory,"android-build.json.part")
+        manifest.writeText("""{"schemaVersion":1,"apkFile":"nieto-debug.apk","applicationId":"org.nieto.assistant","versionCode":${android.defaultConfig.versionCode},"versionName":"${android.defaultConfig.versionName}","sha256":"$hash","size":${apk.length()},"builtAt":"${Instant.now()}"}""")
+        Files.move(manifest.toPath(),File(directory,"android-build.json").toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE)
+    }
 }

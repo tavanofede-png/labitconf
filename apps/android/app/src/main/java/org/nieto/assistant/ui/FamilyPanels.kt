@@ -82,10 +82,10 @@ import java.time.Instant
         if(!permissions.optBoolean("websites")) Row(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically){FamilyGlyph("lock");Text("El detalle de los sitios es privado.",fontSize=13.sp,color=DashMuted,lineHeight=20.sp)}
         else {
             val sites=member.optJSONArray("websites").objects().take(3)
-            if(sites.isEmpty()) Text("Todavía no hay sitios compartidos hoy.",color=DashMuted,fontSize=13.sp)
+            if(sites.isEmpty()) Text("Todavía no hay sitios compartidos.",color=DashMuted,fontSize=13.sp)
             sites.forEachIndexed { i,event->
                 Row(Modifier.fillMaxWidth().clickable{detail(event)}.padding(vertical=4.dp).heightIn(min=48.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                    Surface(color=FamilyMint,shape=RoundedCornerShape(12.dp)){Box(Modifier.size(38.dp),contentAlignment=Alignment.Center){FamilyGlyph("web",Modifier.size(19.dp))}}
+                    WebsitePreview(event,compact=true)
                     Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(event.optString("title"),fontSize=14.sp,fontWeight=FontWeight.SemiBold,color=DashInk);Text(event.optString("domain"),fontSize=11.sp,color=DashMuted)}
                     Text(familyClock(event.optString("at")),fontSize=11.sp,color=DashMuted);FamilyGlyph("chevron",Modifier.size(15.dp),DashMuted)
                 }

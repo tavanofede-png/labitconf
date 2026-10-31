@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 import kotlinx.coroutines.flow.first
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.entry.EntryState
 import org.nieto.assistant.entry.EntryViewModel
@@ -37,6 +39,12 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
     var permissions by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<JSONObject?>(null) }
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(s.role,lifecycle) {
+        lifecycle.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while(kotlinx.coroutines.currentCoroutineContext().isActive) { kotlinx.coroutines.delay(30000);vm.refreshDashboardIfIdle() }
+        }
+    }
     val context=LocalContext.current
     val clipboard=LocalClipboardManager.current
     val data=s.dashboard
@@ -116,7 +124,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                             }
                             1 -> FamilyActivityPanel(member,allowed,now,alerts,{detail=it},{tab=3})
                             2 -> FamilyLocationPanel(member,allowed,now,s.busy,s.demoAccount){vm.familyAction(id,"location_request")}
-                            else -> FamilyAlertsPanel(alerts,allowed,s.busy,now,resolve,{tab=1})
+                            else -> { if(!s.demoAccount)FamilyNotificationSettings(app); FamilyAlertsPanel(alerts,allowed,s.busy,now,resolve,{tab=1}) }
                         }
                         val messages=data?.optJSONArray("messages").objects().filter{it.optString("memberId")==id}
                         if(messages.isNotEmpty()) FamilySurface("Tus avisos a ${member.optString("name")}","Quedan en este resumen durante 24 horas.") {
@@ -136,7 +144,8 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
         }
     }
     }
-    if (invitation) AlertDialog(onDismissRequest = { invitation = false }, title = { Text("Invitá a tu red") }, text = { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    if (invitation) AlertDialog(onDismissRequest = { invitation = false }, title = { Text("Invitá a tu red") }, text = { Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if(s.invitationCode.isNotBlank()) InvitationQr(s.invitationCode)
         Text("Compartí este código. La persona debe aceptarlo desde TINO y elegir sus permisos.", lineHeight = 23.sp)
         if (s.busy) LinearProgressIndicator(color = DashCyan)
         if (s.invitationCode.isNotBlank()) {
@@ -155,6 +164,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
     } }, confirmButton = { TextButton(onClick = { permissions = false }) { Text("Entendido") } })
     if (recording && member != null) VoiceNoteDialog(member.optString("name"), s.busy, s.error, s.message, { recording = false }) { audio, requestId -> vm.familyAction(id, "voice", audio, requestId) }
     detail?.let { event -> AlertDialog(onDismissRequest={detail=null},title={Text(event.optString("title"),fontSize=22.sp)},text={Column(verticalArrangement=Arrangement.spacedBy(14.dp)){
+        if(event.optString("kind")=="website") WebsitePreview(event)
         Text("${familyClock(event.optString("at"))} · ${event.optString("app")} · ${event.optInt("durationMinutes")} min",fontSize=14.sp,color=DashMuted)
         event.optString("domain").takeIf{it.isNotBlank()}?.let{Text(it,color=DashTeal,fontSize=17.sp,fontWeight=FontWeight.SemiBold)}
         Text(event.optString("detail"),fontSize=16.sp,lineHeight=24.sp)

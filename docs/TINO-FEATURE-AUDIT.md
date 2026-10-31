@@ -1,5 +1,7 @@
 # Auditoría de funcionalidades de TINO
 
+**Revisión posterior:** los estados modificados se actualizan en [integración y QA del 31/10](TINO-QA-2026-10-31.md). Este documento conserva la evidencia histórica de la versión anterior.
+
 Actualización posterior: el chat flotante y los reportes con calendario se implementaron después de esta auditoría. Ver [implementación y límites](TINO-FLOATING-CHAT-AND-REPORTS.md). El resto de los pendientes no cambia por esa implementación.
 
 Revisión del 31 de octubre de 2026, hora de Argentina. Base revisada: `5daf005` en `codex/tino-instituciones`, más el cambio de indicadores de edad de esta entrega. Se contrastó el documento **NIETO Arquitectura Técnica Completa**, incluidos sus cuadros y criterios de aceptación, con Android, API, portales web, pruebas y respuestas reales de los servicios.

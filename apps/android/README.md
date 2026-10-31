@@ -1,64 +1,47 @@
 # NIETO Android · Labitconf
 
-Aplicación **nueva**, Kotlin + Jetpack Compose. Identificador `org.nieto.assistant`; no reemplaza otra instalación del proyecto anterior. Android 8+ (API 26), compile/target 36. Voz nativa Android, sin grabación persistente y sin escucha en segundo plano.
+Aplicación Kotlin + Compose, Android 8+ (API 26), compile/target 36. Versión 0.3.0-screen-assist (código 3). La asistencia principal entiende una tarea con la pantalla actual; la guía local de ubicación por WhatsApp queda como práctica opcional.
 
-## Compilar e instalar
+## Compilar
 
-Desde la raíz:
+Desde raíz:
 
-```powershell
+~~~powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1
-# Caché ya disponible, sin descargar dependencias:
+# Con dependencias descargadas:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1 -Offline
-# Instalar después de compilar y probar:
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1 -Offline -Install
-```
+~~~
 
-El script usa `JAVA_HOME` y `ANDROID_HOME`; en esta máquina puede descubrir herramientas instaladas previamente. Reutiliza exclusivamente JDK/SDK/Gradle wrapper/cachés, ningún código ni credencial de la app anterior. Todo el estado de compilación nuevo queda dentro del workspace. Se requiere JDK 17+, Android platform 36 y build-tools 35.0.0.
+JDK 17+, platform 36/build-tools35.0.0. El script descubre herramientas locales existentes, ejecuta tests y compila. Sólo tras éxito actualiza atómicamente artifacts/nieto-debug.apk y verifica SHA256 contra app/build/outputs/apk/debug/app-debug.apk. Dependencias nuevas requieren Maven la primera vez.
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. Pruebas: `:app:testDebugUnitTest`; cubren transiciones reales, confirmación, bloqueo de pantalla ajena/sensible/versión desconocida, cancelación y práctica autónoma.
+## Asistencia de pantalla
 
-## Conectar con la API
+1. Guardar dirección del servidor en Ajustes y conectar el teléfono. El token NIETO se cifra con Android Keystore; ninguna clave de OpenAI/OpenARG llega al APK. Debug admite HTTP/WS local, release requiere HTTPS/WSS.
+2. Aceptar consentimiento remoto nuevo para controles, consultas y voz. El permiso local de la versión anterior no autoriza envío. Las capturas tienen una autorización adicional desactivada por defecto.
+3. Habilitar NIETO en Accesibilidad. Activar acompañamiento, abrir la app objetivo y tocar la burbuja N. La burbuja permite escribir la tarea, leer el paso actual, repetir, pedir otra explicación y actualizar pantalla. No muestra ni persiste historial.
+4. Hablar abre una actividad transparente visible encima de la app objetivo. Sólo ese gesto y el permiso Android permiten micrófono. El contexto se captura antes de abrirla y se revalida al enviar; un permiso demorado o pantalla cambiada descarta el snapshot preparado. Salir apaga el micrófono; la sesión de tarea puede continuar en la burbuja si terminó la respuesta.
+5. El agente devuelve una instrucción y un controlId/screenId. Sólo se resalta un control único, vigente y dentro de bounds. Nunca se ejecutan clics, gestos, escritura, envíos ni navegación. La persona realiza cada acción.
+6. Cambios reales invalidan el marcador y cancelan la respuesta anterior; después de estabilizar se envía contexto para el siguiente paso, limitado a un seguimiento cada 4 segundos y hasta 18 seguimientos automáticos por tarea. Actualizaciones manuales respetan 1 segundo mínimo. El servidor limita a 20 turnos totales por conexión, incluyendo consultas manuales; al alcanzar un límite se informa el error y debe reiniciarse la asistencia.
+7. Apagar o revocar cancela micrófono/reproducción, cierra la conexión y borra snapshot, respuesta y contexto efímero. El servidor descarta la conversación upstream al cerrar. Los bloques ya enviados no se pueden retirar.
 
-En **Ajustes → Conexión del prototipo**, ingresá la URL del servidor sin `/api`. `Guardar y conectar` crea una instalación seudónima real mediante `/api/devices`. El token se cifra con AES-GCM y Android Keystore; no se muestra ni se incluye en el APK. Un cambio de servidor descarta las credenciales locales de la dirección anterior. Las copias de seguridad Android están desactivadas.
+El protocolo screen.context/screen.clear/guidance.step se describe en docs/SCREEN_ASSISTANCE_CONTRACT.md. Audio PCM16 signed little-endian 24kHz mono, bloques 100ms, máximo 45segundos de entrada y 90 segundos de salida. AudioTrack reproduce incrementalmente; no hay SpeechRecognizer ni transcripción de entrada adicional. El texto visible es salida del modelo. Las instrucciones locales pueden usar TTS Android.
 
-- Emulador: `http://10.0.2.2:8787`.
-- USB: ejecutar `adb reverse tcp:8787 tcp:8787` y configurar `http://127.0.0.1:8787`.
-- Wi-Fi: servidor accesible por su IP LAN y puerto 8787.
+## Captura y privacidad
 
-HTTP se permite **solo en el build debug**. Release requiere HTTPS. No se incorpora ninguna clave OpenARG: se consume únicamente la API de NIETO.
+Android 11+ (API 30) usa AccessibilityService.takeScreenshot únicamente con consentimiento adicional y durante asistencia activa. Bitmap/JPEG viven en memoria; nunca se escriben archivos. JPEG máximo 300 KB, reducido a 1280 px. El contenido de todos los campos editables se excluye del payload y se enmascara antes de codificar imagen. Un campo no secreto sólo aporta ID, bounds y la etiqueta constante Campo de texto, sin leer valor, hint ni descripción. Un árbol truncado o editable sin bounds permite sólo controles. Teclado u otra app visible también impide imagen; otras ventanas del sistema se enmascaran. Se revalida la pantalla después de recibir la captura.
 
-## Guía local experimental
+Android 8–10 aporta controles accesibles y avisa que no hay captura. Contraseñas, autenticación, permisos del sistema y apps sensibles reconocidas bloquean el contexto. Pantallas protegidas nunca se eluden. La política es preventiva y no garantiza detectar toda información privada; evitá abrir contenido privado mientras acompañamiento está activo. Las capturas autorizadas pueden incluir contenido personal visible fuera de los campos ocultados.
 
-Perfil `whatsapp-location-es@1`, `com.whatsapp`, versiones `2.26.*`, idioma español. Este perfil **no acredita una prueba en teléfono real** y no promete compatibilidad universal. Otras versiones, WhatsApp Business, otros idiomas, A/B tests y árboles de accesibilidad diferentes se rechazan con una explicación. Ampliar versiones requiere prueba manual y actualización de perfil/tests.
+No se solicitan ubicación, cámara, contactos ni SMS. La burbuja usa TYPE_ACCESSIBILITY_OVERLAY; no requiere permiso general de superposición. No hay grabación permanente ni escucha en segundo plano.
 
-1. Se inicia una sesión real de API; la persona abre WhatsApp y elige una conversación.
-2. La guía reconoce un único control clickeable con etiqueta exacta de adjuntar y un campo de mensaje identificado por su ID; el texto del campo se ignora.
-3. Solo avanza cuando aparece un único control `Ubicación` real.
-4. Solo avanza cuando aparece `Enviar mi ubicación actual` o `Enviar tu ubicación actual`.
-5. NIETO pide confirmación explícita local. La persona debe revisar la conversación destinataria. Hasta confirmar, no marca el control de envío.
-6. La persona toca en WhatsApp. NIETO nunca ejecuta clics, escribe ni hace gestos.
-7. Solo registra finalización si vuelve a la conversación y aumenta el número de tarjetas visibles de ubicación **salientes con estado enviado/entregado/leído**, dentro de un contenedor de mensaje reconocido. La evidencia permanece local. Si la estructura no permite esa comprobación, dice que no pudo verificar, incluso si la persona realizó el envío correctamente.
-8. La práctica vuelve a recorrer el procedimiento sin pistas. Conserva la confirmación de privacidad. Pedir `Repetir` o `Me perdí` durante la práctica elimina el crédito de autonomía de ese intento.
+## Métricas y Familia
 
-La comprobación por tarjetas visibles es deliberadamente limitada: historial desplazado, controles sin etiqueta, imágenes de mapas no accesibles y estados de envío distintos pueden impedir verificar el resultado. No debe usarse como prueba de entrega universal ni ampliar la compatibilidad sin validación física. No se marca una coordenada aproximada cuando falta un control; duplicados ambiguos también se rechazan.
+La asistencia dinámica registra sólo sesión, eventos cerrados de paso/repetición/dificultad/cancelación y duración. Nunca registra texto, paquete, captura ni IDs de pantalla en métricas; tampoco acredita finalización ni autonomía por lo que dice el agente. La guía local conserva su verificación determinista limitada a WhatsApp 2.26.* en español.
 
-## Consentimiento y privacidad
+El consentimiento institucional se desactiva por defecto y es independiente de Familia. Se configura mediante GET/PATCH /api/devices/me y permite estadísticas agregadas de actividad y dificultades de los últimos 30 días. Revocarlo excluye la actividad de agregados.
 
-**Ajustes → Conocer y activar la guía** muestra una divulgación antes de abrir la autorización de Accesibilidad de Android. El consentimiento local se puede revocar en NIETO; también se puede deshabilitar el servicio desde Android. La observación se realiza solo durante una guía activa, se limita a WhatsApp y termina al cancelar o completar.
+Familia abre FamilyActivity nativa: crear/restaurar grupo, invitaciones, miembros, consentimientos, resumen y solicitudes atendidas. La credencial del grupo es independiente de la instalación. El chequeo periódico WorkManager es aproximado (mínimo 15 minutos) y depende de Android/red/batería; consultar la pantalla actualiza inmediatamente. No es una alerta de emergencia ni entrega instantánea garantizada. Familia nunca recibe pantalla ni conversación.
 
-Se ignoran campos editables, nodos contraseña, teclados y ventanas fuera de la app. No se hacen capturas, OCR ni análisis remoto de pantalla. El árbol nunca sale del teléfono. Los marcadores solo aparecen sobre WhatsApp. La burbuja usa `TYPE_ACCESSIBILITY_OVERLAY`, no pide permiso de superposición general. No se solicitan permisos de ubicación, cámara, contactos ni SMS.
+## Validación
 
-El chat se mantiene en memoria y envía su texto al endpoint de asistente para obtener respuesta. No debe incluir contraseñas ni códigos privados. El reconocimiento de voz prefiere el servicio local del teléfono; si no existe, usa el servicio nativo instalado y puede requerir red del proveedor. TTS depende del motor/idioma instalado.
-
-El servidor recibe solo eventos cerrados de progreso, paso y duración (máximo 4 horas). Si un evento falla no se declara sincronizado; queda indicado como pendiente en la UI. El MVP no implementa cola durable ni reintentos tras reinicio. El historial no se infiere a partir de eventos fallidos.
-
-La duración corresponde al primer intento acompañado. La práctica comparte la sesión, registra el resultado autónomo por separado y no suma la espera entre intentos ni agrega tiempo acompañado. Cada evento en memoria conserva el servidor y la credencial de su instalación original: cambiar de conexión nunca reenvía métricas a otra identidad.
-
-## Familia
-
-El familiar crea un grupo en el portal. La persona asistida ingresa su código en **Familia** y acepta granularmente progreso y/o solicitudes de ayuda; ambos están desactivados por defecto. `Pedir ayuda` hace un POST real y solo informa éxito con respuesta del servidor. No realiza llamadas ni sustituye un servicio de emergencias. La revocación elimina el vínculo en servidor. Cambiar permisos requiere revocar y aceptar una invitación nueva.
-
-## Validación física pendiente
-
-Para afirmar el flujo completo, probar un teléfono con WhatsApp compatible: permisos, voz, árbol real, superposición sin cubrir controles, confirmación, nueva tarjeta saliente, práctica autónoma, invitación y alerta visibles en portal. `adb devices` debe mostrar un dispositivo autorizado. La compilación y los tests unitarios no sustituyen esta verificación.
+Los tests cubren motor local, límites PCM, descarte de turnos cancelados, controles sensibles, targets obsoletos, bounds y políticas Familia. Compilar y pasar tests no acredita compatibilidad física. Pendiente por dispositivo: permiso y micrófono real, reproducción/BT, actividad transparente, escritura/IME en overlay, captura/redacción y bloqueo, pantalla girada, cambios de app, segundo plano, Familia y notificaciones.

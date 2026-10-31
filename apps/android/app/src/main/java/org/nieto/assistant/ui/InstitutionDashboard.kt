@@ -19,6 +19,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 import kotlinx.coroutines.flow.first
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +33,12 @@ import org.nieto.assistant.entry.entryTerritories
     var layer by rememberSaveable { mutableIntStateOf(0) }
     var sources by remember { mutableStateOf(false) }
     var workflow by remember { mutableStateOf<JSONObject?>(null) }
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(s.role,lifecycle) {
+        lifecycle.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            while(kotlinx.coroutines.currentCoroutineContext().isActive) { kotlinx.coroutines.delay(30000);vm.refreshDashboardIfIdle() }
+        }
+    }
     val context = LocalContext.current
     val data = s.dashboard
     val metrics = data?.optJSONObject("metrics") ?: JSONObject()
@@ -90,10 +98,10 @@ import org.nieto.assistant.entry.entryTerritories
                                 DashboardMetric("Pantalla por día", metrics.amount("screenMinutesPerDay", " min"), "Promedio por día-persona activo"),
                                 DashboardMetric("Autonomía", metrics.amount("autonomyRate", "%"), "Prácticas sin ayuda / tareas completadas"),
                                 DashboardMetric("Tareas solicitadas", metrics.amount("requests"), "Solicitudes de acompañamiento"),
-                                DashboardMetric("Enlaces inseguros", metrics.amount("unsafeLinks"), "Alertas del escenario · no sitios reales", DashRed)))
+                                DashboardMetric("Enlaces inseguros", metrics.amount("unsafeLinks"), if(s.demoAccount) "Alertas del escenario · no sitios reales" else "Eventos agregados autorizados", DashRed)))
                             AdaptivePair({
                                 DashboardCard("Dónde se usa TINO", "Verde: uso · rojo: alertas de enlaces") {
-                                    ArgentinaMap(data.optJSONArray("territories").objects(), s.dashboardTerritory, 0) { vm.dashboardFilters(territory = it, month = s.dashboardMonth); tab = 1 }
+                                    ArgentinaMap(data.optJSONArray("territories").objects(), s.dashboardTerritory, 0, s.demoAccount) { vm.dashboardFilters(territory = it, month = s.dashboardMonth); tab = 1 }
                                     TextButton(onClick = { tab = 1 }) { Text("Explorar territorio →", color = DashTeal) }
                                 }
                             }, {
@@ -107,10 +115,10 @@ import org.nieto.assistant.entry.entryTerritories
                         1 -> {
                             DashboardCard("Territorio", "Tocá un círculo o elegí una provincia en el filtro.") {
                                 DashboardTabs(listOf("Ambos", "Uso de TINO", "Enlaces inseguros"), layer) { layer = it }
-                                ArgentinaMap(data.optJSONArray("territories").objects(), s.dashboardTerritory, layer) { vm.dashboardFilters(territory = it, month = s.dashboardMonth) }
+                                ArgentinaMap(data.optJSONArray("territories").objects(), s.dashboardTerritory, layer, s.demoAccount) { vm.dashboardFilters(territory = it, month = s.dashboardMonth) }
                                 if (s.dashboardTerritory != "AR") TextButton(onClick = { vm.dashboardFilters(territory = "AR", month = s.dashboardMonth) }) { Text("Ver todo el país", color = DashTeal) }
                             }
-                            DashboardCard("Detalle por provincia", "Las alertas y el uso de TINO son simulados. Los puntos corresponden a referencias provinciales.") {
+                            DashboardCard("Detalle por provincia", if(s.demoAccount) "Las alertas y el uso de TINO son simulados. Los puntos corresponden a referencias provinciales." else "Datos agregados de dispositivos autorizados. Los valores privados o insuficientes se omiten.") {
                                 data.optJSONArray("territories").objects().filter { s.dashboardTerritory == "AR" || it.optString("id") == s.dashboardTerritory }.sortedByDescending { it.optInt("activeUsers") }.forEach { row ->
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Text(row.optString("name"), Modifier.weight(1f), color = DashInk, fontSize = 14.sp)

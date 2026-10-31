@@ -22,6 +22,7 @@ export const TASK_FLOWS = {
 const normalize = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 export function detectFlow(text) {
   const t = normalize(text);
+  if (/no quiero|no (?:deseo|necesito)|no (?:crear|armar|enviar|mandar|compartir)|desactivar|dejar de|cancel[a-z]*/.test(t)) return null;
   if (/grupo/.test(t) && /crea|armar|armemos|nuevo|hacer/.test(t) && /whatsapp|wsp|guasap|wasap/.test(t)) return 'whatsapp-group';
   if (/\b(mail|email|correo)\b/.test(t) && /envia|manda|escrib|redact/.test(t)) return 'email-send';
   if (!/no quiero|desactivar|dejar de|no compartir/.test(t) && /ubicacion|donde estoy/.test(t) && !/como llegar|google maps/.test(t)) return 'whatsapp-location';
@@ -33,7 +34,7 @@ export const ASSISTANT_INSTRUCTIONS = `Sos TINO, un asistente de accesibilidad d
 export function createAssistant({ generateReply = null, now = Date.now, ttl = 30 * 60_000 } = {}) {
   const conversations = new Map();
   const answer = (instruction, extra = {}) => ({ mode: 'conversation', instruction, sources: [], ...extra });
-  async function reply({ key, text, history = [], task = null, attachments = [] }) {
+  async function reply({ key, text, history = [], task = null, attachments = [], localOnly = false }) {
     for (const [id, entry] of conversations) if (now() - entry.at > ttl) conversations.delete(id);
     if (conversations.size >= 1000 && !conversations.has(key)) conversations.delete(conversations.keys().next().value);
     const previous = conversations.get(key) ?? { at: now() };
@@ -68,6 +69,7 @@ export function createAssistant({ generateReply = null, now = Date.now, ttl = 30
     }
     if (task && /no encuentro|no entiendo|me perdi|repeti|como sigo|ayuda/.test(t)) return answer(`Seguimos con ${task.title.toLowerCase()}. ${task.instruction} ¿Qué opciones ves ahora?`);
     if (task?.flowId === 'email-send' && /adjuntar|archivo|foto/.test(t)) return answer('En el borrador del correo, buscá el botón con forma de clip. Elegí el archivo o la foto y revisá que se haya adjuntado antes de enviar.');
+    if (localOnly) return null;
     if (generateReply) {
       const instruction = await generateReply({ system: ASSISTANT_INSTRUCTIONS, messages: [...history, { role: 'user', content: text }], task, flows: Object.values(TASK_FLOWS).map(({id,title}) => ({id,title})) });
       if (typeof instruction !== 'string' || !instruction.trim()) throw new Error('Assistant returned no text');

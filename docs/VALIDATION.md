@@ -2,6 +2,10 @@
 
 Verificación realizada el 30 de octubre de 2026. La entrega es un MVP local; no acredita la arquitectura de producción completa.
 
+Este documento registra la validación anterior a incorporar OpenAI Realtime. Las nuevas pruebas, cambios de voz y limitaciones están en [REALTIME_VALIDATION.md](REALTIME_VALIDATION.md). El conteo de 31 pruebas y el hash del APK de esta página corresponden a la versión anterior.
+
+La evolución posterior incorpora asistencia de pantalla, Familia nativa y nuevos datos institucionales. Su evidencia y límites vigentes están en [MVP_FUNCTIONAL_SCOPE.md](MVP_FUNCTIONAL_SCOPE.md).
+
 ## Resultados comprobados
 
 - `npm run check`: TypeScript, 24 pruebas API/MCP y compilación web aprobados. El build incluye un worker separado de MapLibre y carga el mapa mediante importación dinámica. Con las siete pruebas Android, son 31 pruebas aprobadas.

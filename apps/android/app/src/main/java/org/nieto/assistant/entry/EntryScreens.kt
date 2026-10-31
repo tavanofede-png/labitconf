@@ -7,6 +7,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -67,7 +71,7 @@ private val Background = Color(0xFFF3F6F6)
 @Composable fun TinoEntryRoot(app: NietoApp, beforeWakeStart: () -> Unit, vm: EntryViewModel = viewModel(), assistant: @Composable (onMenu: () -> Unit, section: Int, onSection: (Int) -> Unit) -> Unit) {
     val s by vm.state.collectAsState()
     val device by app.state.collectAsState()
-    LaunchedEffect(device.openChatEpoch) {
+    LaunchedEffect(device.openChatEpoch,s.page) {
         if (device.openChatEpoch > 0 && s.page == EntryPage.HOME) vm.openSpace(AccountRole.USER)
     }
     val context = LocalContext.current
@@ -236,7 +240,11 @@ private val Background = Color(0xFFF3F6F6)
     TextButton(onClick = { url = "http://10.0.2.2:8787" }) { Text("Usar emulador Android") }
 }
 @Composable private fun Title(title: String, detail: String) { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { Text(title, fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.semantics { heading() }); Text(detail, fontSize = 18.sp, lineHeight = 27.sp, color = Muted) } }
-@Composable private fun EntryField(label: String, value: String, onChange: (String) -> Unit, keyboard: KeyboardType = KeyboardType.Text, enabled: Boolean = true, secret: Boolean = false) { OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), enabled = enabled, label = { Text(label, fontSize = 16.sp) }, keyboardOptions = KeyboardOptions(keyboardType = keyboard), visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None, singleLine = true, shape = RoundedCornerShape(16.dp)) }
+@Composable private fun EntryField(label: String, value: String, onChange: (String) -> Unit, keyboard: KeyboardType = KeyboardType.Text, enabled: Boolean = true, secret: Boolean = false) {
+    val requester=remember{BringIntoViewRequester()};var focused by remember{mutableStateOf(false)}
+    val imeBottom=WindowInsets.ime.getBottom(LocalDensity.current)
+    LaunchedEffect(focused,imeBottom){if(focused)requester.bringIntoView()}
+    OutlinedTextField(value, onChange, Modifier.fillMaxWidth().bringIntoViewRequester(requester).onFocusChanged{focused=it.isFocused}, enabled = enabled, label = { Text(label, fontSize = 16.sp) }, keyboardOptions = KeyboardOptions(keyboardType = keyboard), visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None, singleLine = true, shape = RoundedCornerShape(16.dp)) }
 @Composable private fun Primary(label: String, enabled: Boolean = true, action: () -> Unit) { Button(action, Modifier.fillMaxWidth().heightIn(min = 58.dp), enabled = enabled, shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(18.dp)) { Text(label, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) } }
 @Composable private fun Banner(text: String, error: Boolean = false) { Surface(color = if (error) Color(0xFFFFEDEA) else Mint, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) { Text(text, Modifier.padding(16.dp), color = if (error) Color(0xFF8B2525) else Teal, fontSize = 16.sp, lineHeight = 24.sp) } }
 @Composable private fun ChoiceCard(title: String, detail: String, action: () -> Unit) { Surface(onClick = action, color = Color.White, shape = RoundedCornerShape(20.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFDCE5E4)), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(title, color = Ink, fontWeight = FontWeight.Bold, fontSize = 22.sp); Text(detail, color = Muted, fontSize = 17.sp, lineHeight = 25.sp) } } }

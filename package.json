@@ -18,8 +18,11 @@
     "typecheck": "npm run typecheck --workspace @nieto/web",
     "build": "npm run build --workspace @nieto/web",
     "test": "npm run test --workspace @nieto/api",
+    "test:web": "npm run test --workspace @nieto/web",
     "check": "node scripts/check.mjs",
-    "verify:openarg": "npm run verify:openarg --workspace @nieto/api"
+    "verify:openarg": "npm run verify:openarg --workspace @nieto/api",
+    "verify:realtime": "npm run verify:realtime --workspace @nieto/api",
+    "verify:screen": "npm run verify:screen --workspace @nieto/api"
   },
   "overrides": {
     "rollup": "4.59.0"

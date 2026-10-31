@@ -5,7 +5,7 @@ node_modules/
 dist/
 coverage/
 *.log
-data/
+/data/
 apps/api/data/
 .gradle/
 .cache/
@@ -20,6 +20,8 @@ local.properties
 Thumbs.db
 artifacts/qa/
 artifacts/*.apk
+artifacts/android-build*.json
+artifacts/SHA256SUMS*.txt
 *.tsbuildinfo
 .vercel/
 
@@ -29,3 +31,5 @@ artifacts/*.apk
 
 # Locally generated reports and previews.
 /output/
+
+artifacts/*.part

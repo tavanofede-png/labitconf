@@ -42,7 +42,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
     return account ? { ...account, institutionApproved: !account.demo && account.role === 'institution' && institutionEmails.includes(account.email), sessionId: session.id } : null;
   }
   function snapshot(account, bearer) {
-    return { role: account.role, profile: account.profile ?? {}, onboardingRequired: !account.onboarded, demo: account.demo === true,
+    return { role: account.role, profile: account.profile ?? {}, preferences: account.preferences ?? {}, answers: account.answers ?? {}, onboardingRequired: !account.onboarded, demo: account.demo === true,
       ...(account.deviceId ? { deviceId: account.deviceId, deviceToken: bearer } : {}),
       ...(account.groupId ? { caregiverToken: bearer } : {}),
       ...(!account.demo && account.role === 'institution' && institutionEmails.includes(account.email) ? { institutionToken: bearer } : {}),

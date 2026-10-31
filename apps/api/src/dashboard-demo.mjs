@@ -89,7 +89,8 @@ export function demoInstitution({ now = Date.now(), territoryId = 'AR', months =
 
 /** Fictional, internally reconciled household. No phone history or real location is read. */
 export function demoFamily(now = Date.now(), startedAt = now) {
-  const iso = minutes => new Date(startedAt - minutes * 60_000).toISOString();
+  const localDay=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Argentina/Buenos_Aires',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+  const iso=minutes=>new Date(startedAt-minutes*60000).toISOString();
   const profiles = [
     { id: 'marta', name: 'Marta', relationship: 'Mamá', age: 67, birthDate: '1959-05-22', territoryId: 'AR-C', device: 'Samsung Galaxy A15', online: true,
       weeklyScreen: [38, 51, 42, 55, 40, 48, 46], weeklyTino: [16, 20, 14, 22, 12, 16, 18], completedFlows: 30, autonomyChecks: 21,
@@ -129,16 +130,17 @@ export function demoFamily(now = Date.now(), startedAt = now) {
   const members = profiles.map(({ events, ...p }) => {
     const activities = events.map(([id, minutesAgo, kind, title, app, durationMinutes, assisted, domain, detail, independent]) =>
       ({ id, kind, title, app, durationMinutes, assisted, assistedMinutes: assisted ? (id === 'marta-call' ? 4 : durationMinutes) : 0, domain, detail, independent, at: iso(minutesAgo), ...(kind === 'safety' ? { alertId: 'demo-link-1' } : {}) }));
-    const appUsage = [...new Set(activities.map(e => e.app))].map(name => ({ name, minutes: activities.filter(e => e.app === name).reduce((n, e) => n + e.durationMinutes, 0) })).filter(a => a.minutes).sort((a, b) => b.minutes - a.minutes);
+    const todayActivities=activities.filter(e=>localDay(e.at)===localDay(now));
+    const appUsage = [...new Set(todayActivities.map(e => e.app))].map(name => ({ name, minutes: todayActivities.filter(e => e.app === name).reduce((n, e) => n + e.durationMinutes, 0) })).filter(a => a.minutes).sort((a, b) => b.minutes - a.minutes);
     const screenMinutes = appUsage.reduce((n, a) => n + a.minutes, 0);
     const weeklyScreen = p.weeklyScreen.map((n, i) => i === 6 ? screenMinutes : n);
-    const tinoMinutes = activities.reduce((n, e) => n + e.assistedMinutes, 0);
+    const tinoMinutes = todayActivities.reduce((n, e) => n + e.assistedMinutes, 0);
     const weeklyTino = p.weeklyTino.map((n, i) => i === 6 ? tinoMinutes : n);
     const latest = activities[0];
     return { ...p, permissions: { progress: true, help: true, usage: true, safety: true, websites: p.id !== 'lucia', location: Boolean(p.location) },
       screenMinutes, tinoMinutes, weeklyScreen, weeklyTino, appUsage, activities,
-      lastActiveAt: latest.at, lastActivity: latest.title, completedToday: activities.filter(e => e.kind === 'task').length,
-      independentToday: activities.filter(e => e.independent).length, autonomyRate: Math.round(p.autonomyChecks / p.completedFlows * 100),
+      lastActiveAt: latest.at, lastActivity: latest.title, completedToday: todayActivities.filter(e => e.kind === 'task').length,
+      independentToday: todayActivities.filter(e => e.independent).length, autonomyRate: Math.round(p.autonomyChecks / p.completedFlows * 100),
       websites: activities.filter(e => e.kind === 'website'),
       weeklyDays: weeklyScreen.map((screenMinutes, i) => ({ date: new Date(now - (6 - i) * 86_400_000).toISOString(), screenMinutes, tinoMinutes: weeklyTino[i] })) };
   });

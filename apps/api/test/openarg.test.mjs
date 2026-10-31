@@ -61,6 +61,37 @@ test('a network timeout is not automatically retried', async () => {
   assert.equal(fake.requests.filter((r) => r.method === 'tools/call').length, 1);
 });
 
+test('discover clears a failed transport after recovery without requiring a data query', async () => {
+  const fake = transport(); let offline = true;
+  const client = new OpenArgClient({ apiKey: 'key', fetchImpl: (...args) => offline ? Promise.reject(new Error('offline')) : fake.fetch(...args) });
+  const failed = await client.discover(); assert.equal(failed.transportConnected, false); assert.equal(failed.transportError.code, 'unavailable');
+  offline = false; const recovered = await client.discover();
+  assert.equal(recovered.transportConnected, true); assert.equal(recovered.transportError, null); assert.equal(recovered.lastError, null);
+  assert.equal(recovered.queryError, null); assert.equal(recovered.lastSuccessAt, null); assert.equal(recovered.status, 'connected');
+  assert.equal(fake.requests.some(request => request.method === 'tools/call'), false);
+});
+
+test('successful discovery cannot erase query quota errors and cached values cannot fake query recovery', async () => {
+  let quota = false;
+  const fake = transport(() => quota ? new Response('cupo mensual agotado', { status: 402 }) : { content: [{ type: 'text', text: 'Dato público' }] });
+  const client = new OpenArgClient({ apiKey: 'key', fetchImpl: fake.fetch });
+  await client.call('listar_fuentes'); quota = true;
+  await assert.rejects(client.call('buscar_datasets', { texto: 'otra consulta' }), error => error.code === 'quota_exhausted');
+  let status = await client.discover(); assert.equal(status.transportConnected, true); assert.equal(status.transportError, null); assert.equal(status.queryError.code, 'quota_exhausted');
+  assert.equal((await client.call('listar_fuentes')).cached, true); assert.equal(client.status().queryError.code, 'quota_exhausted');
+  quota = false; await client.call('listar_fuentes', {}, { refresh: true }); status = client.status();
+  assert.equal(status.queryError, null); assert.equal(status.lastError, null);
+});
+
+test('a query transport failure is recovered by discovery while preserving independent query error state', async () => {
+  const fake = transport(); let offline = false;
+  const client = new OpenArgClient({ apiKey: 'key', fetchImpl: (...args) => offline ? Promise.reject(new Error('offline')) : fake.fetch(...args) });
+  await client.discover(); offline = true;
+  await assert.rejects(client.call('listar_fuentes'), error => error.code === 'unavailable');
+  assert.equal(client.status().transportConnected, false); assert.equal(client.status().queryError, null);
+  offline = false; const restored = await client.discover(); assert.equal(restored.transportConnected, true); assert.equal(restored.transportError, null);
+});
+
 test('MCP isError rate limit retries once when explicit seconds are given', async () => {
   let count = 0; const sleeps = [];
   const fake = transport(() => { count++; return { isError: true, content: [{ type: 'text', text: 'Demasiadas consultas: esperá 1 segundo.' }] }; });

@@ -27,7 +27,7 @@ class NietoApi(private val settings: LocalSettings) {
         val connection = URI(serverUrl.trimEnd('/') + "/api" + path).toURL().openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
-            connection.connectTimeout = 12_000; connection.readTimeout = 20_000
+            connection.connectTimeout = 12_000; connection.readTimeout = 45_000
             connection.instanceFollowRedirects = false
             connection.setRequestProperty("Accept", "application/json")
             if (authenticated) connection.setRequestProperty("Authorization", "Bearer $installationToken")

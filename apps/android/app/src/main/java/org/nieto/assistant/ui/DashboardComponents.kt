@@ -97,16 +97,17 @@ internal data class DashboardMetric(val label: String, val value: String, val de
 }
 
 @Composable internal fun MiniBarChart(values: List<Float>, secondary: List<Float> = emptyList(), labels: List<String> = emptyList(), description: String, modifier: Modifier = Modifier) {
-    val maximum = (values + secondary).maxOrNull()?.coerceAtLeast(1f) ?: 1f
+    val maximum = (values + secondary).filter { it.isFinite() && it>=0 }.maxOrNull()?.coerceAtLeast(1f) ?: 1f
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Canvas(Modifier.fillMaxWidth().height(116.dp).semantics { contentDescription = description }) {
             repeat(4) { i -> val y = size.height * i / 3; drawLine(Color(0xFFEDF1F0), Offset(0f, y), Offset(size.width, y), 1.dp.toPx()) }
             if (values.isNotEmpty()) {
                 val stride = size.width / values.size; val width = stride * if (secondary.isEmpty()) .52f else .28f
                 values.forEachIndexed { i, value ->
+                    if(!value.isFinite() || value<0)return@forEachIndexed
                     val height = value / maximum * (size.height - 8.dp.toPx())
                     drawRoundRect(DashCyan, Offset(stride * i + stride * .15f, size.height - height), androidx.compose.ui.geometry.Size(width, height.coerceAtLeast(2f)), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
-                    secondary.getOrNull(i)?.let { other -> val h = other / maximum * (size.height - 8.dp.toPx()); drawRoundRect(DashTeal, Offset(stride * i + stride * .5f, size.height - h), androidx.compose.ui.geometry.Size(width, h.coerceAtLeast(2f)), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx())) }
+                    secondary.getOrNull(i)?.takeIf { it.isFinite() && it>=0 }?.let { other -> val h = other / maximum * (size.height - 8.dp.toPx()); drawRoundRect(DashTeal, Offset(stride * i + stride * .5f, size.height - h), androidx.compose.ui.geometry.Size(width, h.coerceAtLeast(2f)), androidx.compose.ui.geometry.CornerRadius(4.dp.toPx())) }
                 }
             }
         }
@@ -115,7 +116,7 @@ internal data class DashboardMetric(val label: String, val value: String, val de
 }
 
 @Composable internal fun RankingRows(items: List<JSONObject>, countKey: String = "count", onChoose: ((JSONObject) -> Unit)? = null) {
-    val maximum = items.maxOfOrNull { it.optDouble(countKey) }?.coerceAtLeast(1.0) ?: 1.0
+    val maximum = items.map { it.optDouble(countKey) }.filter { it.isFinite() && it>=0 }.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
     items.forEachIndexed { index, item ->
         Column(Modifier.fillMaxWidth().then(if (onChoose != null) Modifier.clickable { onChoose(item) } else Modifier).padding(vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -123,7 +124,7 @@ internal data class DashboardMetric(val label: String, val value: String, val de
                 Text(item.optString("name", item.optString("label")), Modifier.weight(1f), color = DashInk, fontSize = 14.sp, lineHeight = 19.sp)
                 Text(item.amount(countKey), color = DashTeal, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
-            LinearProgressIndicator(progress = { (item.optDouble(countKey) / maximum).toFloat() }, color = DashCyan, trackColor = Color(0xFFECF2F0), modifier = Modifier.fillMaxWidth().height(5.dp))
+            if(item.optDouble(countKey).isFinite()) LinearProgressIndicator(progress = { (item.optDouble(countKey) / maximum).toFloat().coerceIn(0f,1f) }, color = DashCyan, trackColor = Color(0xFFECF2F0), modifier = Modifier.fillMaxWidth().height(5.dp))
         }
     }
 }

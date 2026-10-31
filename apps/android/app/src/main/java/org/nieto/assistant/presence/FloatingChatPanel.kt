@@ -17,6 +17,7 @@ internal class FloatingChatPanel(context: Context, draft: String,
     close: () -> Unit, openApp: () -> Unit, private val send: (String) -> Unit,
     private val voice: () -> Unit, attach: (Boolean) -> Unit, private val remove: (Int) -> Unit,
 ) : LinearLayout(context) {
+    override fun performClick(): Boolean { super.performClick();return true }
     private val ink = Color.rgb(16,20,22)
     private val teal = Color.rgb(0,214,201)
     private val muted = Color.rgb(76,91,97)

@@ -64,4 +64,14 @@ class LocalSettings(context: Context) {
     var screenConsent: Boolean
         get() = read("screenConsent") == "true"
         set(value) = write("screenConsent", value.toString())
+
+    var openAiConsent: Boolean
+        get() = read("openAiConsent") == "true"
+        set(value) = write("openAiConsent", value.toString())
+    var remoteScreenConsent: Boolean
+        get() = read("remoteScreenConsent") == "true"
+        set(value) = write("remoteScreenConsent", value.toString())
+    var screenImagesConsent: Boolean
+        get() = read("remoteImageConsent") == "true"
+        set(value) = write("remoteImageConsent", value.toString())
 }

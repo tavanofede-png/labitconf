@@ -2,8 +2,7 @@ import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { stat } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createAndroidArtifacts } from './android-artifact.mjs';
 import { JsonStore } from './store.mjs';
 import { OpenArgClient, OpenArgError } from './openarg.mjs';
 import { normalizeSearch, normalizeAnswer } from './normalize.mjs';
@@ -11,14 +10,16 @@ import { getTerritoryIndicators } from './territory.mjs';
 import { institutionDashboard, compareProgram, periodFor, summarize } from './institution.mjs';
 import { createAccounts, AccountError } from './accounts.mjs';
 import { createAssistant, TASK_FLOWS } from './assistant.mjs';
+import { RealtimeService, RealtimeError } from './realtime.mjs';
+import { attachRealtimeSocket } from './realtime-socket.mjs';
+import { SessionError, createSession, applySessionEvent, publicSession, operationalMetrics } from './sessions.mjs';
+import { institutionOverview } from './institution.mjs';
 import { generateReply } from './model-adapter.mjs';
 import { validateAttachments, CHAT_BODY_BYTES, AttachmentError } from './chat-attachments.mjs';
 import { demoInstitution, demoFamily, DEMO_TERRITORIES } from './dashboard-demo.mjs';
 import { createDashboardContext, crossPublicContext } from './dashboard-context.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
-const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
-const STEPS = new Set(['idle', 'open_chat', 'attach', 'location', 'confirm', 'share', 'verify', 'complete', 'cancelled', 'send_location']);
 const TERRITORIES = {
   'AR-C': 'Ciudad Autónoma de Buenos Aires', 'AR-B': 'Provincia de Buenos Aires', 'AR-X': 'Córdoba',
   'AR-S': 'Santa Fe', 'AR-M': 'Mendoza', 'AR-T': 'Tucumán', 'AR-A': 'Salta', 'AR-E': 'Entre Ríos',
@@ -31,11 +32,6 @@ const hash = (text) => createHash('sha256').update(text).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
 const same = (left, right) => typeof left === 'string' && typeof right === 'string' && timingSafeEqual(Buffer.from(hash(left)), Buffer.from(hash(right)));
 const publicGroup = (group) => ({ id: group.id, name: group.name });
-const APK_PATHS = [resolve(API_ROOT, '../../artifacts/nieto-debug.apk'), resolve(API_ROOT, '../android/app/build/outputs/apk/debug/app-debug.apk')];
-async function apkFile() {
-  for (const path of APK_PATHS) { try { const info = await stat(path); if (info.isFile() && info.size > 0) return { path, size: info.size }; } catch { /* build may not exist */ } }
-  return null;
-}
 
 class ApiError extends Error {
   constructor(status, code, message) { super(message); this.status = status; this.code = code; }
@@ -55,11 +51,7 @@ function territory(value = 'AR-C') {
   return value;
 }
 function sessionsFor(state, userId) { return state.sessions.filter((s) => s.userId === userId); }
-function metricsFor(sessions) {
-  return { completedFlows: sessions.filter((s) => s.state === 'completed').length,
-    autonomyChecks: sessions.filter((s) => s.autonomyCompleted).length,
-    accompaniedSeconds: sessions.reduce((sum, s) => sum + s.durationSeconds, 0) };
-}
+function metricsFor(sessions) { return operationalMetrics(sessions); }
 function inviteFor(state, groupId, now) {
   const invitationCode = randomBytes(5).toString('hex').toUpperCase();
   const expiresAt = new Date(now + 15 * 60 * 1000).toISOString();
@@ -91,16 +83,17 @@ async function bodyOf(req, maxBytes) {
 }
 
 export function createApp({
+  realtime = new RealtimeService(), androidArtifacts = createAndroidArtifacts(),
   dataFile = process.env.DATA_FILE ? resolve(process.env.DATA_FILE) : resolve(API_ROOT, 'data/nieto.json'),
   store = new JsonStore(dataFile), openarg = new OpenArgClient({ timeoutMs: Number(process.env.OPENARG_TIMEOUT_MS) || 25_000 }),
   institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
   corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
-  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000, accountOptions = {}, assistantOptions = { generateReply },
+  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000, accountOptions = {}, assistantOptions,
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
-  const rates = new Map();
+  const rates = new Map(); const realtimeAttempts = new Map();
   const accounts = createAccounts({ store, now, ...accountOptions });
-  const assistant = createAssistant({ now, ...assistantOptions });
+  const assistant = createAssistant({ now, ...(assistantOptions ?? {generateReply}) });
   const dashboardContext = createDashboardContext(openarg);
   const handler = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -118,10 +111,13 @@ export function createApp({
       if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
       const url = new URL(req.url, 'http://localhost');
       if (req.method === 'GET' && ['/downloads/nieto-debug.apk', '/api/downloads/nieto-debug.apk'].includes(url.pathname)) {
-        const apk = await apkFile(); required(apk, 404, 'apk_not_built', 'El APK todavía no está compilado.');
+        const apk = await androidArtifacts.open();
+        if (res.destroyed || req.aborted) { apk?.stream.destroy(); return; }
+        required(apk, 404, 'apk_not_built', 'No hay un APK con manifiesto y hash de compilación válidos. Compilá Android nuevamente.');
         res.setHeader('Content-Type', 'application/vnd.android.package-archive'); res.setHeader('Content-Length', apk.size);
         res.setHeader('Content-Disposition', 'attachment; filename="nieto-debug.apk"');
-        createReadStream(apk.path).on('error', () => res.destroy()).pipe(res); return;
+        res.setHeader('ETag', `"${apk.sha256}"`); res.setHeader('X-Android-Version', apk.versionName); res.setHeader('Cache-Control', 'no-cache');
+        res.on('close', () => apk.stream.destroy()); apk.stream.on('error', () => res.destroy()).pipe(res); return;
       }
       required(url.pathname.startsWith('/api/'), 404, 'not_found', 'Ruta inexistente.');
       const route = url.pathname.slice(4).replace(/\/$/, '') || '/';
@@ -182,11 +178,11 @@ export function createApp({
 
       if (method === 'GET' && route === '/health') {
         const status = openarg.status();
-        const apk = await apkFile();
+        const apk = await androidArtifacts.info();
         respond(200, { status: 'ok', version: '2.0.0', openarg: { configured: status.configured, connected: Boolean(status.lastSuccessAt), endpoint: status.endpoint },
           privacy: { minimumCohort, screenStorage: false, conversationStorage: false }, institutionConfigured: Boolean(institutionToken),
           android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null },
-          assistant: { mode: assistant.modelConnected ? 'conversational' : 'local_conversation', generalConversation: assistant.modelConnected, flows: ['whatsapp-group', 'email-send', 'whatsapp-location'] }, storage: 'local_json_single_process' }); return;
+          assistant: { ...realtime.status(), providerAvailability: 'not_verified', attachmentsConfigured: assistant.modelConnected, flows: ['whatsapp-group', 'email-send', 'whatsapp-location'] }, storage: 'local_json_single_process' }); return;
       }
       if (method === 'POST' && route === '/devices') {
         keys(body, ['name', 'territoryId']);
@@ -293,17 +289,9 @@ export function createApp({
         }); respond(200, { ok: true }); return;
       }
       if (method === 'GET' && route === '/institution/overview') {
-        const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
-        const state = await store.read();
-        const users = state.users.filter((u) => u.territoryId === territoryId);
-        const suppressed = users.length < minimumCohort;
-        if (suppressed) { respond(200, { territoryId, minimumCohort, suppressed, participants: null, metrics: null, flows: [], updatedAt: new Date(current).toISOString() }); return; }
-        const ids = new Set(users.map((u) => u.id)); const sessions = state.sessions.filter((s) => ids.has(s.userId));
-        const metrics = metricsFor(sessions);
-        respond(200, { territoryId, minimumCohort, suppressed, participants: users.length,
-          metrics: { completedFlows: metrics.completedFlows, autonomyChecks: metrics.autonomyChecks, accompaniedMinutes: Math.round(metrics.accompaniedSeconds / 60), helpRequests: state.alerts.filter((a) => ids.has(a.userId)).length },
-          flows: [...new Set(sessions.map(session => session.flowId))].map(flowId => ({ flowId, started: sessions.filter(session => session.flowId === flowId).length, completed: sessions.filter(session => session.flowId === flowId && session.state === 'completed').length })), updatedAt: new Date(current).toISOString() }); return;
+        const id=territory(url.searchParams.get('territoryId')??undefined);respond(200,institutionOverview(await store.read(),id,current,minimumCohort));return;
       }
+
 
       const state = await store.read();
       const user = token ? state.users.find((u) => same(hash(token), u.tokenHash) || (account?.role === 'user' && account.deviceId === u.id)) : undefined;
@@ -314,7 +302,7 @@ export function createApp({
         needGroup(); keys(body, ['id', 'memberId', 'type', 'audioBase64']);
         required(typeof body.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(body.id), 400, 'invalid_id', 'Identificador inválido.');
         required(['ping', 'voice', 'location_request'].includes(body.type), 400, 'invalid_type', 'Mensaje familiar inválido.');
-        required(state.relationships.some(r => r.groupId === group.id && r.userId === body.memberId && r.permissions.help), 403, 'help_not_consented', 'Esta persona no autorizó el acompañamiento familiar.');
+        required(state.relationships.some(r => r.groupId === group.id && r.userId === body.memberId && r.permissions.help && !r.paused), 403, 'help_not_consented', 'Esta persona no autorizó el acompañamiento familiar.');
         if (body.type === 'voice') validateVoice(body.audioBase64);
         await store.update(s => {
           s.familyMessages ??= []; s.familyMessages = s.familyMessages.filter(m => Date.parse(m.expiresAt) > current);
@@ -323,7 +311,7 @@ export function createApp({
         }); respond(201, { ok: true }); return;
       }
       if (method === 'GET' && route === '/family/messages') {
-        needUser(); const relationship = state.relationships.find(r => r.userId === user.id && r.permissions.help);
+        needUser(); const relationship = state.relationships.find(r => r.userId === user.id && r.permissions.help && !r.paused);
         if ((state.familyMessages ?? []).some(m => Date.parse(m.expiresAt) <= current)) await store.update(s => { s.familyMessages = (s.familyMessages ?? []).filter(m => Date.parse(m.expiresAt) > current); });
         const messages = relationship ? (state.familyMessages ?? []).filter(m => m.memberId === user.id && m.groupId === relationship.groupId && Date.parse(m.expiresAt) > current).slice(-5).reverse() : [];
         respond(200, { messages }); return;
@@ -333,14 +321,15 @@ export function createApp({
         required(body.consent === true, 400, 'consent_required', 'El envío de métricas de uso requiere permiso específico en el dispositivo.');
         required(Array.isArray(body.intervals) && body.intervals.length > 0 && body.intervals.length <= 50, 400, 'invalid_intervals', 'Enviá de 1 a 50 intervalos.');
         const entries = body.intervals.map((item) => {
-          keys(item, ['id', 'category', 'startedAt', 'endedAt', 'accompaniedSeconds']);
+          keys(item, ['id', 'category', 'startedAt', 'endedAt', 'accompaniedSeconds','appName']);
+          if(item.appName!==undefined)required(['WhatsApp','Gmail','Chrome','YouTube','TINO','Otra app'].includes(item.appName),400,'invalid_app','Nombre de aplicación inválido.');
           required(typeof item.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(item.id), 400, 'invalid_id', 'Identificador de intervalo inválido.');
           required(['communication', 'services', 'navigation', 'learning', 'other'].includes(item.category), 400, 'invalid_category', 'Categoría de uso inválida.');
           const start = Date.parse(item.startedAt); const end = Date.parse(item.endedAt);
           required(typeof item.startedAt === 'string' && typeof item.endedAt === 'string' && Number.isFinite(start) && Number.isFinite(end) && start < end && end <= current && start >= current - 31 * 86_400_000 && end - start <= 86_400_000, 400, 'invalid_interval', 'El intervalo debe haber terminado y pertenecer a los últimos 31 días, con duración máxima de 24 horas.');
           const durationSeconds = (end - start) / 1000;
           required(Number.isFinite(item.accompaniedSeconds) && item.accompaniedSeconds >= 0 && item.accompaniedSeconds <= durationSeconds, 400, 'invalid_duration', 'El tiempo acompañado debe estar dentro del intervalo.');
-          return { id: item.id, userId: user.id, category: item.category, startedAt: new Date(start).toISOString(), endedAt: new Date(end).toISOString(), durationSeconds, accompaniedSeconds: item.accompaniedSeconds };
+          return { id: item.id, userId: user.id, category: item.category, ...(item.appName?{appName:item.appName}:{}), startedAt: new Date(start).toISOString(), endedAt: new Date(end).toISOString(), durationSeconds, accompaniedSeconds: item.accompaniedSeconds };
         });
         await store.update((s) => {
           s.usage ??= [];
@@ -372,17 +361,17 @@ export function createApp({
           required(entry, 404, 'event_not_found', 'Evento inexistente.'); entry.resolvedAt ??= new Date(current).toISOString(); });
         respond(200, { ok: true }); return;
       }
+      if (method === 'GET' && route === '/devices/me') { needUser();respond(200,{deviceId:user.id,name:user.name,territoryId:user.territoryId,institutionMetricsConsent:user.institutionMetricsConsent===true});return; }
       if (method === 'PATCH' && route === '/devices/me') {
-        needUser(); keys(body, ['name', 'territoryId']);
-        const name = text(body.name, 'name', 60, true); const territoryId = body.territoryId === undefined ? undefined : territory(body.territoryId);
-        await store.update((s) => { const u = s.users.find((u) => u.id === user.id); if (name) u.name = name; if (territoryId) u.territoryId = territoryId; });
-        respond(200, { ok: true }); return;
+        needUser();keys(body,['name','territoryId','institutionMetricsConsent']);
+        const name=text(body.name,'name',60,true);const id=body.territoryId===undefined?undefined:territory(body.territoryId);
+        if(body.institutionMetricsConsent!==undefined) required(typeof body.institutionMetricsConsent==='boolean',400,'invalid_consent','Elegí si autorizás métricas agregadas.');
+        await store.update(s=>{const u=s.users.find(u=>u.id===user.id);if(name)u.name=name;if(id)u.territoryId=id;if(body.institutionMetricsConsent!==undefined){u.institutionMetricsConsent=body.institutionMetricsConsent;const a=(s.accounts??[]).find(a=>a.deviceId===user.id);if(a){a.preferences??={};a.preferences.aggregates=body.institutionMetricsConsent;}}});
+        respond(200,{ok:true});return;
       }
       if (method === 'POST' && route === '/assistant/sessions') {
-        needUser(); keys(body, ['flowId']); required(body.flowId === 'whatsapp-location' || Object.hasOwn(TASK_FLOWS, body.flowId), 400, 'unsupported_flow', 'Flujo no disponible.');
-        const session = { id: randomUUID(), flowId: body.flowId, userId: user.id, state: 'created', createdAt: new Date(current).toISOString(), durationSeconds: 0, completedSteps: [], autonomyCompleted: false, eventCounts: {} };
-        await store.update((s) => { s.sessions.push(session); });
-        respond(201, { id: session.id, flowId: session.flowId, createdAt: session.createdAt, ...(TASK_FLOWS[session.flowId] ? { flow: TASK_FLOWS[session.flowId] } : {}) }); return;
+        needUser(); const result = await store.update(state => createSession(state,user.id,body,current));
+        respond(201,{ ...result, ...(TASK_FLOWS[result.flowId] ? {flow:TASK_FLOWS[result.flowId]} : {}) }); return;
       }
       if (method === 'GET' && route === '/assistant/flows') { needUser(); respond(200, { flows: Object.values(TASK_FLOWS) }); return; }
       if (method === 'POST' && route === '/assistant/message') {
@@ -397,61 +386,58 @@ export function createApp({
         const activeSession = body.sessionId ? state.sessions.find(session => session.id === body.sessionId && session.userId === user.id && ['created','active'].includes(session.state)) : null;
         const activeFlow = TASK_FLOWS[activeSession?.flowId];
         const task = activeFlow ? { flowId: activeFlow.id, title: activeFlow.title, instruction: activeFlow.steps[Math.min(activeSession.completedSteps.length, activeFlow.steps.length - 1)].instruction } : null;
-        const result = await assistant.reply({ key: hash(token) + ':' + conversationId, text: message, history, task, attachments });
+        const local = await assistant.reply({ key: hash(token) + ':' + conversationId, text: message, history, task, attachments, localOnly: !attachments.length && assistantOptions === undefined });
+        const result = local ?? await realtime.reply({deviceId:user.id,text:history.length && message.length<850 ? ('Contexto previo: '+history.slice(-2).map(h=>h.role+': '+h.content.slice(0,150)).join(' | ')+'\nConsulta: '+message).slice(-1000) : message});
         respond(200, result); return;
       }
       const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
       if (method === 'POST' && eventMatch) {
-        needUser(); keys(body, ['type', 'stepId', 'durationSeconds', 'verification']);
-        if (body.verification !== undefined) required(body.type === 'flow_completed' && body.verification === 'user_confirmed', 400, 'invalid_verification', 'Confirmación inválida.');
-        required(TYPES.has(body.type), 400, 'invalid_event', 'Tipo de evento no permitido.');
-        const eventSession = state.sessions.find(session => session.id === eventMatch[1] && session.userId === user.id);
-        required(eventSession, 404, 'session_not_found', 'Sesión inexistente.');
-        const taskDefinition = TASK_FLOWS[eventSession.flowId];
-        if (body.stepId !== undefined) required(taskDefinition ? taskDefinition.steps.some(step => step.id === body.stepId) : STEPS.has(body.stepId), 400, 'invalid_step', 'stepId no pertenece al flujo.');
-        if (['step_shown', 'step_completed', 'step_repeated'].includes(body.type)) required(body.stepId, 400, 'missing_step', 'Este evento requiere stepId.');
-        if (body.durationSeconds !== undefined) required(Number.isFinite(body.durationSeconds) && body.durationSeconds >= 0 && body.durationSeconds <= 14_400, 400, 'invalid_duration', 'Duración fuera del intervalo permitido (0–14400).');
-        await store.update((s) => {
-          const session = s.sessions.find((entry) => entry.id === eventMatch[1] && entry.userId === user.id);
-          required(session, 404, 'session_not_found', 'Sesión inexistente.');
-          required(session.state !== 'cancelled', 409, 'session_closed', 'La sesión fue cancelada.');
-          if (body.type === 'flow_completed' && TASK_FLOWS[session.flowId]) {
-            required(body.verification === 'user_confirmed', 400, 'confirmation_required', 'Confirmá el resultado antes de completar.');
-            required(TASK_FLOWS[session.flowId].steps.every(step => session.completedSteps.includes(step.id)), 409, 'flow_incomplete', 'Completá los pasos de la guía antes de confirmar el resultado.');
-          }
-          if (body.type === 'autonomy_completed') required(session.state === 'completed', 409, 'flow_incomplete', 'Completá el flujo antes de registrar autonomía.');
-          session.eventCounts[body.type] = (session.eventCounts[body.type] ?? 0) + 1;
-          if (body.type === 'flow_started' && session.state !== 'completed') session.state = 'active';
-          if (body.type === 'step_completed' && !session.completedSteps.includes(body.stepId)) session.completedSteps.push(body.stepId);
-          if (body.type === 'flow_completed') { session.state = 'completed'; session.completedAt ??= new Date(current).toISOString(); session.verification = body.verification ?? 'screen_observed'; }
-          if (body.type === 'autonomy_completed') session.autonomyCompleted = true;
-          if (body.type === 'cancelled' && session.state !== 'completed') session.state = 'cancelled';
-          if (body.durationSeconds !== undefined) session.durationSeconds = Math.max(session.durationSeconds, Math.round(body.durationSeconds));
-        }); respond(200, { ok: true }); return;
+        needUser();respond(200,await store.update(s => applySessionEvent(s,user.id,eventMatch[1],body,current)));return;
       }
-      if (method === 'GET' && route === '/assistant/history') {
-        needUser(); respond(200, { sessions: sessionsFor(state, user.id).map(({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted, verification }) =>
-          ({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted, verification })).reverse() }); return;
-      }
+      if (method === 'GET' && route === '/assistant/history') { needUser();respond(200,{sessions:sessionsFor(state,user.id).map(publicSession).reverse()});return; }
       if (method === 'POST' && route === '/family/link') {
         needUser(); keys(body, ['invitationCode', 'permissions']); const code = text(body.invitationCode, 'invitationCode', 32).toUpperCase();
-        keys(body.permissions, ['progress', 'help']);
+        keys(body.permissions, ['progress','help','usage','safety','websites','location']);
+        required(Object.values(body.permissions).every(v=>typeof v==='boolean'),400,'invalid_permissions','Elegí permisos explícitos.');
         required(typeof body.permissions.progress === 'boolean' && typeof body.permissions.help === 'boolean', 400, 'invalid_permissions', 'Elegí permisos explícitos de progreso y ayuda.');
-        const permissions = { progress: body.permissions.progress, help: body.permissions.help };
+        const permissions = Object.fromEntries(['progress','help','usage','safety','websites','location'].map(key=>[key,body.permissions[key]===true]));
         const result = await store.update((s) => {
           required(!s.relationships.some((r) => r.userId === user.id), 409, 'already_linked', 'El dispositivo ya tiene un grupo. Revocá la vinculación anterior.');
           const invitation = s.invitations.find((i) => same(hash(code), i.codeHash) && !i.usedAt && Date.parse(i.expiresAt) > current);
           required(invitation, 400, 'invalid_invitation', 'El código no existe, ya se usó o venció.');
           invitation.usedAt = new Date(current).toISOString();
-          s.relationships.push({ id: randomUUID(), userId: user.id, groupId: invitation.groupId, permissions, createdAt: new Date(current).toISOString() });
-          s.consents.push({ id: randomUUID(), userId: user.id, groupId: invitation.groupId, permissions, acceptedAt: new Date(current).toISOString() });
+          s.relationships.push({ id: randomUUID(), userId: user.id, groupId: invitation.groupId, permissions, paused:false,policyVersion:2, createdAt: new Date(current).toISOString() });
+          s.consents.push({ id: randomUUID(), userId: user.id, groupId: invitation.groupId, permissions, policyVersion:2, acceptedAt: new Date(current).toISOString() });
           audit(s, 'family_link_accepted', user.id, current);
           return { group: publicGroup(s.groups.find((g) => g.id === invitation.groupId)), permissions };
         }); respond(200, result); return;
       }
       if (method === 'GET' && route === '/family/me') {
         needUser(); const relationship = state.relationships.find((r) => r.userId === user.id);
-        respond(200, { group: relationship ? publicGroup(state.groups.find((g) => g.id === relationship.groupId)) : null, permissions: relationship?.permissions ?? { progress: false, help: false } }); return;
+        respond(200, { group: relationship ? publicGroup(state.groups.find((g) => g.id === relationship.groupId)) : null, paused:relationship?.paused===true, permissions: relationship?.permissions ?? { progress: false, help: false } }); return;
+      }
+      if (method === 'PATCH' && route === '/family/link') {
+        needUser();keys(body,['permissions','paused']);
+        if(body.permissions!==undefined){keys(body.permissions,['progress','help','usage','safety','websites','location']);required(Object.values(body.permissions).every(v=>typeof v==='boolean'),400,'invalid_permissions','Permisos inválidos.');}
+        if(body.paused!==undefined)required(typeof body.paused==='boolean',400,'invalid_permissions','Pausa inválida.');
+        await store.update(s=>{
+          const r=s.relationships.find(r=>r.userId===user.id);required(r,404,'link_not_found','Primero aceptá una invitación.');
+          if(body.permissions)r.permissions={...r.permissions,...body.permissions};if(body.paused!==undefined)r.paused=body.paused;
+          if(r.paused || !r.permissions.location)r.location=null;
+          s.consents.push({id:randomUUID(),userId:user.id,groupId:r.groupId,permissions:{...r.permissions},paused:r.paused,policyVersion:2,acceptedAt:new Date(current).toISOString()});
+          audit(s,'family_permissions_changed',user.id,current);
+        });respond(200,{ok:true});return;
+      }
+      if (route === '/family/location' && ['POST','DELETE'].includes(method)) {
+        needUser();
+        await store.update(s=>{
+          const r=s.relationships.find(r=>r.userId===user.id);required(r && !r.paused && r.permissions.location,403,'location_not_consented','Autorizá primero ubicación temporal para tu grupo.');
+          if(method==='DELETE'){keys(body,[]);r.location=null;return;}
+          keys(body,['latitude','longitude','accuracy','minutes']);
+          required(Number.isFinite(body.latitude)&&body.latitude>=-90&&body.latitude<=90&&Number.isFinite(body.longitude)&&body.longitude>=-180&&body.longitude<=180,400,'invalid_location','Ubicación inválida.');
+          const minutes=body.minutes??15;required([15,30,60].includes(minutes),400,'invalid_duration','Elegí 15, 30 o 60 minutos.');
+          r.location={label:'Ubicación temporal',area:'Compartida voluntariamente',point:[Math.round(body.longitude*1000)/1000,Math.round(body.latitude*1000)/1000],approximate:true,radiusMeters:Math.max(120,Math.min(Number(body.accuracy)||120,50000)),sharedAt:new Date(current).toISOString(),updatedAt:new Date(current).toISOString(),expiresAt:new Date(current+minutes*60000).toISOString()};
+        });respond(200,{ok:true});return;
       }
       if (method === 'DELETE' && route === '/family/link') {
         needUser(); await store.update((s) => {
@@ -464,7 +450,7 @@ export function createApp({
       if (method === 'POST' && route === '/family/help') {
         needUser(); keys(body, []);
         const alertId = await store.update((s) => {
-          const relation = s.relationships.find((r) => r.userId === user.id && r.permissions.help);
+          const relation = s.relationships.find((r) => r.userId === user.id && r.permissions.help && !r.paused);
           required(relation, 403, 'help_not_consented', 'Vinculá un familiar y autorizá las solicitudes de ayuda.');
           const pending = s.alerts.find((a) => a.userId === user.id && a.groupId === relation.groupId && !a.resolvedAt && !a.revokedAt);
           if (pending) return pending.id;
@@ -476,16 +462,17 @@ export function createApp({
         needGroup(); const relations = state.relationships.filter((r) => r.groupId === group.id);
         const members = relations.map((r) => {
           const u = state.users.find(u => u.id === r.userId); const sessions = sessionsFor(state, u.id);
-          const dates = Array.from({ length: 7 }, (_, i) => new Date(current - (6 - i) * 86_400_000).toISOString().slice(0, 10));
+          const day=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Argentina/Buenos_Aires',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+          const dates = Array.from({ length: 7 }, (_, i) => day(current - (6 - i) * 86_400_000));
           const usage = (state.usage ?? []).filter(e => e.userId === u.id);
-          return { id: u.id, name: u.name, territoryId: u.territoryId, permissions: r.permissions, location: null,
-            ...(r.permissions.progress ? { ...metricsFor(sessions), tinoMinutes: Math.round(sessions.filter(s => s.createdAt.slice(0, 10) === dates[6]).reduce((n, s) => n + s.durationSeconds, 0) / 60),
-              weeklyTino: dates.map(d => Math.round(sessions.filter(s => s.createdAt.slice(0, 10) === d).reduce((n, s) => n + s.durationSeconds, 0) / 60)),
+          return { id: u.id, name: u.name, territoryId: u.territoryId, permissions: r.paused ? Object.fromEntries(Object.keys(r.permissions).map(k=>[k,false])) : r.permissions, paused:r.paused===true, location: !r.paused && r.permissions.location && Date.parse(r.location?.expiresAt)>current ? r.location : null,
+            ...(!r.paused && r.permissions.progress ? { ...metricsFor(sessions), tinoMinutes: Math.round(sessions.filter(s => day(s.createdAt) === dates[6]).reduce((n, s) => n + s.durationSeconds, 0) / 60),
+              weeklyTino: dates.map(d => Math.round(sessions.filter(s => day(s.createdAt) === d).reduce((n, s) => n + s.durationSeconds, 0) / 60)),
               activities: sessions.slice(-10).reverse().map(s => ({ title: s.state === 'completed' ? 'Completó una tarea' : 'Practicó con TINO', detail: TASK_FLOWS[s.flowId]?.title ?? 'Compartir ubicación', at: s.createdAt })),
-              learned: sessions.filter(s => s.autonomyCompleted).map(s => TASK_FLOWS[s.flowId]?.title ?? 'Compartir ubicación').at(-1) ?? null } : {}),
-            ...(r.permissions.usage ? { screenMinutes: Math.round(usage.filter(e => e.startedAt.slice(0, 10) === dates[6]).reduce((n, e) => n + e.durationSeconds, 0) / 60), weeklyScreen: dates.map(d => Math.round(usage.filter(e => e.startedAt.slice(0, 10) === d).reduce((n, e) => n + e.durationSeconds, 0) / 60)) } : {}) };
+              learned: sessions.filter(s => s.resultSource==='verified' && s.autonomyCompleted).map(s => TASK_FLOWS[s.flowId]?.title ?? 'Compartir ubicación').at(-1) ?? null } : {}),
+            ...(!r.paused && r.permissions.usage ? { screenMinutes: Math.round(usage.filter(e => day(e.startedAt) === dates[6]).reduce((n, e) => n + e.durationSeconds, 0) / 60), appUsage:[...new Set(usage.map(e=>e.appName??e.category))].map(name=>({name,minutes:Math.round(usage.filter(e=>(e.appName??e.category)===name&&day(e.startedAt)===dates[6]).reduce((n,e)=>n+e.durationSeconds,0)/60)})).filter(e=>e.minutes>0), weeklyScreen: dates.map(d => Math.round(usage.filter(e => day(e.startedAt) === d).reduce((n, e) => n + e.durationSeconds, 0) / 60)) } : {}) };
         });
-        const helpIds = new Set(relations.filter((r) => r.permissions.help).map((r) => r.userId));
+        const helpIds = new Set(relations.filter((r) => r.permissions.help && !r.paused).map((r) => r.userId));
         const alerts = state.alerts.filter((a) => a.groupId === group.id && !a.revokedAt && helpIds.has(a.userId))
           .map(({ id, type, message, createdAt, resolvedAt, userId }) => ({ id, type, message, createdAt, resolvedAt,
             memberId: userId, requesterName: state.users.find((u) => u.id === userId)?.name }));
@@ -499,7 +486,7 @@ export function createApp({
         needGroup(); keys(body, []);
         await store.update((s) => {
           const alert = s.alerts.find((a) => a.id === resolveMatch[1] && a.groupId === group.id && !a.revokedAt);
-          required(alert, 404, 'alert_not_found', 'Alerta inexistente.'); alert.resolvedAt ??= new Date(current).toISOString();
+          required(alert, 404, 'alert_not_found', 'Alerta inexistente.'); required(s.relationships.some(r=>r.groupId===group.id&&r.userId===alert.userId&&!r.paused&&r.permissions.help),403,'help_not_consented','El permiso para compartir ayuda está pausado o revocado.'); alert.resolvedAt ??= new Date(current).toISOString();
         }); respond(200, { ok: true }); return;
       }
       if (method === 'POST' && route === '/family/invitations') {
@@ -508,19 +495,36 @@ export function createApp({
       throw new ApiError(404, 'not_found', 'Ruta inexistente.');
     } catch (error) {
       if (res.headersSent) { res.end(); return; }
-      const known = error instanceof ApiError || error instanceof OpenArgError || error instanceof AccountError || error instanceof AttachmentError;
+      const known = error instanceof ApiError || error instanceof OpenArgError || error instanceof AccountError || error instanceof AttachmentError || error instanceof SessionError || error instanceof RealtimeError;
       if (error.retryAfter !== null && error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
       respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
     }
   };
-  handler.store = store; handler.openarg = openarg; return handler;
+  handler.store = store; handler.openarg = openarg; handler.realtime = realtime;
+  handler.authorizeRealtime = async req => {
+    const origin = req.headers.origin;
+    if (origin && !corsOrigins.includes(origin)) throw new RealtimeError('origin_not_allowed', 'Origen no permitido.', 403);
+    const current = now(); const ip = req.socket.remoteAddress;
+    if (realtimeAttempts.size > 1000) for (const [key, value] of realtimeAttempts) if (value.resetAt <= current) realtimeAttempts.delete(key);
+    let attempt = realtimeAttempts.get(ip);
+    if (!attempt || attempt.resetAt <= current) { attempt = { count: 0, resetAt: current + 60_000 }; realtimeAttempts.set(ip, attempt); }
+    if (++attempt.count > 20) throw new RealtimeError('realtime_rate_limit', 'Demasiados intentos de conexión de voz.', 429);
+    const token = /^Bearer ([A-Za-z0-9_\-.]+)$/i.exec(req.headers.authorization ?? '')?.[1] ?? '';
+    if (!token) throw new RealtimeError('unauthorized', 'Falta el acceso de este teléfono.', 401);
+    const state = await store.read();
+    const account = await accounts.principal(token);
+    const user = account?.deviceId ? state.users.find(user => user.id === account.deviceId) : state.users.find(user => same(hash(token), user.tokenHash));
+    if (!user) throw new RealtimeError('unauthorized', 'El acceso de este teléfono no es válido.', 401);
+    return user.id;
+  };
+  return handler;
 }
 
-export function createServer(options) { return http.createServer(createApp(options)); }
+export function createServer(options) { const app=createApp(options);return attachRealtimeSocket(http.createServer(app),app); }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const port = Number(process.env.API_PORT ?? process.env.PORT) || 8787; const host = process.env.HOST ?? '0.0.0.0';
-  const app = createApp(); await app.store.init(); const server = http.createServer(app);
+  const app = createApp(); await app.store.init(); const server = attachRealtimeSocket(http.createServer(app),app);
   server.listen(port, host, () => console.log(`NIETO API 2.0 en http://${host}:${port} — OpenArg ${app.openarg.status().configured ? 'configurado, pendiente de consulta' : 'pendiente de OPENARG_API_KEY'}`));
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => process.exit(0)));
 }

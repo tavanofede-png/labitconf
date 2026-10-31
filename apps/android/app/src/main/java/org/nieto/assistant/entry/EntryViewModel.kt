@@ -40,6 +40,18 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     private var usernameJob: Job? = null
     private var answerJob: Job? = null
     private var usernameRevision = 0
+    init {
+        if (app.settings.read("accountSession").isNotBlank()) work {
+            try {
+                val account=loadAccount()
+                val role=AccountRole.entries.firstOrNull { it.wire == account.optString("role") } ?: state.value.role
+                change { it.copy(role=role,page=if(account.optBoolean("onboardingRequired",true)) EntryPage.PROFILE else EntryPage.HOME,emailVerified=true) }
+            } catch(error: ApiFailure) {
+                if(error.status==401) { app.stopPresence();listOf("accountSession","installation","caregiverToken","institutionToken","onboardingComplete").forEach { app.settings.write(it,"") };change { EntryState() } }
+                else throw error
+            }
+        }
+    }
     private fun restore(): EntryState = runCatching {
         val data = saved.get<String>("entryDraft")?.let(::JSONObject) ?: return EntryState()
         val fields = data.optJSONObject("fields") ?: JSONObject()
@@ -49,7 +61,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             fields = fields.keys().asSequence().associateWith { fields.getString(it) }, answers = answers.keys().asSequence().associateWith { answers.getInt(it) }.filterValues { it in 0..3 },
             preferences = prefs.keys().asSequence().associateWith { prefs.getBoolean(it) }, familyMode = data.optString("familyMode", "create"), question = data.optInt("question").coerceIn(0, questionsFor(AccountRole.valueOf(data.optString("role", "USER"))).lastIndex),
             profileStep = data.optInt("profileStep"), usernameEdited = data.optBoolean("usernameEdited"), emailVerified = app.settings.read("accountSession").isNotBlank(),
-            section = data.optInt("section").coerceIn(0, 3), login = data.optBoolean("login"), firstTime = data.optBoolean("firstTime", true))
+            section = data.optInt("section").coerceIn(0, 4), login = data.optBoolean("login"), firstTime = data.optBoolean("firstTime", true))
     }.getOrDefault(EntryState())
     private fun change(block: (EntryState) -> EntryState) {
         mutable.value = block(mutable.value)
@@ -226,11 +238,17 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     }
     private fun applyAccount(reply: JSONObject) {
         reply.optString("deviceToken").takeIf { it.isNotBlank() }?.let { app.settings.installation(reply.getString("deviceId"), it) }
-        reply.optString("caregiverToken").takeIf { it.isNotBlank() }?.let { app.settings.write("caregiverToken", it) }
+        reply.optString("caregiverToken").takeIf { it.isNotBlank() }?.let { token ->
+            app.settings.write("caregiverToken", token)
+            if(!reply.optBoolean("demo")) {
+                val store=org.nieto.assistant.family.FamilyStore(app)
+                if(store.access()?.let{it.token==token&&it.serverUrl==app.settings.baseUrl}!=true)store.save(app.settings.baseUrl,token)
+            }
+        }
         reply.optString("institutionToken").takeIf { it.isNotBlank() }?.let { app.settings.write("institutionToken", it) }
         change { it.copy(invitationCode = reply.optString("invitationCode"), demoAccount = reply.optBoolean("demo")) }
     }
-    private suspend fun loadAccount() {
+    private suspend fun loadAccount(): JSONObject {
         val reply = app.api.request("/accounts/me", installationToken = app.settings.read("accountSession"))
         applyAccount(reply)
         val profile = reply.optJSONObject("profile")
@@ -241,7 +259,9 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             app.settings.deviceName = profile.optString("name")
             app.settings.territoryId = profile.optString("territoryId", "AR-C")
         }
+        val prefs=reply.optJSONObject("preferences"); if(prefs!=null) change { it.copy(preferences=prefs.keys().asSequence().associateWith { key -> prefs.optBoolean(key) }) }
         if (!reply.optBoolean("onboardingRequired", true)) app.settings.write("onboardingComplete", reply.getString("role"))
+        return reply
     }
     fun guest() = work { app.api.register(); change { it.copy(role = AccountRole.USER, page = EntryPage.HOME, message = "Asistente conectado a este dispositivo. Podés crear una cuenta después.") } }
     fun openSpace(role: AccountRole, section: Int = 0) {
@@ -272,6 +292,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         val data = app.api.request(path, installationToken = token)
         change { it.copy(dashboard = data) }
     }
+    fun refreshDashboardIfIdle() { if(!state.value.busy && state.value.page==EntryPage.HOME) dashboard() }
     fun dashboardFilters(territory: String = state.value.dashboardTerritory, months: Int = state.value.dashboardMonths, month: String = "") {
         if (state.value.busy) return
         change { it.copy(dashboardTerritory = territory, dashboardMonths = months, dashboardMonth = month) }; dashboard()
@@ -295,8 +316,12 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         app.stopPresence()
         app.stopSpeaking()
         val token = app.settings.read("accountSession")
-        if (token.isNotBlank()) app.api.request("/accounts/session", "DELETE", installationToken = token)
-        listOf("accountSession", "caregiverToken", "institutionToken", "onboardingComplete", "installation").forEach { app.settings.write(it, "") }
+        if (token.isNotBlank()) runCatching { app.api.request("/accounts/session", "DELETE", installationToken = token) }
+        org.nieto.assistant.usage.DeviceUsage.enable(app,false)
+        org.nieto.assistant.family.FamilyBackground.closeAccess(app)
+        app.resetConversation()
+        app.revokeOpenAiConsent()
+        listOf("accountSession", "caregiverToken", "institutionToken", "onboardingComplete", "installation", "profile").forEach { app.settings.write(it, "") }
         mutable.value = EntryState(); saved.remove<String>("entryDraft")
     }
 }

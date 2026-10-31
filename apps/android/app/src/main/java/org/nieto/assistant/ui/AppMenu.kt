@@ -38,7 +38,7 @@ import org.nieto.assistant.entry.EntryState
     val current = when (entry.role) {
         AccountRole.FAMILY -> "Grupo familiar"
         AccountRole.INSTITUTION -> "Instituciones"
-        AccountRole.USER -> when (entry.section) { 2 -> "Guías"; 3 -> "Ajustes"; else -> "TINO Chat" }
+        AccountRole.USER -> when (entry.section) { 1 -> "Mi vínculo familiar"; 2 -> "Guías"; 3 -> "Ajustes"; 4 -> "Tus recorridos"; else -> "TINO Chat" }
     }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalTinoHome provides home) {
         ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
@@ -58,9 +58,11 @@ import org.nieto.assistant.entry.EntryState
                             if (current != "Grupo familiar") MenuDestination("Grupo familiar", canNavigate) { go(AccountRole.FAMILY) }
                             if (current != "Instituciones") MenuDestination("Instituciones", canNavigate) { go(AccountRole.INSTITUTION) }
                             if (current != "Guías") MenuDestination("Guías", canNavigate) { go(AccountRole.USER, 2) }
+                            if (current != "Tus recorridos") MenuDestination("Tus recorridos", canNavigate) { go(AccountRole.USER, 4) }
                             if (current != "Ajustes") MenuDestination("Ajustes", canNavigate) { go(AccountRole.USER, 3) }
                             if (entry.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = DashCyan)
                             entry.error?.let { Text(it, color = DashRed, fontSize = 13.sp, modifier = Modifier.padding(8.dp)) }
+                            if (current != "Mi vínculo familiar") MenuDestination("Mi vínculo familiar", canNavigate) { go(AccountRole.USER, 1) }
                             AssistantPermissions(app, state, beforeWakeStart)
                         }
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))

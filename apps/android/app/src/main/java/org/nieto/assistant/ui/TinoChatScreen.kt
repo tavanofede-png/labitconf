@@ -48,11 +48,14 @@ private val Paper = Color(0xFFF3F6F6)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit,
-    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onSettings: () -> Unit, onMenu: () -> Unit) {
+    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onSettings: () -> Unit, onFamily: () -> Unit, onMenu: () -> Unit) {
     var message by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
     val guideSuggested = state.suggestedFlow != null
-    val send = { if (message.isNotBlank() && !state.busy) { app.sendMessage(message); message = "" } }
+    var consentText by remember { mutableStateOf<String?>(null) }
+    var consentVoice by remember { mutableStateOf(false) }
+    val send = { if (message.isNotBlank() && !state.busy && !state.voice.active) { if(app.settings.openAiConsent){app.sendMessage(message);message=""} else consentText=message } }
+    if(consentText!=null || consentVoice) AlertDialog(onDismissRequest={consentText=null;consentVoice=false},title={Text("Hablar con TINO")},text={Text("Para responder, TINO envía tu consulta y, si elegís hablar, tu voz a OpenAI. Podés revocar este permiso en Ajustes. Tu grupo familiar no recibe la conversación.")},confirmButton={TextButton(onClick={app.settings.openAiConsent=true;val draft=consentText;val voice=consentVoice;consentText=null;consentVoice=false;if(draft!=null){app.sendMessage(draft);message=""};if(voice)onVoice()}){Text("Aceptar y continuar")}},dismissButton={TextButton(onClick={consentText=null;consentVoice=false}){Text("Volver")}})
     LaunchedEffect(state.foreground) { while (isActive && state.foreground) { app.refreshFamilyInbox(); delay(15000) } }
     LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task, state.familyInbox.isNotEmpty()) {
         list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0) + (if (state.familyInbox.isNotEmpty()) 1 else 0))
@@ -66,6 +69,7 @@ private val Paper = Color(0xFFF3F6F6)
         Surface(color = Paper) {
             Box(Modifier.fillMaxWidth().navigationBarsPadding().imePadding(), contentAlignment = Alignment.Center) {
                 Column(Modifier.widthIn(max = 800.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (state.voice.phase != org.nieto.assistant.voice.VoicePhase.IDLE && state.voice.message.isNotBlank()) Text(state.voice.message, color = Muted, fontSize = 15.sp, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     if (listening) Text("Te escucho…", color = Muted, fontSize = 16.sp, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     Surface(shape = RoundedCornerShape(28.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFD7E2E0))) {
                         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -74,9 +78,9 @@ private val Paper = Color(0xFFF3F6F6)
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, lineHeight = 26.sp, color = Ink),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }),
                                 colors = TextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, cursorColor = Ink))
-                            FilledIconButton(onClick = onVoice, enabled = !state.busy || listening, modifier = Modifier.size(52.dp).semantics { contentDescription = if (listening) "Terminar de hablar" else "Hablar con TINO" },
+                            FilledIconButton(onClick = { if(app.settings.openAiConsent)onVoice() else consentVoice=true }, enabled = !state.busy || listening, modifier = Modifier.size(52.dp).semantics { contentDescription = if (listening) "Terminar de hablar" else "Hablar con TINO" },
                                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = if (listening) Cyan else Color(0xFFE3F9F6), contentColor = Ink)) { ChatIcon("mic") }
-                            FilledIconButton(onClick = send, enabled = message.isNotBlank() && !state.busy, modifier = Modifier.size(52.dp).semantics { contentDescription = "Enviar mensaje" },
+                            FilledIconButton(onClick = send, enabled = message.isNotBlank() && !state.busy && !state.voice.active, modifier = Modifier.size(52.dp).semantics { contentDescription = "Enviar mensaje" },
                                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = Cyan, contentColor = Ink, disabledContainerColor = Paper, disabledContentColor = Muted)) { ChatIcon("send") }
                         }
                     }
@@ -98,7 +102,7 @@ private val Paper = Color(0xFFF3F6F6)
                             Text(incoming.optString("author", "Tu grupo familiar"), fontWeight = FontWeight.SemiBold, color = DashTeal)
                             Text(when (incoming.optString("type")) { "voice" -> "Te dejó un aviso de voz."; "location_request" -> "Te pidió que compartas tu ubicación. Vos decidís si hacerlo."; else -> "Te mandó un ping para decirte que está disponible." }, color = DashInk, fontSize = 15.sp)
                             if (incoming.optString("type") == "voice") AudioMessageButton(incoming.optString("audioBase64"))
-                            if (incoming.optString("type") == "location_request") TextButton(onClick = { app.sendMessage("Quiero compartir mi ubicación por WhatsApp") }) { Text("Quiero compartir mi ubicación", color = DashTeal) }
+                            if (incoming.optString("type") == "location_request") TextButton(onClick = { onFamily() }) { Text("Quiero compartir mi ubicación", color = DashTeal) }
                             HorizontalDivider(color = DashPaper)
                         }
                     }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -22,13 +23,18 @@ async function fixture(t) {
   };
   const devices = [];
   for (let i = 0; i < 5; i++) devices.push((await request('/devices', { method: 'POST', body: { name: `Private person ${i}`, territoryId: 'AR-C' } })).data);
+  request.store=store;
+  for(const device of devices) await request("/devices/me",{token:device.token,method:"PATCH",body:{institutionMetricsConsent:true}});
   return { request, store, devices };
 }
-async function session(request, device, autonomy = true) {
-  const result = await request('/assistant/sessions', { token: device.token, method: 'POST', body: { flowId: 'whatsapp-location' } });
-  for (const event of [{ type: 'flow_started' }, { type: 'step_completed', stepId: 'attach' }, { type: 'flow_completed', durationSeconds: 120 }, ...(autonomy ? [{ type: 'autonomy_completed' }] : [])]) {
-    assert.equal((await request(`/assistant/sessions/${result.data.id}/events`, { token: device.token, method: 'POST', body: event })).status, 200);
-  }
+async function session(request,device,autonomy=true) {
+  const result=await request('/assistant/sessions',{token:device.token,method:'POST',body:{flowId:'whatsapp-location',clientSessionId:randomUUID()}});
+  assert.equal(result.status,201);
+  const steps=['open_chat','attach','location','confirm','share','verify'];
+  for(const event of [{type:'flow_started'},...steps.flatMap(stepId=>[{type:'step_shown',stepId},{type:'step_completed',stepId}]),{type:'flow_reported',durationSeconds:120}])
+    assert.equal((await request(`/assistant/sessions/${result.data.id}/events`,{token:device.token,method:'POST',body:{eventId:randomUUID(),...event}})).status,200);
+  // Explicit synthetic verified records exercise aggregation math only. The public API cannot mint them.
+  await request.store.update(state=>{const row=state.sessions.find(s=>s.id===result.data.id);row.state='completed';row.resultSource='verified';row.autonomyCompleted=autonomy;});
 }
 
 test('new institution routes require credentials, validate dates and periods, and use active rather than registered cohorts', async t => {
@@ -41,7 +47,7 @@ test('new institution routes require credentials, validate dates and periods, an
   for (let i = 0; i < devices.length; i++) await session(request, devices[i], i < 3);
   result = (await request('/institution/analytics')).data;
   assert.equal(result.suppressed, false); assert.equal(result.participants, 5);
-  assert.equal(result.metrics.completedFlows, 5); assert.equal(result.metrics.autonomyRate, 60);
+  assert.equal(result.metrics.completedFlows, 5); assert.equal(result.metrics.autonomyRate, null); assert.equal(result.metrics.autonomyChecks,null);
   assert.equal(result.metrics.accompaniedMinutes, 10); assert.equal(result.metrics.completionRate, 100);
   assert.equal(result.usage, null); assert.equal(result.safety, null);
   assert.equal(result.trend.length, 1); assert.equal(result.flows[0].steps[0].completed, 5);
@@ -115,8 +121,11 @@ test('programs persist, validate dates, compare equal windows and suppress small
   });
   programs = (await request('/institution/programs')).data.programs;
   const evaluation = programs[0].evaluation;
-  assert.equal(evaluation.status, 'available'); assert.equal(evaluation.before.metrics.autonomyRate, 40);
-  assert.equal(evaluation.after.metrics.autonomyRate, 100); assert.equal(evaluation.changePoints, 60);
+  assert.equal(evaluation.status, 'insufficient_cohort'); assert.equal(evaluation.before.metrics.autonomyRate, null);
+  assert.equal(evaluation.after.metrics.autonomyRate, 100); assert.equal(evaluation.changePoints, null);
+  await store.update(s=>{s.sessions.filter(row=>row.id.startsWith('baseline-')).forEach(row=>{row.autonomyCompleted=true})});
+  const publishable=(await request('/institution/programs')).data.programs[0].evaluation;
+  assert.equal(publishable.status,'available');assert.equal(publishable.changePoints,0);
   assert.equal(Date.parse(evaluation.before.period.to) - Date.parse(evaluation.before.period.from), Date.parse(evaluation.after.period.to) - Date.parse(evaluation.after.period.from));
   assert.equal((await request('/institution/programs?territoryId=AR-X')).data.programs.length, 0);
 });
