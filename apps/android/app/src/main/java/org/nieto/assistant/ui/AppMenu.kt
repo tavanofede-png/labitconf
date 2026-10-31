@@ -63,8 +63,9 @@ import org.nieto.assistant.entry.EntryState
                             if (entry.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = DashCyan)
                             entry.error?.let { Text(it, color = DashRed, fontSize = 13.sp, modifier = Modifier.padding(8.dp)) }
                             if (current != "Mi vínculo familiar") MenuDestination("Mi vínculo familiar", canNavigate) { go(AccountRole.USER, 1) }
-                            AssistantPermissions(app, state, beforeWakeStart)
                         }
+                        // Keep both device controls visible above logout; destinations scroll independently.
+                        AssistantPermissions(app, state, beforeWakeStart)
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                         LogoutButton(enabled = !entry.busy && !state.busy) { closeThen { beforeWakeStart(); app.stopSpeaking(); logout() } }
                     }

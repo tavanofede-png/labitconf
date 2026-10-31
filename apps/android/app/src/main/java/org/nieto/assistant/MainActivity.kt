@@ -110,7 +110,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun openWhatsApp() {
         val intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
-        if (intent != null) startActivity(intent) else app.status("WhatsApp no está instalado. Podés consultar por chat o pedir ayuda a tu familia.")
+        if (intent != null) startActivity(intent) else app.tellUser("WhatsApp no está instalado en este dispositivo. Instalalo para seguir la guía; también podés consultar por chat o pedir ayuda a tu familia.")
     }
     private fun openEmail(draft: EmailDraft?, compose: Boolean) {
         val uri = if (draft == null) Uri.parse("mailto:") else Uri.parse("mailto:${Uri.encode(draft.to)}?subject=${Uri.encode(draft.subject)}&body=${Uri.encode(draft.body)}")
