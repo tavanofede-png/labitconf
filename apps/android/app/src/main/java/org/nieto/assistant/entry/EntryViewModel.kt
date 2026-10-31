@@ -26,7 +26,8 @@ data class EntryState(
     val firstTime: Boolean = true, val accepted: Boolean = false, val busy: Boolean = false,
     val error: String? = null, val message: String? = null, val challengeId: String = "",
     val expiresAt: String = "", val resendAt: Long = 0, val code: String = "", val delivery: String = "email",
-    val dashboard: JSONObject? = null, val context: JSONObject? = null, val invitationCode: String = ""
+    val dashboard: JSONObject? = null, val context: JSONObject? = null, val invitationCode: String = "",
+    val demoAccount: Boolean = false, val dashboardTerritory: String = "AR", val dashboardMonths: Int = 6, val dashboardMonth: String = ""
 ) { fun field(key: String) = fields[key].orEmpty() }
 
 class EntryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -110,6 +111,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             ProfileStep.USERNAME -> if (!validUsername(s.field("username"))) "Usá entre 3 y 30 letras, números, puntos o guiones bajos." else if (s.usernameStatus != "available" || s.usernameChecked != s.field("username")) "Primero necesitamos comprobar que el usuario esté disponible." else null
             ProfileStep.PHONE -> if (!validPhone(s.field("phone"))) "Ingresá un teléfono válido, con código de área. Es obligatorio." else null
             ProfileStep.EMAIL -> if (!Patterns.EMAIL_ADDRESS.matcher(s.field("email").trim()).matches()) "Ingresá un correo válido." else null
+            ProfileStep.BIRTH_DATE -> if (!validBirthDate(s.field("birthDate"))) "Elegí una fecha de nacimiento válida." else null
             ProfileStep.ORGANIZATION -> if (s.field("organization").isBlank()) "Ingresá el nombre de tu institución." else null
             else -> null
         }
@@ -160,6 +162,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         val username = s.field("username")
         if (!validUsername(username)) { change { it.copy(error = "El usuario admite de 3 a 30 letras, números, puntos o guiones bajos.") }; return }
         if (!validPhone(s.field("phone"))) { change { it.copy(error = "Ingresá tu teléfono. Es obligatorio.") }; return }
+        if (!validBirthDate(s.field("birthDate"))) { change { it.copy(error = "Elegí tu fecha de nacimiento.") }; return }
         if (app.settings.read("accountSession").isNotBlank()) move(EntryPage.PERMISSIONS) else requestCode()
     }
     fun requestCode() {
@@ -224,7 +227,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         reply.optString("deviceToken").takeIf { it.isNotBlank() }?.let { app.settings.installation(reply.getString("deviceId"), it) }
         reply.optString("caregiverToken").takeIf { it.isNotBlank() }?.let { app.settings.write("caregiverToken", it) }
         reply.optString("institutionToken").takeIf { it.isNotBlank() }?.let { app.settings.write("institutionToken", it) }
-        change { it.copy(invitationCode = reply.optString("invitationCode")) }
+        change { it.copy(invitationCode = reply.optString("invitationCode"), demoAccount = reply.optBoolean("demo")) }
     }
     private suspend fun loadAccount() {
         val reply = app.api.request("/accounts/me", installationToken = app.settings.read("accountSession"))
@@ -243,14 +246,26 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     fun dashboard() = work {
         if (app.settings.read("accountSession").isNotBlank()) loadAccount()
         val s = state.value
-        val token = app.settings.read(if (s.role == AccountRole.FAMILY) "caregiverToken" else "institutionToken")
-        val path = if (s.role == AccountRole.FAMILY) "/family/summary" else "/institution/analytics?territoryId=${s.field("territoryId").ifBlank { "AR-C" }}&days=30"
+        val token = app.settings.read(if (s.demoAccount) "accountSession" else if (s.role == AccountRole.FAMILY) "caregiverToken" else "institutionToken")
+        val path = if (s.demoAccount) {
+            if (s.role == AccountRole.FAMILY) "/demo/family/dashboard" else "/demo/institution/dashboard?territoryId=${s.dashboardTerritory}&months=${s.dashboardMonths}" + if (s.dashboardMonth.isNotBlank()) "&month=${s.dashboardMonth}" else ""
+        } else if (s.role == AccountRole.FAMILY) "/family/summary" else "/institution/analytics?territoryId=${s.dashboardTerritory}&days=${if (s.dashboardMonths == 1) 30 else if (s.dashboardMonths == 3) 90 else 180}"
         val data = app.api.request(path, installationToken = token)
         change { it.copy(dashboard = data) }
-        if (s.role == AccountRole.INSTITUTION) {
-            val context = app.api.request("/openarg/territory?territoryId=${s.field("territoryId").ifBlank { "AR-C" }}", installationToken = token)
-            change { it.copy(context = context) }
-        }
+    }
+    fun dashboardFilters(territory: String = state.value.dashboardTerritory, months: Int = state.value.dashboardMonths, month: String = "") {
+        if (state.value.busy) return
+        change { it.copy(dashboardTerritory = territory, dashboardMonths = months, dashboardMonth = month) }; dashboard()
+    }
+    fun familyAction(memberId: String, type: String, audioBase64: String? = null, id: String = java.util.UUID.randomUUID().toString()) = work {
+        val demo = state.value.demoAccount
+        val body = JSONObject().put("id", id).put("memberId", memberId).put("type", type)
+        audioBase64?.let { body.put("audioBase64", it) }
+        if (type == "resolve" && !demo) {
+            app.api.request("/family/alerts/$memberId/resolve", "POST", JSONObject(), installationToken = app.settings.read("caregiverToken"))
+        } else app.api.request(if (demo) "/demo/family/actions" else "/family/messages", "POST", body, installationToken = app.settings.read(if (demo) "accountSession" else "caregiverToken"))
+        val data = app.api.request(if (demo) "/demo/family/dashboard" else "/family/summary", installationToken = app.settings.read(if (demo) "accountSession" else "caregiverToken"))
+        change { it.copy(dashboard = data, message = when (type) { "voice" -> "Aviso de voz enviado."; "resolve" -> "Alerta atendida."; "location_request" -> "Solicitud enviada. Esa persona decide si comparte su ubicación."; else -> "Ping enviado." }) }
     }
     fun invitation() = work { val reply = app.api.request("/family/invitations", "POST", JSONObject(), installationToken = app.settings.read("caregiverToken")); change { it.copy(invitationCode = reply.getString("invitationCode"), message = "Invitación válida por 15 minutos. La persona acepta los permisos desde su dispositivo.") } }
     fun resolveAlert(id: String) = work { app.api.request("/family/alerts/$id/resolve", "POST", JSONObject(), installationToken = app.settings.read("caregiverToken")); val data = app.api.request("/family/summary", installationToken = app.settings.read("caregiverToken")); change { it.copy(dashboard = data) } }

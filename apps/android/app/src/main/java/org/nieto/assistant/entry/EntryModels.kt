@@ -29,12 +29,13 @@ fun questionsFor(role: AccountRole): List<EntryQuestion> = when (role) {
 val entryTerritories = listOf("AR-C" to "Ciudad de Buenos Aires", "AR-B" to "Buenos Aires", "AR-X" to "Córdoba", "AR-S" to "Santa Fe", "AR-M" to "Mendoza", "AR-T" to "Tucumán", "AR-A" to "Salta", "AR-E" to "Entre Ríos", "AR-H" to "Chaco", "AR-U" to "Chubut", "AR-K" to "Catamarca", "AR-W" to "Corrientes", "AR-P" to "Formosa", "AR-Y" to "Jujuy", "AR-L" to "La Pampa", "AR-F" to "La Rioja", "AR-N" to "Misiones", "AR-Q" to "Neuquén", "AR-R" to "Río Negro", "AR-J" to "San Juan", "AR-D" to "San Luis", "AR-Z" to "Santa Cruz", "AR-G" to "Santiago del Estero", "AR-V" to "Tierra del Fuego")
 
 enum class ProfileStep(val field: String) {
-    NAME("name"), USERNAME("username"), PHONE("phone"), EMAIL("email"), TERRITORY("territoryId"),
+    NAME("name"), USERNAME("username"), PHONE("phone"), EMAIL("email"), BIRTH_DATE("birthDate"), TERRITORY("territoryId"),
     PHOTO("photo"), ORGANIZATION("organization"), POSITION("position")
 }
 fun profileStepsFor(role: AccountRole, emailVerified: Boolean): List<ProfileStep> = buildList {
     add(ProfileStep.NAME); add(ProfileStep.USERNAME); add(ProfileStep.PHONE)
     if (!emailVerified) add(ProfileStep.EMAIL)
+    add(ProfileStep.BIRTH_DATE)
     add(ProfileStep.TERRITORY)
     if (role == AccountRole.INSTITUTION) { add(ProfileStep.ORGANIZATION); add(ProfileStep.POSITION) }
     add(ProfileStep.PHOTO)
@@ -47,3 +48,7 @@ fun suggestedUsername(name: String): String {
 }
 fun validUsername(value: String) = Regex("[a-z0-9_.]{3,30}").matches(value)
 fun validPhone(value: String) = value.length <= 40 && Regex("\\+?[0-9 ()-]+").matches(value.trim()) && value.count { it in '0'..'9' } in 8..15
+fun validBirthDate(value: String, today: java.time.LocalDate = java.time.LocalDate.now()): Boolean = runCatching {
+    val date = java.time.LocalDate.parse(value)
+    value.matches(Regex("\\d{4}-\\d{2}-\\d{2}")) && date <= today && java.time.temporal.ChronoUnit.YEARS.between(date, today) <= 125
+}.getOrDefault(false)

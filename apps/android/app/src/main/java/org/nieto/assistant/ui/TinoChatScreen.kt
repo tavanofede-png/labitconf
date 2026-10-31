@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import org.nieto.assistant.AppState
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.R
@@ -56,8 +58,9 @@ private val Paper = Color(0xFFF3F6F6)
     val list = rememberLazyListState()
     val guideSuggested = state.suggestedFlow != null
     val send = { if (message.isNotBlank() && !state.busy) { app.sendMessage(message); message = "" } }
-    LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task) {
-        list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0))
+    LaunchedEffect(state.foreground) { while (isActive && state.foreground) { app.refreshFamilyInbox(); delay(15000) } }
+    LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task, state.familyInbox.isNotEmpty()) {
+        list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0) + (if (state.familyInbox.isNotEmpty()) 1 else 0))
     }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
     ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
@@ -116,6 +119,17 @@ private val Paper = Color(0xFFF3F6F6)
                     Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Surface(shape = CircleShape, color = Cyan.copy(alpha = .08f), modifier = Modifier.size(148.dp)) { Image(painterResource(R.drawable.tino_mascot), "TINO, tu asistente", Modifier.fillMaxSize()) }
                         Text("¿En qué te ayudo hoy?", color = Ink, fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                    }
+                }
+                if (state.familyInbox.isNotEmpty()) item {
+                    DashboardCard("Tu grupo está cerca") {
+                        state.familyInbox.forEach { incoming ->
+                            Text(incoming.optString("author", "Tu grupo familiar"), fontWeight = FontWeight.SemiBold, color = DashTeal)
+                            Text(when (incoming.optString("type")) { "voice" -> "Te dejó un aviso de voz."; "location_request" -> "Te pidió que compartas tu ubicación. Vos decidís si hacerlo."; else -> "Te mandó un ping para decirte que está disponible." }, color = DashInk, fontSize = 15.sp)
+                            if (incoming.optString("type") == "voice") AudioMessageButton(incoming.optString("audioBase64"))
+                            if (incoming.optString("type") == "location_request") TextButton(onClick = { app.sendMessage("Quiero compartir mi ubicación por WhatsApp") }) { Text("Quiero compartir mi ubicación", color = DashTeal) }
+                            HorizontalDivider(color = DashPaper)
+                        }
                     }
                 }
                 items(state.chat) { line ->

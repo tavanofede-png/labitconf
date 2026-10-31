@@ -1,0 +1,194 @@
+[
+  {
+    "id": "AR-C",
+    "name": "Ciudad Autónoma de Buenos Aires",
+    "point": [
+      -58.4459,
+      -34.6144
+    ]
+  },
+  {
+    "id": "AR-Q",
+    "name": "Neuquén",
+    "point": [
+      -70.1199,
+      -38.642
+    ]
+  },
+  {
+    "id": "AR-D",
+    "name": "San Luis",
+    "point": [
+      -66.0252,
+      -33.7611
+    ]
+  },
+  {
+    "id": "AR-S",
+    "name": "Santa Fe",
+    "point": [
+      -60.9507,
+      -30.7088
+    ]
+  },
+  {
+    "id": "AR-F",
+    "name": "La Rioja",
+    "point": [
+      -67.1818,
+      -29.6849
+    ]
+  },
+  {
+    "id": "AR-K",
+    "name": "Catamarca",
+    "point": [
+      -66.9479,
+      -27.336
+    ]
+  },
+  {
+    "id": "AR-T",
+    "name": "Tucumán",
+    "point": [
+      -65.3648,
+      -26.9483
+    ]
+  },
+  {
+    "id": "AR-H",
+    "name": "Chaco",
+    "point": [
+      -60.7651,
+      -26.387
+    ]
+  },
+  {
+    "id": "AR-P",
+    "name": "Formosa",
+    "point": [
+      -59.9322,
+      -24.8951
+    ]
+  },
+  {
+    "id": "AR-Z",
+    "name": "Santa Cruz",
+    "point": [
+      -69.9558,
+      -48.8155
+    ]
+  },
+  {
+    "id": "AR-U",
+    "name": "Chubut",
+    "point": [
+      -68.5267,
+      -43.7886
+    ]
+  },
+  {
+    "id": "AR-M",
+    "name": "Mendoza",
+    "point": [
+      -68.5829,
+      -34.6304
+    ]
+  },
+  {
+    "id": "AR-E",
+    "name": "Entre Ríos",
+    "point": [
+      -59.2013,
+      -32.0589
+    ]
+  },
+  {
+    "id": "AR-J",
+    "name": "San Juan",
+    "point": [
+      -68.8882,
+      -30.8657
+    ]
+  },
+  {
+    "id": "AR-Y",
+    "name": "Jujuy",
+    "point": [
+      -65.7644,
+      -23.32
+    ]
+  },
+  {
+    "id": "AR-G",
+    "name": "Santiago del Estero",
+    "point": [
+      -63.2526,
+      -27.7834
+    ]
+  },
+  {
+    "id": "AR-R",
+    "name": "Río Negro",
+    "point": [
+      -67.2297,
+      -40.4051
+    ]
+  },
+  {
+    "id": "AR-W",
+    "name": "Corrientes",
+    "point": [
+      -57.8011,
+      -28.7742
+    ]
+  },
+  {
+    "id": "AR-N",
+    "name": "Misiones",
+    "point": [
+      -54.6516,
+      -26.8753
+    ]
+  },
+  {
+    "id": "AR-A",
+    "name": "Salta",
+    "point": [
+      -64.8142,
+      -24.2993
+    ]
+  },
+  {
+    "id": "AR-X",
+    "name": "Córdoba",
+    "point": [
+      -63.802,
+      -32.1448
+    ]
+  },
+  {
+    "id": "AR-B",
+    "name": "Buenos Aires",
+    "point": [
+      -60.5585,
+      -36.6774
+    ]
+  },
+  {
+    "id": "AR-L",
+    "name": "La Pampa",
+    "point": [
+      -65.4476,
+      -37.1351
+    ]
+  },
+  {
+    "id": "AR-V",
+    "name": "Tierra del Fuego",
+    "point": [
+      -68.3,
+      -54.8
+    ]
+  }
+]

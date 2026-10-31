@@ -1,3 +1,4 @@
+import { ageOn } from './dashboard-demo.mjs';
 const DAY = 86_400_000;
 const round = (n) => Math.round(n * 10) / 10;
 const sum = (items, value) => items.reduce((total, item) => total + value(item), 0);
@@ -12,7 +13,7 @@ const inPeriod = (value, period) => Date.parse(value) >= Date.parse(period.from)
 
 /** Only bounded, aggregate records are returned. Identity and free text never enter this response. */
 export function summarize(state, territoryId, period, minimumCohort) {
-  const users = new Set(state.users.filter((user) => user.territoryId === territoryId).map((user) => user.id));
+  const users = new Set(state.users.filter((user) => territoryId === 'AR' || user.territoryId === territoryId).map((user) => user.id));
   const sessions = state.sessions.filter((session) => users.has(session.userId) && inPeriod(session.createdAt, period));
   const usage = (state.usage ?? []).filter((entry) => users.has(entry.userId) && inPeriod(entry.startedAt, period));
   const safety = (state.safety ?? []).filter((entry) => users.has(entry.userId) && inPeriod(entry.createdAt, period));
@@ -25,12 +26,14 @@ export function summarize(state, territoryId, period, minimumCohort) {
   const sessionsPublishable = unique(sessions) >= minimumCohort;
   const completed = sessions.filter((session) => session.state === 'completed');
   const autonomy = completed.filter((session) => session.autonomyCompleted);
+  const ages = (state.accounts ?? []).filter(a => a.preferences?.aggregates === true && cohort.has(a.deviceId)).map(a => ageOn(a.profile?.birthDate, period.to)).filter(age => age !== null);
   const metrics = sessionsPublishable ? {
     sessions: sessions.length, completedFlows: completed.length, autonomyChecks: autonomy.length,
     accompaniedMinutes: round(sum(sessions, (s) => s.durationSeconds) / 60),
     completionRate: sessions.length ? round(completed.length * 100 / sessions.length) : null,
     autonomyRate: completed.length ? round(autonomy.length * 100 / completed.length) : null,
     averageMinutes: sessions.length ? round(sum(sessions, (s) => s.durationSeconds) / sessions.length / 60) : null,
+    averageAge: ages.length >= minimumCohort ? round(ages.reduce((n, age) => n + age, 0) / ages.length) : null,
   } : null;
   const group = (items, key, build) => {
     const groups = [...new Set(items.map(key))].map((id) => [id, items.filter((item) => key(item) === id)]);
@@ -56,6 +59,8 @@ export function summarize(state, territoryId, period, minimumCohort) {
     screenMinutes: round(sum(usage, (s) => s.durationSeconds) / 60),
     accompaniedMinutes: round(sum(usage, (s) => s.accompaniedSeconds) / 60),
     unaccompaniedMinutes: round(sum(usage, (s) => s.durationSeconds - s.accompaniedSeconds) / 60),
+    screenMinutesPerDay: round(sum(usage, s => s.durationSeconds) / 60 / new Set(usage.map(s => `${s.userId}:${s.startedAt.slice(0,10)}`)).size),
+    tinoMinutesPerDay: round(sum(usage, s => s.accompaniedSeconds) / 60 / new Set(usage.map(s => `${s.userId}:${s.startedAt.slice(0,10)}`)).size),
     categories: group(usage, (s) => s.category, (category, rows) => ({ category, minutes: round(sum(rows, (s) => s.durationSeconds) / 60) })),
   } : null;
   const publishedSafety = unique(safety) >= minimumCohort ? {

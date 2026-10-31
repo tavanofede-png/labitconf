@@ -37,6 +37,8 @@ data class AppState(
     val foreground: Boolean = false,
     val speaking: Boolean = false,
     val openChatEpoch: Int = 0,
+    val recordingVoiceNote: Boolean = false,
+    val familyInbox: List<JSONObject> = emptyList(),
     val familyName: String? = null,
     val shareProgress: Boolean = false,
     val allowHelp: Boolean = false,
@@ -114,6 +116,16 @@ class NietoApp : Application() {
     fun stopSpeaking() { activeUtterance = null; tts?.stop(); mutable.value = mutable.value.copy(speaking = false) }
     fun foreground(visible: Boolean) { mutable.value = mutable.value.copy(foreground = visible) }
     fun openChat() { mutable.value = mutable.value.copy(openChatEpoch = mutable.value.openChatEpoch + 1) }
+    fun pauseWakeForRecording() { mutable.value = mutable.value.copy(recordingVoiceNote = true) }
+    fun resumeWakeAfterRecording() { mutable.value = mutable.value.copy(recordingVoiceNote = false) }
+    suspend fun refreshFamilyInbox() {
+        if (settings.token.isBlank()) return
+        runCatching {
+            val messages = api.request("/family/messages").optJSONArray("messages")
+            val items = if (messages == null) emptyList() else (0 until messages.length()).map { messages.getJSONObject(it) }
+            if (items.map { it.toString() } != state.value.familyInbox.map { it.toString() }) mutable.value = mutable.value.copy(familyInbox = items)
+        }
+    }
     fun bubbleState(enabled: Boolean) { mutable.value = mutable.value.copy(bubbleEnabled = enabled) }
     fun wakeState(phase: String) { mutable.value = mutable.value.copy(wakePhase = phase) }
     fun presenceNotice(text: String?) { mutable.value = mutable.value.copy(presenceNotice = text) }
@@ -165,7 +177,7 @@ class NietoApp : Application() {
         sessionId = null
         updateGuide(engine.cancel())
         conversationId = UUID.randomUUID().toString()
-        mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null)
+        mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null, familyInbox = emptyList())
     }
     fun sendMessage(text: String) {
         val clean = text.trim().take(1000)

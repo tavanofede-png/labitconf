@@ -12,6 +12,8 @@ import { institutionDashboard, compareProgram, periodFor, summarize } from './in
 import { createAccounts, AccountError } from './accounts.mjs';
 import { createAssistant, TASK_FLOWS } from './assistant.mjs';
 import { generateReply } from './model-adapter.mjs';
+import { demoInstitution, demoFamily, DEMO_TERRITORIES } from './dashboard-demo.mjs';
+import { createDashboardContext, crossPublicContext } from './dashboard-context.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
@@ -68,6 +70,11 @@ function audit(state, action, actorId, now) {
   state.audit.push({ id: randomUUID(), action, actorId, at: new Date(now).toISOString() });
   if (state.audit.length > 5000) state.audit.splice(0, state.audit.length - 5000);
 }
+function validateVoice(value) {
+  required(typeof value === 'string' && value.length <= 175_000 && /^[A-Za-z0-9+/]+={0,2}$/.test(value), 400, 'invalid_voice', 'Grabá un aviso de hasta 30 segundos.');
+  const bytes = Buffer.from(value, 'base64');
+  required(bytes.length >= 100 && bytes.length <= 131_072 && bytes.toString('ascii', 4, 8) === 'ftyp' && bytes.toString('base64') === value, 400, 'invalid_voice', 'El aviso debe tener formato de audio M4A válido.');
+}
 
 async function bodyOf(req, maxBytes) {
   if (!['POST', 'PATCH'].includes(req.method)) return {};
@@ -93,6 +100,7 @@ export function createApp({
   const rates = new Map();
   const accounts = createAccounts({ store, now, ...accountOptions });
   const assistant = createAssistant({ now, ...assistantOptions });
+  const dashboardContext = createDashboardContext(openarg);
   const handler = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -125,11 +133,44 @@ export function createApp({
         if (!rate || rate.resetAt <= current) { rate = { count: 0, resetAt: current + rateWindowMs }; rates.set(rateKey, rate); }
         required(++rate.count <= rateLimit, 429, 'rate_limited', 'Demasiados pedidos. Esperá un minuto.');
       }
-      const body = await bodyOf(req, maxBodyBytes);
+      const body = await bodyOf(req, ['/family/messages', '/demo/family/actions'].includes(route) ? 196_608 : maxBodyBytes);
       const method = req.method;
       const accountResponse = await accounts.handle({ route, method, body, bearer: token, remoteAddress: req.socket.remoteAddress });
       if (accountResponse) { respond(...accountResponse); return; }
       const account = token ? await accounts.principal(token) : null;
+
+      if (route.startsWith('/demo/')) {
+        required(account?.demo === true, 403, 'demo_only', 'Este escenario requiere una cuenta de demostración.');
+        if (method === 'GET' && route === '/demo/institution/dashboard') {
+          required(account.role === 'institution', 403, 'wrong_role', 'Ingresá al espacio institucional.');
+          const territoryId = url.searchParams.get('territoryId') ?? 'AR'; const months = Number(url.searchParams.get('months') ?? 6); const month = url.searchParams.get('month');
+          required(['AR', ...DEMO_TERRITORIES.map(t => t.id)].includes(territoryId) && [1, 3, 6].includes(months) && (!month || /^\d{4}-\d{2}$/.test(month)), 400, 'invalid_filter', 'Elegí una provincia y un período válido.');
+          let dashboard;
+          try { dashboard = demoInstitution({ now: current, territoryId, months, month }); } catch { throw new ApiError(400, 'invalid_filter', 'El mes no pertenece a los últimos seis meses.'); }
+          const publicContext = crossPublicContext(dashboard, await dashboardContext());
+          respond(200, { ...dashboard, territories: publicContext.territories, publicContext }); return;
+        }
+        if (method === 'GET' && route === '/demo/family/dashboard') {
+          required(account.role === 'family' && account.groupId, 403, 'wrong_role', 'Ingresá al grupo familiar.');
+          const s = await store.read(); const actions = (s.demoFamilyActions ?? []).filter(a => a.groupId === account.groupId);
+          const dashboard = demoFamily(current);
+          dashboard.group.id = account.groupId;
+          dashboard.alerts = dashboard.alerts.map(a => ({ ...a, resolvedAt: actions.find(x => x.type === 'resolve' && x.memberId === a.memberId)?.createdAt ?? null }));
+          respond(200, { ...dashboard, messages: actions.filter(a => ['ping', 'voice', 'location_request'].includes(a.type)).slice(-20).reverse() }); return;
+        }
+        if (method === 'POST' && route === '/demo/family/actions') {
+          required(account.role === 'family' && account.groupId, 403, 'wrong_role', 'Ingresá al grupo familiar.');
+          keys(body, ['id', 'memberId', 'type', 'audioBase64']);
+          required(['marta', 'ricardo', 'lucia'].includes(body.memberId) && ['ping', 'voice', 'resolve', 'location_request'].includes(body.type), 400, 'invalid_action', 'Elegí una persona y una acción válida.');
+          required(typeof body.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(body.id), 400, 'invalid_id', 'Identificador inválido.');
+          if (body.type === 'voice') validateVoice(body.audioBase64);
+          await store.update(s => {
+            s.demoFamilyActions ??= []; s.demoFamilyActions = s.demoFamilyActions.filter(a => Date.parse(a.createdAt) > current - 86_400_000);
+            if (!s.demoFamilyActions.some(a => a.id === body.id && a.groupId === account.groupId)) s.demoFamilyActions.push({ id: body.id, memberId: body.memberId, type: body.type, groupId: account.groupId, createdAt: new Date(current).toISOString(), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
+          }); respond(200, { ok: true, simulated: true }); return;
+        }
+        throw new ApiError(404, 'not_found', 'Ruta inexistente.');
+      }
 
       if (method === 'GET' && route === '/health') {
         const status = openarg.status();
@@ -193,11 +234,21 @@ export function createApp({
         respond(200, normalizeAnswer(await openarg.call('consultar_datos_publicos', { pregunta: scopedQuestion }))); return;
       }
       if (method === 'GET' && ['/institution/analytics', '/institution/territories'].includes(route)) {
-        const territoryId = territory(url.searchParams.get('territoryId') ?? undefined);
+        const territoryId = url.searchParams.get('territoryId') === 'AR' ? 'AR' : territory(url.searchParams.get('territoryId') ?? undefined);
         const days = Number(url.searchParams.get('days') ?? '30');
-        required([7, 30, 90].includes(days), 400, 'invalid_period', 'Elegí un período de 7, 30 o 90 días.');
+        required([7, 30, 90, 180].includes(days), 400, 'invalid_period', 'Elegí un período de 7, 30, 90 o 180 días.');
         const state = await store.read();
-        if (route.endsWith('/analytics')) respond(200, institutionDashboard(state, territoryId, days, minimumCohort, current));
+        if (route.endsWith('/analytics')) {
+          const dashboard = institutionDashboard(state, territoryId, days, minimumCohort, current);
+          const m = dashboard.metrics; const linkCategory = dashboard.safety?.categories.find(c => c.kind === 'suspicious_link');
+          const territoryStats = DEMO_TERRITORIES.map(t => { const data = summarize(state, t.id, periodFor(days, current), minimumCohort); return { ...t, suppressed: data.suppressed, activeUsers: data.participants, unsafeLinks: data.safety?.categories.find(c => c.kind === 'suspicious_link')?.count ?? null }; });
+          if (territoryStats.some(t => t.suppressed)) territoryStats.forEach(t => { t.activeUsers = null; t.unsafeLinks = null; });
+          const model = { ...dashboard, origin: 'tino_consented', territories: territoryStats, metrics: m ? { ...m, activeUsers: dashboard.participants, requests: m.sessions, independent: m.autonomyChecks, completed: m.completedFlows,
+            screenMinutesPerDay: dashboard.usage?.screenMinutesPerDay ?? null, tinoMinutesPerDay: dashboard.usage?.tinoMinutesPerDay ?? null, unsafeLinks: linkCategory?.count ?? null } : null,
+            flows: dashboard.flows.map(f => ({ ...f, count: f.started })), trend: dashboard.trend.map(row => ({ ...row, month: row.date, requests: row.sessions, autonomyRate: row.completed ? Math.round(row.autonomyChecks / row.completed * 1000) / 10 : null })) };
+          const publicContext = crossPublicContext(model, await dashboardContext());
+          respond(200, { ...model, territories: publicContext.territories, publicContext });
+        }
         else respond(200, { period: periodFor(days, current), minimumCohort,
           territories: Object.entries(TERRITORIES).map(([id, name]) => {
             const result = summarize(state, id, periodFor(days, current), minimumCohort);
@@ -251,6 +302,24 @@ export function createApp({
       const group = token ? state.groups.find((g) => same(hash(token), g.tokenHash) || (account?.role === 'family' && account.groupId === g.id)) : undefined;
       const needUser = () => required(user, 401, 'unauthorized', 'Token de dispositivo inválido o ausente.');
       const needGroup = () => required(group, 401, 'unauthorized', 'Token familiar inválido o ausente.');
+      if (method === 'POST' && route === '/family/messages') {
+        needGroup(); keys(body, ['id', 'memberId', 'type', 'audioBase64']);
+        required(typeof body.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(body.id), 400, 'invalid_id', 'Identificador inválido.');
+        required(['ping', 'voice', 'location_request'].includes(body.type), 400, 'invalid_type', 'Mensaje familiar inválido.');
+        required(state.relationships.some(r => r.groupId === group.id && r.userId === body.memberId && r.permissions.help), 403, 'help_not_consented', 'Esta persona no autorizó el acompañamiento familiar.');
+        if (body.type === 'voice') validateVoice(body.audioBase64);
+        await store.update(s => {
+          s.familyMessages ??= []; s.familyMessages = s.familyMessages.filter(m => Date.parse(m.expiresAt) > current);
+          if (!s.familyMessages.some(m => m.id === body.id && m.groupId === group.id)) s.familyMessages.push({ id: body.id, memberId: body.memberId, groupId: group.id, type: body.type,
+            author: account?.profile?.name ?? group.name, createdAt: new Date(current).toISOString(), expiresAt: new Date(current + 86_400_000).toISOString(), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
+        }); respond(201, { ok: true }); return;
+      }
+      if (method === 'GET' && route === '/family/messages') {
+        needUser(); const relationship = state.relationships.find(r => r.userId === user.id && r.permissions.help);
+        if ((state.familyMessages ?? []).some(m => Date.parse(m.expiresAt) <= current)) await store.update(s => { s.familyMessages = (s.familyMessages ?? []).filter(m => Date.parse(m.expiresAt) > current); });
+        const messages = relationship ? (state.familyMessages ?? []).filter(m => m.memberId === user.id && m.groupId === relationship.groupId && Date.parse(m.expiresAt) > current).slice(-5).reverse() : [];
+        respond(200, { messages }); return;
+      }
       if (method === 'POST' && route === '/usage/batch') {
         needUser(); keys(body, ['consent', 'intervals']);
         required(body.consent === true, 400, 'consent_required', 'El envío de métricas de uso requiere permiso específico en el dispositivo.');
@@ -395,14 +464,25 @@ export function createApp({
       }
       if (method === 'GET' && route === '/family/summary') {
         needGroup(); const relations = state.relationships.filter((r) => r.groupId === group.id);
-        const members = relations.map((r) => { const u = state.users.find((u) => u.id === r.userId); return { id: u.id, name: u.name, permissions: r.permissions, ...(r.permissions.progress ? metricsFor(sessionsFor(state, u.id)) : {}) }; });
+        const members = relations.map((r) => {
+          const u = state.users.find(u => u.id === r.userId); const sessions = sessionsFor(state, u.id);
+          const dates = Array.from({ length: 7 }, (_, i) => new Date(current - (6 - i) * 86_400_000).toISOString().slice(0, 10));
+          const usage = (state.usage ?? []).filter(e => e.userId === u.id);
+          return { id: u.id, name: u.name, territoryId: u.territoryId, permissions: r.permissions, location: null,
+            ...(r.permissions.progress ? { ...metricsFor(sessions), tinoMinutes: Math.round(sessions.filter(s => s.createdAt.slice(0, 10) === dates[6]).reduce((n, s) => n + s.durationSeconds, 0) / 60),
+              weeklyTino: dates.map(d => Math.round(sessions.filter(s => s.createdAt.slice(0, 10) === d).reduce((n, s) => n + s.durationSeconds, 0) / 60)),
+              activities: sessions.slice(-10).reverse().map(s => ({ title: s.state === 'completed' ? 'Completó una tarea' : 'Practicó con TINO', detail: TASK_FLOWS[s.flowId]?.title ?? 'Compartir ubicación', at: s.createdAt })),
+              learned: sessions.filter(s => s.autonomyCompleted).map(s => TASK_FLOWS[s.flowId]?.title ?? 'Compartir ubicación').at(-1) ?? null } : {}),
+            ...(r.permissions.usage ? { screenMinutes: Math.round(usage.filter(e => e.startedAt.slice(0, 10) === dates[6]).reduce((n, e) => n + e.durationSeconds, 0) / 60), weeklyScreen: dates.map(d => Math.round(usage.filter(e => e.startedAt.slice(0, 10) === d).reduce((n, e) => n + e.durationSeconds, 0) / 60)) } : {}) };
+        });
         const helpIds = new Set(relations.filter((r) => r.permissions.help).map((r) => r.userId));
         const alerts = state.alerts.filter((a) => a.groupId === group.id && !a.revokedAt && helpIds.has(a.userId))
           .map(({ id, type, message, createdAt, resolvedAt, userId }) => ({ id, type, message, createdAt, resolvedAt,
             memberId: userId, requesterName: state.users.find((u) => u.id === userId)?.name }));
         const joinRequests = account?.id === group.adminAccountId ? (state.familyJoinRequests ?? []).filter(r => r.groupId === group.id && !r.resolvedAt)
           .map(r => { const applicant = state.accounts.find(a => a.id === r.accountId); return { id: r.id, name: applicant?.profile?.name ?? 'Persona de apoyo', email: applicant?.email, createdAt: r.createdAt }; }) : [];
-        respond(200, { group: publicGroup(group), members, alerts, joinRequests }); return;
+        const messages = (state.familyMessages ?? []).filter(m => m.groupId === group.id && Date.parse(m.expiresAt) > current && helpIds.has(m.memberId)).slice(-5).reverse();
+        respond(200, { origin: 'tino_consented', group: publicGroup(group), members, alerts, joinRequests, messages }); return;
       }
       const resolveMatch = /^\/family\/alerts\/([a-f0-9-]+)\/resolve$/.exec(route);
       if (method === 'POST' && resolveMatch) {

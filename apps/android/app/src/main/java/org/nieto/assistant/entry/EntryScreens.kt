@@ -54,6 +54,8 @@ import org.json.JSONObject
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.R
 import org.nieto.assistant.ui.LogoutButton
+import org.nieto.assistant.ui.FamilyDashboard
+import org.nieto.assistant.ui.InstitutionDashboard
 
 private val Teal = Color(0xFF006B64)
 private val Mint = Color(0xFFE3F9F6)
@@ -92,6 +94,8 @@ private val Background = Color(0xFFF3F6F6)
         assistant(vm::logout)
         return
     }
+    if (s.page == EntryPage.HOME && s.role == AccountRole.FAMILY) { FamilyDashboard(s, vm, app); return }
+    if (s.page == EntryPage.HOME && s.role == AccountRole.INSTITUTION) { InstitutionDashboard(s, vm); return }
     Scaffold(containerColor = Background, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(110.dp).height(46.dp))

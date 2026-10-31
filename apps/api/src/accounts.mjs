@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { ageOn } from './dashboard-demo.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const token = () => randomBytes(32).toString('base64url');
@@ -58,6 +59,19 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
     account.preferences = { microphone: false, notifications: false, screen: false, support: false, aggregates: false };
     account.deviceId ??= randomUUID();
     if (!state.users.some(user => user.id === account.deviceId)) state.users.push({ id: account.deviceId, accountId: account.id, name: account.profile.name, territoryId: 'AR-C', demo: true, tokenHash: digest(token()), createdAt: new Date(current).toISOString() });
+  }
+  function completeDemoRole(state, account, current) {
+    if (account.role === 'user') { completeDemoUser(state, account, current); return; }
+    if (account.onboarded) return;
+    const base = `demo.${account.role}`; let username = base; let suffix = 1;
+    while (!availableUsername(state, username, account.id)) username = `${base}${++suffix}`;
+    account.profile = { name: account.role === 'family' ? 'Equipo familiar' : 'Institución demo', email: account.email, username,
+      phone: '+540000000000', birthDate: '1990-05-10', territoryId: 'AR-C', organization: 'TINO · Laboratorio de inclusión' };
+    account.onboarded = true; account.preferences = {};
+    if (account.role === 'family') {
+      const group = { id: randomUUID(), name: 'Nuestra familia', demo: true, tokenHash: digest(token()), adminAccountId: account.id, createdAt: new Date(current).toISOString() };
+      state.groups.push(group); account.groupId = group.id;
+    }
   }
   async function handle({ route, method, body, bearer, remoteAddress }) {
     if (method === 'POST' && route === '/auth/demo/login') {
@@ -130,7 +144,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
         c.used = true;
         let account = s.accounts.find(a => Boolean(a.demo) === Boolean(c.demo) && a.email === c.email && a.role === c.role);
         if (!account) { account = { id: randomUUID(), email: c.email, role: c.role, demo: Boolean(c.demo), onboarded: false, createdAt: new Date(current).toISOString() }; s.accounts.push(account); }
-        if (c.demo && c.purpose === 'login' && account.role === 'user') completeDemoUser(s, account, current);
+        if (c.demo && c.purpose === 'login') completeDemoRole(s, account, current);
         if (c.purpose === 'family_join') account.requestedAdminEmail = c.adminEmail;
         s.authSessions = s.authSessions.filter(session => session.expiresAt > current);
         s.authSessions.push({ id: randomUUID(), accountId: account.id, tokenHash: digest(bearerToken), expiresAt: current + 7 * 86_400_000 });
@@ -154,6 +168,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       profile.username = profile.username.toLowerCase();
       check(usernamePattern.test(profile.username), 400, 'invalid_username', 'El nombre de usuario es obligatorio y admite de 3 a 30 letras, números, puntos o guiones bajos.');
       profile.phone = phoneNumber(input.phone);
+      if (input.birthDate !== undefined && input.birthDate !== '') check(ageOn(input.birthDate, now()) !== null, 400, 'invalid_birth_date', 'Ingresá una fecha de nacimiento válida, anterior a hoy.');
       check(account.role !== 'institution' || profile.organization, 400, 'organization_required', 'Ingresá el nombre de la institución.');
       check(questionIds[account.role].every(id => Number.isInteger(body.answers?.[id]) && body.answers[id] >= 0 && body.answers[id] <= 3), 400, 'invalid_answers', 'Respondé todas las preguntas con una opción A, B, C o D.');
       const answers = Object.fromEntries(questionIds[account.role].map(id => [id, body.answers[id]]));

@@ -1,0 +1,250 @@
+{
+  "provider": "OpenARG",
+  "status": "verified_snapshot",
+  "retrievedAt": "2026-10-31T02:03:22.458Z",
+  "verifiedOn": "2026-10-31",
+  "populationPeriod": "2022",
+  "connectivityPeriod": "2026 T1",
+  "sources": [
+    {
+      "title": "INDEC · Censo 2022, resultados definitivos · publicación DGEyC Córdoba",
+      "url": "https://datosestadistica.cba.gov.ar/dataset/a047806e-e19a-4cdd-b800-b544d436f231/resource/ffaff001-83fd-4416-ad5f-13c33cc117b8/download/cnphv2022_resultados_definitivos_cordoba-1.xlsx",
+      "period": "2022",
+      "table": "raw.cordoba_estadistica__censo_2022__9e3466dc__v3",
+      "retrievedAt": "2026-10-31T02:03:22.458Z",
+      "readAt": "2026-05-07"
+    },
+    {
+      "title": "ENACOM · Accesos a Internet fijo por provincia",
+      "url": "https://indicadores.enacom.gob.ar/Files/DatosAbiertos/internet_accesos_penetracion_provincias.csv",
+      "period": "2026 T1",
+      "table": "cache_datos_gob_ar_internet_fija_r18e293e7ce",
+      "retrievedAt": "2026-10-31T02:03:22.790Z",
+      "readAt": "2026-07-30"
+    }
+  ],
+  "nationalPopulation": 45892285,
+  "provinces": [
+    {
+      "territoryId": "AR-C",
+      "name": "Ciudad Autónoma de Buenos Aires",
+      "population": 3121707,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 118.81,
+      "internetPer100People": 53.52,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-Q",
+      "name": "Neuquén",
+      "population": 710814,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 92.97,
+      "internetPer100People": 33.68,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-D",
+      "name": "San Luis",
+      "population": 542069,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 103.57,
+      "internetPer100People": 35.47,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-S",
+      "name": "Santa Fe",
+      "population": 3544908,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 75.27,
+      "internetPer100People": 27.39,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-F",
+      "name": "La Rioja",
+      "population": 383865,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 69.22,
+      "internetPer100People": 22.78,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-K",
+      "name": "Catamarca",
+      "population": 429562,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 67.42,
+      "internetPer100People": 21.22,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-T",
+      "name": "Tucumán",
+      "population": 1731820,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 61.6,
+      "internetPer100People": 17.99,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-H",
+      "name": "Chaco",
+      "population": 1129606,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 50.45,
+      "internetPer100People": 16.73,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-P",
+      "name": "Formosa",
+      "population": 607419,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 48.74,
+      "internetPer100People": 15.91,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-Z",
+      "name": "Santa Cruz",
+      "population": 337226,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 89.6,
+      "internetPer100People": 31.69,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-U",
+      "name": "Chubut",
+      "population": 592621,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 87.05,
+      "internetPer100People": 31.63,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-M",
+      "name": "Mendoza",
+      "population": 2043540,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 60.7,
+      "internetPer100People": 19.38,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-E",
+      "name": "Entre Ríos",
+      "population": 1425578,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 69.19,
+      "internetPer100People": 24.31,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-J",
+      "name": "San Juan",
+      "population": 822853,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 58.84,
+      "internetPer100People": 17.68,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-Y",
+      "name": "Jujuy",
+      "population": 811611,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 64.78,
+      "internetPer100People": 19.62,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-G",
+      "name": "Santiago del Estero",
+      "population": 1060906,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 64.14,
+      "internetPer100People": 19.17,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-R",
+      "name": "Río Negro",
+      "population": 750768,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 81.63,
+      "internetPer100People": 30.34,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-W",
+      "name": "Corrientes",
+      "population": 1212696,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 58.94,
+      "internetPer100People": 18.43,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-N",
+      "name": "Misiones",
+      "population": 1278873,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 54.67,
+      "internetPer100People": 18.21,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-A",
+      "name": "Salta",
+      "population": 1441351,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 71.97,
+      "internetPer100People": 20.9,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-X",
+      "name": "Córdoba",
+      "population": 3840905,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 86.14,
+      "internetPer100People": 31.28,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-B",
+      "name": "Buenos Aires",
+      "population": 17523996,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 93.21,
+      "internetPer100People": 32.19,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-L",
+      "name": "La Pampa",
+      "population": 361859,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 102.74,
+      "internetPer100People": 40.21,
+      "connectivityPeriod": "2026 T1"
+    },
+    {
+      "territoryId": "AR-V",
+      "name": "Tierra del Fuego",
+      "population": 185732,
+      "populationPeriod": "2022",
+      "internetPer100Homes": 97.11,
+      "internetPer100People": 34.63,
+      "connectivityPeriod": "2026 T1"
+    }
+  ],
+  "notes": [
+    "La población corresponde al Censo 2022, no a una estimación actual.",
+    "ENACOM mide accesos por 100 hogares: no es porcentaje de hogares conectados y puede superar 100.",
+    "Conectividad, edad y actividad no permiten inferir discapacidad ni causalidad."
+  ]
+}

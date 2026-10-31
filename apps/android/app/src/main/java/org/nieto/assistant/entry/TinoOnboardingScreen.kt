@@ -27,6 +27,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.nieto.assistant.R
+import android.app.DatePickerDialog
+import androidx.compose.ui.platform.LocalContext
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 private val Cyan = Color(0xFF00D6C9)
 private val Dark = Color(0xFF101416)
@@ -110,6 +114,7 @@ private val Paper = Color(0xFFF3F6F6)
         ProfileStep.USERNAME -> "Tu nombre en TINO."
         ProfileStep.PHONE -> "¿Cuál es tu teléfono?"
         ProfileStep.EMAIL -> "¿Cuál es tu correo?"
+        ProfileStep.BIRTH_DATE -> "¿Cuándo naciste?"
         ProfileStep.TERRITORY -> "¿Dónde estás?"
         ProfileStep.PHOTO -> "¿Sumamos una foto?"
         ProfileStep.ORGANIZATION -> "¿Cómo se llama tu institución?"
@@ -120,6 +125,7 @@ private val Paper = Color(0xFFF3F6F6)
         ProfileStep.USERNAME -> "Lo creamos con tu nombre. Podés editarlo; es único y te identifica dentro de TINO."
         ProfileStep.PHONE -> "Incluí tu código de país y de área. Este dato es obligatorio."
         ProfileStep.EMAIL -> "Te vamos a enviar un código para verificar tu cuenta, sin contraseña."
+        ProfileStep.BIRTH_DATE -> "Para adaptar tu experiencia. Las instituciones solo reciben edades agregadas cuando autorizás compartir estadísticas."
         ProfileStep.TERRITORY -> "Elegí tu provincia o jurisdicción."
         ProfileStep.PHOTO -> "Es opcional. Podés agregarla ahora o más adelante."
         ProfileStep.ORGANIZATION -> "Este será el nombre de tu institución en el portal."
@@ -127,6 +133,20 @@ private val Paper = Color(0xFFF3F6F6)
     }
     QuestionTitle(title, detail, false)
     when (step) {
+        ProfileStep.BIRTH_DATE -> {
+            val context = LocalContext.current
+            val selected = runCatching { LocalDate.parse(s.field("birthDate")) }.getOrDefault(LocalDate.of(1990, 1, 1))
+            OutlinedButton(onClick = {
+                DatePickerDialog(context, { _, year, month, day ->
+                    vm.profileField("birthDate", LocalDate.of(year, month + 1, day).toString()); vm.nextProfile()
+                }, selected.year, selected.monthValue - 1, selected.dayOfMonth).apply {
+                    datePicker.maxDate = System.currentTimeMillis()
+                    datePicker.minDate = java.util.Calendar.getInstance().apply { add(java.util.Calendar.YEAR, -125) }.timeInMillis
+                }.show()
+            }, modifier = Modifier.fillMaxWidth().heightIn(min = 68.dp), shape = RoundedCornerShape(18.dp)) {
+                Text(if (s.field("birthDate").isBlank()) "Elegir fecha de nacimiento" else selected.format(DateTimeFormatter.ofPattern("dd / MM / yyyy")), color = Dark, fontSize = 23.sp)
+            }
+        }
         ProfileStep.PHOTO -> {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 ProfilePhoto(s.field("photo"), s.field("name"))
