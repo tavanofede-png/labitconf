@@ -6,15 +6,27 @@ export async function juryApi<T>(resource: string, body?: unknown, query = '', s
     const response=await fetch('/api/demo/family/actions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({id:crypto.randomUUID(),...(body as object)})});
     const value=await response.json();if(!response.ok)throw new Error(value.error?.message||'No pude enviar el aviso.');return value as T;
   }
-  const response = await fetch(`/api/jury?resource=${resource}${query}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { ...(body===undefined?{}:{'Content-Type':'application/json'}),...(token?{Authorization:`Bearer ${token}`}:{}) },
-    body: body === undefined ? undefined : JSON.stringify(resource==='chat'?{...(body as object),clientId:browserClientId??=(crypto.randomUUID())}:body),
-    signal: signal?AbortSignal.any([signal,AbortSignal.timeout(65000)]):AbortSignal.timeout(65000),
-  });
-  const value = await response.json();
-  if (!response.ok) throw new Error(value.error?.message || 'No pudimos completar la acción.');
-  return value as T;
+  const payload = body === undefined ? undefined : JSON.stringify(resource==='chat'?{...(body as object),clientId:browserClientId??=(crypto.randomUUID())}:body);
+  const deadline = signal?AbortSignal.any([signal,AbortSignal.timeout(65000)]):AbortSignal.timeout(65000);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    deadline.throwIfAborted();
+    const response = await fetch(`/api/jury?resource=${resource}${query}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { ...(body===undefined?{}:{'Content-Type':'application/json'}),...(token?{Authorization:`Bearer ${token}`}:{}) },
+      body: payload,
+      signal: deadline,
+    });
+    const value = await response.json();
+    if (response.ok) return value as T;
+    // Retry a temporary preflight storage outage once, with the same browser
+    // identity and deadline. Provider errors and mutations are never retried.
+    if (resource === 'chat' && attempt === 0 && response.status === 503 && value.error?.code === 'storage_unavailable') {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      continue;
+    }
+    throw new Error(value.error?.message || 'No pudimos completar la acción.');
+  }
+  throw new Error('No pudimos completar la acción.');
 }
 
 let sessionWork:Promise<string>|undefined;

@@ -101,3 +101,18 @@ test('bounded contention and oversized state fail without unguarded writes', asy
   await assert.rejects(small.update(state => { state.padding = 'x'.repeat(1200); }), /almacenamiento privado/);
   assert.equal(writes, 3);
 });
+
+test('cloud diagnostics recognize minified SDK errors without logging provider messages or credentials', async () => {
+  const fake = fakeBlob(JSON.stringify(emptyState()));
+  class Minified extends Error {}
+  fake.client.BlobAccessError = Minified;
+  fake.client.put = async () => { throw new Minified('Access denied. token SECRET_MUST_NEVER_BE_LOGGED'); };
+  const originalCloud = process.env.VERCEL, originalError = console.error;
+  const logs = []; process.env.VERCEL = '1'; console.error = value => logs.push(value);
+  try { await assert.rejects(storeOf(fake).update(state => { state.probe = true; }), /almacenamiento privado/); }
+  finally { console.error = originalError; if (originalCloud === undefined) delete process.env.VERCEL; else process.env.VERCEL = originalCloud; }
+  assert.equal(logs.length, 1);
+  assert.deepEqual(JSON.parse(logs[0]), { component: 'tino_storage', operation: 'write', type: 'BlobAccessError', reason: ['token', 'denied'] });
+  assert.equal(logs.join('').includes('SECRET'), false);
+  assert.equal(JSON.parse(fake.content()).probe, undefined);
+});

@@ -2,13 +2,18 @@ import { emptyState } from './store.mjs';
 
 const collections = ['users', 'groups', 'invitations', 'relationships', 'consents', 'sessions', 'alerts', 'audit'];
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const unavailable = () => new Error('No se pudo acceder al almacenamiento privado persistente. No se reemplazaron sus datos.');
-const storageFailure = (operation, error) => {
+const unavailable = () => Object.assign(new Error('No se pudo acceder al almacenamiento privado persistente. No se reemplazaron sus datos.'), { code: 'storage_unavailable', status: 503 });
+const storageFailure = (operation, error, client) => {
   if (process.env.VERCEL === '1') {
     const allowed = new Set(['BlobAccessError', 'BlobStoreNotFoundError', 'BlobStoreSuspendedError', 'BlobUnknownError',
-      'BlobNotFoundError', 'BlobServiceNotAvailable', 'BlobServiceRateLimited', 'BlobRequestAbortedError', 'BlobPreconditionFailedError', 'SyntaxError', 'TypeError', 'Error']);
-    const type = error?.constructor?.name;
+      'BlobNotFoundError', 'BlobServiceNotAvailable', 'BlobServiceRateLimited', 'BlobRequestAbortedError', 'BlobPreconditionFailedError', 'BlobError', 'SyntaxError', 'TypeError', 'Error']);
+    const type = [...allowed].find(name => name !== 'BlobError' && typeof client?.[name] === 'function' && error instanceof client[name])
+      || (typeof client?.BlobError === 'function' && error instanceof client.BlobError ? 'BlobError' : error?.constructor?.name);
+    // Only fixed diagnostic words, never provider messages, data or credentials.
+    const terms = ['precondition', 'etag', 'conflict', 'overwrite', 'already', 'exists', 'progress', 'concurrent', 'rate', 'too many', 'token', 'denied', 'forbidden', 'invalid', 'header', 'timeout', 'fetch', 'network', 'unavailable'];
+    const reason = terms.filter(term => String(error?.message || '').toLowerCase().includes(term));
     console.error(JSON.stringify({ component: 'tino_storage', operation, type: allowed.has(type) ? type : 'StorageError',
+      reason,
       ...(Number.isFinite(error?.retryAfter) ? { retryAfter: error.retryAfter } : {}) }));
   }
   return unavailable();
@@ -74,7 +79,7 @@ export class BlobStore {
       } finally { reader.releaseLock(); }
       const state = validateState(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       return { state, etag: found.blob.etag };
-    } catch (error) { throw storageFailure('read', error); }
+    } catch (error) { throw storageFailure('read', error, client); }
   }
 
   async init() { await this.readVersion(); }
@@ -100,7 +105,7 @@ export class BlobStore {
         } catch (error) {
           const isConflict = (client.BlobPreconditionFailedError && error instanceof client.BlobPreconditionFailedError)
             || error?.name === 'BlobPreconditionFailedError';
-          if (!isConflict) throw storageFailure('write', error);
+          if (!isConflict) throw storageFailure('write', error, client);
           if (attempt + 1 < this.maxAttempts) await this.sleep(Math.min(100, 4 * (attempt + 1)) + Math.floor(Math.random() * 8));
         }
       }
