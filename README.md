@@ -10,9 +10,9 @@ TINO acompaña a las personas que encuentran barreras al usar la tecnología: po
 
 Abrí el enlace en **Chrome**, desde desktop o tablet. La app se presenta en una Samsung Tab S10+ vertical, con las instrucciones de prueba al costado. No hace falta instalar nada para evaluar la demo web.
 
-1. Tocá **DEMO** para entrar al usuario de prueba.
-2. Usá el micrófono del chat o el ícono de salida para volver al inicio de Android.
-3. Permití el micrófono en el aviso de Chrome. Desde Android, WhatsApp o Gmail, decí **«Hola TINO»** y después tu consulta. Se abre el chat flotante, aparece la escucha, se transcribe la consulta y TINO responde.
+1. Permití el micrófono de la computadora en el aviso que aparece al abrir la demo.
+2. Tocá **DEMO** para recorrer las pantallas. Usá el ícono de salida para volver al inicio de Android, o quedate en TINO.
+3. Decí **«Hola TINO»** y esperá la respuesta hablada; después contale qué necesitás. También podés decir la consulta completa de una vez. TINO responde con audio sin abrir el chat, incluso sobre Android, WhatsApp o Gmail.
 4. Seguí las indicaciones y confirmá cada acción. También podés escribir en el chat.
 
 ### Tareas para probar por voz
@@ -22,7 +22,7 @@ Abrí el enlace en **Chrome**, desde desktop o tablet. La app se presenta en una
 - «Hola TINO, quiero compartir mi ubicación».
 - «Hola TINO, quiero mandar un correo por Gmail».
 
-La burbuja aparece **fuera de TINO** y se puede arrastrar a los márgenes. **−** minimiza y conserva la conversación; **×** la cierra y la borra. Al volver a TINO, la burbuja se oculta.
+El chat flotante se abre **solo al tocar la burbuja**. La burbuja aparece **fuera de TINO** y se puede arrastrar a los márgenes. **−** minimiza y conserva la conversación; **×** la cierra y la borra. Al volver a TINO, la burbuja se oculta.
 
 ## Tres interfaces, una misma app
 

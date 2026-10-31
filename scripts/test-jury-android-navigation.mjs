@@ -7,7 +7,7 @@ const page=await browser.newPage({viewport:{width:876,height:1400}});
 const origin=process.env.JURY_TEST_ORIGIN||'http://127.0.0.1:5173';
 try {
  await page.context().grantPermissions(['microphone']);
- await page.addInitScript(()=>{window.__juryAudioTracks=[];const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async constraints=>{const stream=await original(constraints);window.__juryAudioTracks.push(...stream.getTracks());return stream;};});
+ await page.addInitScript(()=>{window.__juryAudioTracks=[];window.__juryClonedTracks=[];const clone=MediaStream.prototype.clone;MediaStream.prototype.clone=function(){const result=clone.call(this);window.__juryClonedTracks.push(...result.getTracks());return result;};const original=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);navigator.mediaDevices.getUserMedia=async constraints=>{const stream=await original(constraints);window.__juryAudioTracks.push(...stream.getTracks());return stream;};});
  await page.goto(origin+'/app');
  assert.equal(await page.locator('.j-floating-bubble').count(),0);
  await page.getByRole('button',{name:'DEMO',exact:true}).click();
@@ -16,7 +16,7 @@ try {
  await page.getByRole('textbox',{name:'Mensaje para TINO',exact:true}).fill('Mi consulta queda guardada');
  await page.getByRole('button',{name:'Hablar con TINO',exact:true}).click();
  await page.locator('.j-recording').waitFor();
- await page.evaluate(()=>{window.__recordingTracks=[...window.__juryAudioTracks];});
+ await page.evaluate(()=>{window.__recordingTracks=[...window.__juryClonedTracks];});
  await page.getByRole('button',{name:'Salir de TINO al inicio de Android'}).click();
  await page.waitForFunction(()=>window.__recordingTracks.length>0&&window.__recordingTracks.every(track=>track.readyState==='ended'));
  console.log('MICROPHONE_RELEASED_ON_ANDROID_EXIT_PASS');
@@ -29,7 +29,11 @@ try {
  assert.equal(await page.getByRole('textbox',{name:'Mensaje para TINO',exact:true}).inputValue(),'Mi consulta queda guardada');
  await page.getByRole('button',{name:'Abrir TINO',exact:true}).click();
  assert.equal(await page.locator('.j-floating-bubble').count(),0);
+ await page.getByRole('button',{name:'Abrir menú',exact:true}).click();
+ await page.getByRole('switch',{name:'Micrófono',exact:true}).click();
  await page.waitForFunction(()=>window.__juryAudioTracks.every(track=>track.readyState==='ended'));
+ console.log('PERMISSION_PAUSE_RELEASES_REAL_INPUT_PASS');
+ await page.getByRole('button',{name:'Cerrar menú',exact:true}).click();
  await page.getByRole('button',{name:'Inicio de Android',exact:true}).click();
  await page.getByRole('button',{name:'Abrir WhatsApp',exact:true}).click();
  await page.getByRole('region',{name:'WhatsApp de práctica'}).waitFor();

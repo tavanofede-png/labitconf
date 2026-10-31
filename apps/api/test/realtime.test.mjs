@@ -82,6 +82,34 @@ test('missing OpenAI configuration returns explicit 503 instead of fabricated co
   assert.equal(health.assistant.configured, false); assert.equal(health.assistant.model, REALTIME_MODEL); assert.equal(health.assistant.generalConversation, false);
 });
 
+test('HTTP voice replies carry real PCM in a playable WAV and retain the exact Realtime model', async t => {
+  const pcm = Buffer.alloc(4800); for (let i = 0; i < pcm.length; i += 2) pcm.writeInt16LE(Math.round(Math.sin(i / 12) * 8000), i);
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    const id = 'http-voice';
+    socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'voice-item', delta: pcm.toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.output_audio_transcript.done', response_id: id, transcript: 'Acá estoy. ¿En qué te ayudo?' }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+  });
+  const service = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
+  t.after(() => service.close());
+  const reply = await service.reply({ deviceId: 'jury-voice', text: 'Hola TINO', outputMode: 'audio' });
+  assert.equal(reply.model, REALTIME_MODEL); assert.equal(reply.instruction, 'Acá estoy. ¿En qué te ayudo?');
+  assert.equal(reply.audio.mimeType, 'audio/wav'); const wav = Buffer.from(reply.audio.base64, 'base64');
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF'); assert.equal(wav.readUInt32LE(24), 24000);
+  assert.equal(wav.readUInt16LE(22), 1); assert.equal(wav.readUInt16LE(34), 16); assert.deepEqual(wav.subarray(44), pcm);
+  assert.deepEqual(upstream.messages.find(event => event.type === 'session.update').session.output_modalities, ['audio']);
+  assert.equal(service.active.size, 0);
+});
+
+test('an HTTP voice turn cannot claim speech when the provider only returned text', async t => {
+  const upstream = await fakeOpenAi(t);
+  const service = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
+  t.after(() => service.close());
+  await assert.rejects(service.reply({ deviceId: 'jury-voice-empty', text: 'Hola TINO', outputMode: 'audio' }), error => error.code === 'voice_output_unavailable');
+  assert.equal(service.active.size, 0);
+});
+
 test('negative and unrelated WhatsApp requests reach the model unchanged and are not redirected by keyword matching', async t => {
   const upstream = await fakeOpenAi(t);
   const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });

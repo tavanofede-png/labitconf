@@ -420,8 +420,17 @@ export class RealtimeService {
     conversation.once('closed', () => { if (this.active.get(deviceId) === conversation) { this.active.delete(deviceId); this.origins.delete(deviceId); } });
     return conversation;
   }
-  async reply({ deviceId, text, signal, origin, beforeConnect, localReply }) {
-    const conversation = this.reserve(deviceId, 'text', origin);
+  async reply({ deviceId, text, signal, origin, beforeConnect, localReply, outputMode = 'text' }) {
+    if (!['text', 'audio'].includes(outputMode)) throw invalid('Elegí una respuesta escrita o de voz.');
+    const conversation = this.reserve(deviceId, outputMode, origin);
+    const audioChunks = []; let audioBytes = 0; let audioTooLong = false;
+    const onAudio = event => {
+      if (outputMode !== 'audio' || event.type !== 'audio.delta') return;
+      const bytes = Buffer.from(event.audio, 'base64'); audioBytes += bytes.length;
+      if (audioBytes > MAX_INPUT_BYTES) { audioTooLong = true; return; }
+      audioChunks.push(bytes);
+    };
+    conversation.on('event', onAudio);
     let cleanup = () => {};
     try {
       const result = new Promise((resolve, reject) => {
@@ -444,9 +453,20 @@ export class RealtimeService {
       if (signal?.aborted) throw new RealtimeError('request_cancelled', 'La consulta se canceló.', 499);
       conversation.handleClient({ type: 'text', text });
       const value = await result;
+      if (outputMode === 'audio' && value.status !== 'ended' && (!audioBytes || audioTooLong)) throw new RealtimeError('voice_output_unavailable', 'No pude preparar el audio de la respuesta. Volvé a intentar.', 502);
+      let audio;
+      if (outputMode === 'audio' && audioBytes && value.status !== 'ended') {
+        const pcm = Buffer.concat(audioChunks); const header = Buffer.alloc(44);
+        header.write('RIFF', 0); header.writeUInt32LE(36 + pcm.length, 4); header.write('WAVEfmt ', 8);
+        header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+        header.writeUInt32LE(AUDIO_RATE, 24); header.writeUInt32LE(AUDIO_RATE * 2, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
+        header.write('data', 36); header.writeUInt32LE(pcm.length, 40);
+        audio = { base64: Buffer.concat([header, pcm]).toString('base64'), mimeType: 'audio/wav' };
+      }
       return { mode: 'conversation', instruction: value.text, sources: [], model: REALTIME_MODEL,
+        ...(audio ? { audio } : {}),
         ...(value.status === 'ended' ? { ended: true, reason: value.reason } : {}) };
-    } finally { cleanup(); conversation.close(); }
+    } finally { cleanup(); conversation.off('event', onAudio); conversation.close(); }
   }
   close() { for (const conversation of [...this.active.values()]) conversation.close(); }
 }
