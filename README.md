@@ -8,7 +8,9 @@ TINO acompaña a las personas que encuentran barreras al usar la tecnología: po
 
 ### [▶ PROBAR TINO — demo interactiva](https://tino-web.vercel.app)
 
-**[Ver el pitch editado de 60 segundos](https://tino-web.vercel.app/pitch.html)** · Marta crea un grupo de WhatsApp, con voz, guía visual y subtítulos.
+**[Ver el video demo en Google Drive](https://drive.google.com/drive/folders/1DKuXLGwIBdk_LMSbyuRPBbbWnu1XPJNP?usp=sharing)** · Marta crea un grupo de WhatsApp, con voz, guía visual y subtítulos.
+
+[Reproducir el pitch de 60 segundos en la web](https://tino-web.vercel.app/pitch.html).
 
 Abrí el enlace en **Chrome**, desde desktop o tablet. La app se presenta en una Samsung Tab S10+ vertical, con las instrucciones de prueba al costado. No hace falta instalar nada para evaluar la demo web.
 
