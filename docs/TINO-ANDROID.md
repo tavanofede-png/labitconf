@@ -37,7 +37,7 @@ Para recorrer el alta en el mock, **Verificar mi correo** abre «Te llegó un c�
 
 ## Inicio en el chat
 
-En el mock, **Ya tengo cuenta → correo → 000-000** abre directamente el chat de TINO, incluso si antes se inició un alta incompleta con ese correo. El login de demo precarga el perfil; el alta nueva conserva su recorrido separado. El inicio muestra la mascota oficial arriba, el menú en la esquina superior derecha y el compositor fijo con escritura, voz y envío. El menú abre Chat, Mi grupo familiar, Guías, Ajustes y Cerrar sesión. El inicio anterior con tarjetas y navegación inferior fue reemplazado por esta conversación. Una nueva sesión limpia la conversación anterior en memoria.
+En el mock, **Ya tengo cuenta → correo → 000-000** abre directamente el chat de TINO, incluso si antes se inició un alta incompleta con ese correo. El login de demo precarga el perfil; el alta nueva conserva su recorrido separado. El inicio muestra la mascota oficial arriba, el menú lateral que se desliza desde la derecha y el compositor fijo con escritura, voz y envío. El menú abre Chat, Mi grupo familiar, Guías, Ajustes y Cerrar sesión. El inicio anterior con tarjetas y navegación inferior fue reemplazado por esta conversación. Una nueva sesión limpia la conversación anterior en memoria.
 
 ## Verificación actual
 

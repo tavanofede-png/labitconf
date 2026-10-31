@@ -1,5 +1,6 @@
 package org.nieto.assistant.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -23,11 +24,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.LayoutDirection
+import kotlinx.coroutines.launch
 import org.nieto.assistant.AppState
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.R
@@ -42,17 +46,43 @@ private val Paper = Color(0xFFF3F6F6)
 @Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit,
     onStartGuide: () -> Unit, onFamily: () -> Unit, onGuides: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
     var message by rememberSaveable { mutableStateOf("") }
-    var menu by rememberSaveable { mutableStateOf(false) }
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val closeMenu: (() -> Unit) -> Unit = { action -> scope.launch { drawer.close(); action() } }
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     val list = rememberLazyListState()
     val guideSuggested = state.suggestedFlow == GuidanceEngine.FLOW_ID
     val send = { if (message.isNotBlank() && !state.busy) { app.sendMessage(message); message = "" } }
     LaunchedEffect(state.chat.size, state.busy, guideSuggested) {
         list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0))
     }
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            ModalDrawerSheet(modifier = Modifier.width(320.dp).fillMaxHeight(), drawerContainerColor = Paper,
+                drawerShape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)) {
+                Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(100.dp).height(44.dp))
+                        IconButton(onClick = { closeMenu {} }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Cerrar menú" }) { ChatIcon("close") }
+                    }
+                    Text("Tu espacio", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 12.dp))
+                    ChatMenuAction("Chat") { closeMenu {} }
+                    ChatMenuAction("Mi grupo familiar") { closeMenu(onFamily) }
+                    ChatMenuAction("Guías") { closeMenu(onGuides) }
+                    ChatMenuAction("Ajustes") { closeMenu(onSettings) }
+                    Spacer(Modifier.weight(1f))
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    ChatMenuAction("Cerrar sesión", enabled = !state.busy) { closeMenu { app.stopSpeaking(); onLogout() } }
+                }
+            }
+        }
+    }) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
     Scaffold(containerColor = Paper, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(116.dp).height(48.dp))
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { ChatIcon("menu") }
+            IconButton(onClick = { scope.launch { drawer.open() } }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { ChatIcon("menu") }
         }
     }, bottomBar = {
         Surface(color = Paper) {
@@ -99,16 +129,8 @@ private val Paper = Color(0xFFF3F6F6)
             }
         }
     }
-    if (menu) ModalBottomSheet(onDismissRequest = { menu = false }, containerColor = Paper) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Tu espacio TINO", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
-            ChatMenuAction("Chat") { menu = false }
-            ChatMenuAction("Mi grupo familiar") { menu = false; onFamily() }
-            ChatMenuAction("Guías") { menu = false; onGuides() }
-            ChatMenuAction("Ajustes") { menu = false; onSettings() }
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            ChatMenuAction("Cerrar sesión", enabled = !state.busy) { menu = false; app.stopSpeaking(); onLogout() }
-        }
+    }
+    }
     }
 }
 
@@ -122,6 +144,7 @@ private val Paper = Color(0xFFF3F6F6)
         val stroke = 2.dp.toPx()
         fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(color, Offset(size.width * x1, size.height * y1), Offset(size.width * x2, size.height * y2), strokeWidth = stroke, cap = StrokeCap.Round)
         when (kind) {
+            "close" -> { line(.22f, .22f, .78f, .78f); line(.78f, .22f, .22f, .78f) }
             "menu" -> listOf(.25f, .5f, .75f).forEach { y -> line(.12f, y, .88f, y) }
             "mic" -> {
                 drawRoundRect(color, Offset(size.width * .35f, size.height * .06f), Size(size.width * .3f, size.height * .52f), CornerRadius(size.width * .15f), style = Stroke(stroke))
