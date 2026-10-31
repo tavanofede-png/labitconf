@@ -11,7 +11,6 @@ import org.nieto.assistant.voice.WakeActivationPolicy
 import org.nieto.assistant.voice.WakeRecognitionWord
 import org.nieto.assistant.voice.LocalEndPolicy
 import org.nieto.assistant.voice.WakeTimedWord
-import org.nieto.assistant.voice.WakePcmRingBuffer
 import org.nieto.assistant.voice.WakeInvocationPCM
 import org.nieto.assistant.voice.WakeWordService
 
@@ -21,6 +20,21 @@ class VoiceSmokeInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); suite=arguments?.getString("suite"); start() }
     override fun onStart() {
         val output = Bundle()
+        if (suite == "inline-fixture") {
+            val result = inlineFixtureDiagnostics(this)
+            finish(if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
+            return
+        }
+        if (suite == "realtime-production") {
+            val result = realtimeProductionSmoke(this)
+            finish(if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
+            return
+        }
+        if (suite == "realtime-transport") {
+            val result = realtimeTransportSmoke(this)
+            finish(if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
+            return
+        }
         if (suite=="jury-demo") {
             try { val checks=juryDemoSmoke(targetContext); output.putString("stream","\nPASS: $checks offline jury checks; login, expiry, replay, privacy, messages, 225 public-context filters, both interactive practice engines and logout.\n");output.putInt("tests",checks);finish(Activity.RESULT_OK,output) }
             catch(error:Throwable) { output.putString("stream","\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n${error.stackTraceToString().take(3000)}\n");finish(Activity.RESULT_CANCELED,output) }
@@ -51,8 +65,10 @@ class VoiceSmokeInstrumentation : Instrumentation() {
                     fun acceptedEnd() = LocalEndPolicy.accepts(isFinal = true, text = text, words = words, activeConversation = true)
                 }
                 fun decode(asset: String, wake: Boolean, captureInvocation: Boolean = false): List<DecodedUtterance> {
+                    if (captureInvocation) return context.assets.open(asset).use { decodeSyntheticWake(model, it) }.map { utterance ->
+                        DecodedUtterance(utterance.text, utterance.words?.map { WakeRecognitionWord(it.word, it.confidence) }, utterance.words, utterance.invocation)
+                    }
                     val recognizer = if (wake) Recognizer(model, 16000f, "[\"hola tino\",\"[unk]\"]") else Recognizer(model, 16000f)
-                    val ring = if (captureInvocation) WakePcmRingBuffer() else null
                     try {
                         recognizer.setWords(true)
                         val results = mutableListOf<DecodedUtterance>()
@@ -64,18 +80,16 @@ class VoiceSmokeInstrumentation : Instrumentation() {
                                     (word?.opt("start") as? Number)?.toDouble(), (word?.opt("end") as? Number)?.toDouble())
                             } }
                             val text = json.optString("text")
-                            results += DecodedUtterance(text, timed?.map { WakeRecognitionWord(it.word, it.confidence) }, timed,
-                                ring?.extractInvocation(true, text, timed))
+                            results += DecodedUtterance(text, timed?.map { WakeRecognitionWord(it.word, it.confidence) }, timed, null)
                         }
                         fun feed(bytes: ByteArray, count: Int) {
-                            if (ring != null) check(ring.appendPcm16(bytes, count)) { "La muestra sintética no está alineada como PCM16." }
                             if (recognizer.acceptWaveForm(bytes, count)) finalResult(recognizer.result)
                         }
                         context.assets.open(asset).use { input -> val buffer = ByteArray(6400); while (true) { val count = input.read(buffer); if (count < 0) break; feed(buffer, count) } }
                         repeat(15) { val silence = ByteArray(6400); feed(silence, silence.size) }
                         finalResult(recognizer.finalResult)
                         return results
-                    } finally { recognizer.close(); ring?.clear() }
+                    } finally { recognizer.close() }
                 }
                 val positive = decode("wake-positive.pcm", true)
                 check(positive.any { it.acceptedWake() }) { "La muestra sintética positiva no superó la política final de activación." }
