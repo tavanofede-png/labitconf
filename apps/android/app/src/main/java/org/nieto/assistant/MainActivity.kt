@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -80,8 +81,8 @@ private val Cream=Color(0xFFFAF8F2)
                     Text("Acompañamiento activo",fontWeight=FontWeight.Bold,color=Forest)
                     BigButton("Hablar con NIETO",onVoice,enabled=!state.busy && !state.voice.active)
                     Text("La ventana de voz deja visible tu app. El micrófono sólo se activa al tocar Hablar y se apaga al salir de esa ventana.",fontSize=15.sp,lineHeight=22.sp)
-                    OutlinedTextField(value=message,onValueChange={message=it.take(1000)},label={Text("O escribí tu tarea")},modifier=Modifier.fillMaxWidth(),minLines=2)
-                    OutlinedButton(onClick={app.sendMessage(message);message=""},enabled=message.isNotBlank() && !state.busy && !state.voice.active,modifier=Modifier.fillMaxWidth().heightIn(min=52.dp)) { Text("Enviar consulta") }
+                    OutlinedTextField(value=message,onValueChange={message=it.take(1000)},label={Text("O escribí tu tarea")},modifier=Modifier.fillMaxWidth().onFocusChanged { if(it.isFocused) app.selectWrittenMode() },minLines=2)
+                    OutlinedButton(onClick={val sent=message.trim();app.sendMessage(sent,onSubmitted={accepted -> if(accepted && message.trim()==sent) message=""})},enabled=message.isNotBlank() && !state.busy && !state.voice.active,modifier=Modifier.fillMaxWidth().heightIn(min=52.dp)) { Text("Enviar consulta sin audio") }
                     Surface(color=Color(0xFFE8EDDA),shape=RoundedCornerShape(18.dp)) { Column(Modifier.padding(18.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                         Text("Tu paso actual",fontSize=15.sp,fontWeight=FontWeight.Bold,color=Forest)
                         Text(state.voice.partialText.ifBlank { state.answer },fontSize=20.sp,lineHeight=29.sp)
@@ -139,6 +140,7 @@ private val Cream=Color(0xFFFAF8F2)
 @Composable private fun SettingsContent(app:NietoApp,state:AppState,onConsent:()->Unit,onAccessibility:()->Unit) {
     var url by remember {mutableStateOf(app.settings.baseUrl)}
     var name by remember {mutableStateOf(app.settings.deviceName)}
+    var enrollmentCode by remember {mutableStateOf("")}
     var territoriesOpen by remember {mutableStateOf(false)}
     Text("Vos decidís.",fontSize=32.sp,color=Forest,fontWeight=FontWeight.SemiBold)
     Text("Pantalla y voz",fontSize=24.sp,color=Forest)
@@ -163,7 +165,12 @@ private val Cream=Color(0xFFFAF8F2)
     Text("Conexión del teléfono",fontSize=24.sp,color=Forest)
     OutlinedTextField(value=name,onValueChange={name=it.take(60)},label={Text("Nombre del teléfono")},modifier=Modifier.fillMaxWidth(),singleLine=true)
     OutlinedTextField(value=url,onValueChange={url=it},label={Text("Servidor NIETO")},modifier=Modifier.fillMaxWidth(),singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Uri))
-    BigButton("Guardar y conectar",{app.saveServer(url,name)},enabled=!state.busy)
+    OutlinedTextField(value=enrollmentCode,onValueChange={enrollmentCode=it.filter(Char::isLetterOrDigit).uppercase(java.util.Locale.ROOT).take(12)},
+        label={Text("Código de conexión del equipo")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    Text("El equipo genera este código de un solo uso desde Conexión. Vence a los 15 minutos. Es distinto del código familiar y no es una clave de OpenAI.",fontSize=16.sp)
+    BigButton("Guardar y conectar",{app.saveServer(url,name,enrollmentCode,onConnected={enrollmentCode=""})},enabled=!state.busy)
+    if(state.deviceSettingsLoaded) Text(if(state.realtimeApproved) "Asistencia autorizada para este teléfono." else "La asistencia espera la autorización del equipo.",fontSize=16.sp)
+    if(app.settings.deviceId.isNotBlank()) Text("Identificador de este teléfono: ${app.settings.deviceId}",fontSize=14.sp)
     Text("Emulador: http://10.0.2.2:8787\nUSB con adb reverse: http://127.0.0.1:8787\nEn Wi-Fi: dirección LAN del equipo.",fontSize=15.sp)
     Text("Sólo la credencial NIETO queda cifrada en este teléfono. Las claves de OpenAI y OpenARG permanecen en el servidor. Android 11+ puede aportar una captura autorizada; Android 8–10 aporta controles accesibles.",fontSize=16.sp)
 }

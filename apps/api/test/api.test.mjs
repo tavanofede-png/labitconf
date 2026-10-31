@@ -20,8 +20,9 @@ async function fixture(t, options = {}) {
     const res = await fetch(`${base}${path.startsWith('/api') || path.startsWith('/downloads') ? path : `/api${path}`}`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: res.status, body: await res.json() };
   };
-  const device = async (name = 'Persona') => (await request('/devices', { method: 'POST', body: { name, territoryId: 'AR-C' } })).body;
-  return { request, device, dataFile };
+  const enrollment = async () => (await request('/institution/device-invitations', { method: 'POST', token: 'institution-test', body: {} })).body.enrollmentCode;
+  const device = async (name = 'Persona') => (await request('/devices', { method: 'POST', body: { name, territoryId: 'AR-C', enrollmentCode: await enrollment() } })).body;
+  return { request, device, dataFile, enrollment };
 }
 
 test('device isolation, ordered reports, durable event idempotence, and no conversation persistence', async (t) => {
@@ -150,8 +151,8 @@ test('CORS rejects foreign websites and request schema rejects arbitrary screen 
 });
 
 test('all configured ISO provinces can register and unknown territories cannot', async (t) => {
-  const { request } = await fixture(t);
-  assert.equal((await request('/devices', { method: 'POST', body: { name: 'Ana', territoryId: 'AR-X' } })).status, 201);
+  const { request, enrollment } = await fixture(t);
+  assert.equal((await request('/devices', { method: 'POST', body: { name: 'Ana', territoryId: 'AR-X', enrollmentCode: await enrollment() } })).status, 201);
   assert.equal((await request('/devices', { method: 'POST', body: { name: 'Ana', territoryId: 'AR-INVALID' } })).status, 400);
 });
 

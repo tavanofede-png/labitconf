@@ -34,6 +34,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
     private var captureInProgress = false
     private var captureGeneration = 0L
     private var localObserving = false
+    private var remoteRevision = 0L
 
     override fun onServiceConnected() {
         app.screenConnection(true)
@@ -42,7 +43,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
         localOverlay = GuideOverlay(this, app)
         collector = app.scope.launch {
             app.state.collectLatest { state ->
-                val observing = app.settings.screenConsent && state.guide.stage !in listOf(Stage.IDLE, Stage.COMPLETE, Stage.CANCELLED)
+                val observing = AssistanceModePolicy.observeLocal(state.assistanceEnabled, app.settings.screenConsent, state.guide.stage)
                 if (observing != localObserving) { WhitelistedCollector.clearContext(); localObserving = observing }
                 overlay?.render(state, !captureInProgress)
                 localOverlay?.render(state.guide, !state.assistanceEnabled && state.overlayEnabled && app.settings.screenConsent && !state.nativeSurfaceVisible && state.guide.stage !in listOf(Stage.IDLE, Stage.CANCELLED))
@@ -53,7 +54,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (windows.any { it.id == event.windowId && it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }) return
-        val localGuideActive = app.settings.screenConsent && app.state.value.guide.stage !in listOf(Stage.IDLE, Stage.COMPLETE, Stage.CANCELLED)
+        val localGuideActive = AssistanceModePolicy.observeLocal(app.state.value.assistanceEnabled, app.settings.screenConsent, app.state.value.guide.stage)
         if (event.packageName?.toString() == packageName) {
             if (localGuideActive) {
                 val root = rootInActiveWindow
@@ -74,7 +75,13 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
             }
         }
         if (!app.state.value.assistanceEnabled && (!app.settings.screenConsent || app.state.value.guide.stage in listOf(Stage.IDLE, Stage.COMPLETE, Stage.CANCELLED))) return
-        app.invalidateScreenTarget()
+        val navigation = event.eventType in setOf(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_VIEW_SCROLLED,
+            AccessibilityEvent.TYPE_VIEW_CLICKED, AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) ||
+            (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+                event.contentChangeTypes and (AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT or AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE) != 0)
+        if (navigation) ++remoteRevision
+        if (navigation) ++captureGeneration
+        app.invalidateScreenTarget(cancelResponse = navigation)
         handler.removeCallbacks(inspect)
         handler.postDelayed(inspect, 550)
     }
@@ -90,12 +97,12 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
         app.screenPackage(activePackage)
         if (app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) {
             val display = resources.displayMetrics
-            val fresh = RemoteScreenCollector.collect(root, display.widthPixels.coerceAtMost(10000), display.heightPixels.coerceAtMost(10000), SystemClock.elapsedRealtime())
+            val fresh = RemoteScreenCollector.collect(root, display.widthPixels.coerceAtMost(10000), display.heightPixels.coerceAtMost(10000), SystemClock.elapsedRealtime(), remoteRevision)
             val stable = lastCollected?.takeIf { it.context.fingerprint == fresh.context.fingerprint }
             lastCollected = if (stable != null) fresh.copy(context = fresh.context.copy(id = stable.context.id)) else fresh
             app.onScreenObserved(lastCollected!!.context)
         }
-        if (!app.settings.screenConsent || app.state.value.guide.stage in listOf(Stage.IDLE, Stage.COMPLETE, Stage.CANCELLED)) return
+        if (!AssistanceModePolicy.observeLocal(app.state.value.assistanceEnabled, app.settings.screenConsent, app.state.value.guide.stage)) return
         if (activePackage != "com.whatsapp") {
             app.observe(SafeScreen(activePackage, "", sensitive = activePackage == "com.android.permissioncontroller"))
             return

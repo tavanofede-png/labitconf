@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowSquareOutIcon, MapPinIcon } from '@phosphor-icons/react';
 import type { Map as MapType, Marker as MarkerType } from 'maplibre-gl';
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
@@ -12,7 +12,13 @@ export function TerritoryMap({ territory, indicator }: { territory: Territory; i
   const map = useRef<MapType | null>(null);
   const marker = useRef<MarkerType | null>(null);
   const [mapFailed, setMapFailed] = useState(false);
-  const initial = useRef(territory);
+  const latest = useRef(territory);
+
+  useLayoutEffect(() => {
+    latest.current = territory;
+    marker.current?.setLngLat([...territory.point]);
+    map.current?.flyTo({ center: [...territory.point], zoom: territory.id === 'AR-C' ? 10.2 : 8.6, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 900 });
+  }, [territory]);
 
   useEffect(() => {
     let disposed = false;
@@ -20,10 +26,10 @@ export function TerritoryMap({ territory, indicator }: { territory: Territory; i
       if (disposed || !container.current) return;
       try {
         maplibre.setWorkerUrl(mapWorkerUrl);
-        const current = initial.current;
+        const current = latest.current;
         const m = new maplibre.Map({
           container: container.current,
-          center: [...current.point], zoom: 10.2, minZoom: 3, maxZoom: 16,
+          center: [...current.point], zoom: current.id === 'AR-C' ? 10.2 : 8.6, minZoom: 3, maxZoom: 16,
           style: {
             version: 8,
             sources: { osm: { type: 'raster', tiles: [import.meta.env.VITE_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors' } },
@@ -41,13 +47,8 @@ export function TerritoryMap({ territory, indicator }: { territory: Territory; i
         m.on('idle', () => { if (!disposed && m.areTilesLoaded()) setMapFailed(false); });
       } catch { if (!disposed) setMapFailed(true); }
     }).catch(() => { if (!disposed) setMapFailed(true); });
-    return () => { disposed = true; marker.current?.remove(); map.current?.remove(); map.current = null; };
+    return () => { disposed = true; marker.current?.remove(); marker.current = null; map.current?.remove(); map.current = null; };
   }, []);
-
-  useEffect(() => {
-    marker.current?.setLngLat([...territory.point]);
-    map.current?.flyTo({ center: [...territory.point], zoom: territory.id === 'AR-C' ? 10.2 : 8.6, duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 900 });
-  }, [territory]);
 
   return <div className="territory-map">
     <div ref={container} className="map-canvas" role="region" aria-label={`Mapa de referencia de ${territory.name}`} />

@@ -59,23 +59,34 @@ class RealtimeVoice(
     private var lastAnswerTurn: String? = null
     private var transcript = ""
     private var current = VoiceState()
+    private var outputMode = "audio"
+    private val playback = AudioPlaybackTimeline()
     private val player = PcmPlayer(scope, onEnded = { turnId ->
-        if (turns.accepts(turnId)) emit(VoiceState(message = "Respuesta terminada. Podés volver a hablar."))
+        if (turns.accepts(turnId)) {
+            val hadAudio = playback.hasAudio
+            if (!hadAudio || send(JSONObject().put("type", "playback.complete").put("turnId", turnId))) {
+                playback.clear()
+                emit(VoiceState(message = "Respuesta terminada. Podés volver a hablar."))
+            }
+        }
     }, onFailure = { message -> fail(message) })
 
-    fun start(baseUrl: String, installationToken: String, screen: JSONObject? = null, text: String? = null) {
+    fun start(baseUrl: String, installationToken: String, screen: JSONObject? = null, text: String? = null, textOnly: Boolean = false) {
         require(installationToken.isNotBlank()) { "Conectá este teléfono desde Ajustes." }
+        if (ready) interruptPlayback(ignoreAcknowledgement = true)
         player.stop()
         turns.cancel()
         transcript = ""
         awaitingResponse = false
         pendingCapture = true
+        outputMode = if (textOnly) "text" else "audio"
         if (ready && connectionKey == (baseUrl to installationToken)) {
             pendingScreen = screen; pendingText = text
             beginRequested(connectionGeneration)
             return
         }
         disconnect()
+        outputMode = if (textOnly) "text" else "audio"
         pendingCapture = true
         pendingScreen = screen; pendingText = text
         val generation = ++connectionGeneration
@@ -124,6 +135,14 @@ class RealtimeVoice(
         synchronized(captureLock) { runCatching { recorder?.stop() } }
     }
 
+    fun selectOutputMode(textOnly: Boolean) {
+        val selected = if (textOnly) "text" else "audio"
+        if (selected == outputMode) return
+        if (ready && current.active) cancelResponseForScreenChange()
+        outputMode = selected
+        if (ready) send(JSONObject().put("type", "output.mode").put("mode", selected))
+    }
+
     fun sendText(text: String): Boolean {
         if (!ready || current.active || text.isBlank()) return false
         turns.cancel(); player.stop(); transcript = ""
@@ -135,7 +154,7 @@ class RealtimeVoice(
     }
 
     fun cancel() {
-        send(JSONObject().put("type", "cancel"), failOnError = false)
+        interruptPlayback(ignoreAcknowledgement = false)
         disconnect()
         emit(VoiceState(message = "Voz cancelada. Micrófono y reproducción apagados."))
     }
@@ -154,6 +173,7 @@ class RealtimeVoice(
         synchronized(captureLock) { runCatching { recorder?.stop() } }
         captureJob?.cancel(); captureJob = null
         player.stop()
+        playback.clear()
         socket?.cancel(); socket = null
         connectionKey = null
         transcript = ""
@@ -175,6 +195,7 @@ class RealtimeVoice(
         watchdog = scope.launch { delay(ms); if (generation == connectionGeneration) fail(message) }
     }
     private fun beginRequested(generation: Long) {
+        if (!send(JSONObject().put("type", "output.mode").put("mode", outputMode))) return
         val screen = pendingScreen; pendingScreen = null
         if (screen != null && !send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", false))) return
         if (screen == null) send(JSONObject().put("type", "screen.clear"))
@@ -195,10 +216,19 @@ class RealtimeVoice(
         if (accepted && requestGuidance) armTimeout(110_000, connectionGeneration, "No pude preparar el siguiente paso. Tocá Actualizar pantalla para intentar otra vez.")
         return accepted
     }
+    private fun interruptPlayback(ignoreAcknowledgement: Boolean) {
+        if (!ready) return
+        val checkpoint = playback.checkpoint(player.playedFrames())
+        val message = JSONObject().put("type", "cancel")
+        checkpoint?.let { message.put("playback", JSONObject().put("turnId", it.turnId).put("itemId", it.itemId)
+            .put("contentIndex", it.contentIndex).put("audioEndMs", it.audioEndMs)) }
+        if (send(message, false) && ignoreAcknowledgement) ++ignoredCancelAcks
+        playback.clear()
+    }
     fun cancelResponseForScreenChange() {
         if (!ready) return
         if (awaitingResponse || current.phase in listOf(VoicePhase.WAITING, VoicePhase.SPEAKING)) {
-            if (send(JSONObject().put("type", "cancel"), false)) ++ignoredCancelAcks
+            interruptPlayback(ignoreAcknowledgement = true)
         }
         awaitingResponse = false; turns.cancel(); player.stop(); watchdog?.cancel()
         send(JSONObject().put("type", "screen.clear"), false)
@@ -222,16 +252,22 @@ class RealtimeVoice(
             "response.started" -> {
                 if (!awaitingResponse) return
                 val turnId = event.optString("turnId")
+                val responseMode = event.optString("outputMode", outputMode)
+                if (responseMode != outputMode) { fail("El servidor no respetó el modo de respuesta elegido. Volvé a intentar."); return }
                 if (turns.begin(turnId)) {
                     transcript = ""
-                    player.start(turnId)
+                    playback.start(turnId)
+                    if (outputMode == "audio") player.start(turnId)
                     emit(VoiceState(VoicePhase.WAITING, "NIETO está preparando la respuesta…"))
                 }
             }
             "audio.delta" -> {
                 val turnId = event.optString("turnId")
-                if (!turns.accepts(turnId)) return
+                if (!turns.accepts(turnId) || outputMode == "text") return
                 val bytes = RealtimePolicy.decodeOutput(event.getString("audio"))
+                if (!playback.append(event.optString("itemId"), event.optInt("contentIndex", -1), bytes.size)) {
+                    fail("La respuesta de voz no identificó correctamente su audio. Podés usar una consulta escrita."); return
+                }
                 if (!player.append(turnId, bytes)) { fail("La respuesta de voz superó el límite de reproducción. Podés volver a preguntar."); return }
                 emit(current.copy(phase = VoicePhase.SPEAKING, message = "NIETO te está respondiendo. Podés cancelar cuando quieras."))
             }
@@ -262,12 +298,16 @@ class RealtimeVoice(
                     return
                 }
                 if (lastAnswerTurn != turnId && transcript.isNotBlank()) { lastAnswerTurn = turnId; onAnswer(transcript) }
-                player.finish(turnId)
+                if (outputMode == "audio") player.finish(turnId)
+                else {
+                    playback.clear()
+                    emit(VoiceState(message = "Respuesta escrita lista. El audio está apagado."))
+                }
             }
             "cancelled" -> {
                 if (ignoredCancelAcks > 0) { --ignoredCancelAcks; return }
                 if (recording) return // Delayed acknowledgement of audio.start cancelling a prior response.
-                player.stop(); turns.cancel(); awaitingResponse = false; watchdog?.cancel()
+                player.stop(); playback.clear(); turns.cancel(); awaitingResponse = false; watchdog?.cancel()
                 emit(VoiceState(message = "Respuesta cancelada."))
             }
             "error" -> {
@@ -361,10 +401,15 @@ private class PcmPlayer(
     @Volatile private var generation = 0L
     private var turn: String? = null
     private var totalBytes = 0
+    @Volatile private var completedFrames = 0L
+    fun playedFrames(): Long = synchronized(trackLock) {
+        runCatching { track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) }.getOrNull() ?: completedFrames
+    }
     fun start(turnId: String) {
         stop()
         turn = turnId
         totalBytes = 0
+        completedFrames = 0L
         val localGeneration = generation
         val packets = Channel<Packet>(2048); queue = packets
         job = scope.launch(Dispatchers.IO) {
@@ -391,7 +436,16 @@ private class PcmPlayer(
                         // Generation can finish before the already queued PCM has played.
                         val deadline = SystemClock.elapsedRealtime() + 95_000
                         while (isActive && generation == localGeneration && (local.playbackHeadPosition.toLong() and 0xffffffffL) < framesWritten && SystemClock.elapsedRealtime() < deadline) delay(20)
-                        if (generation == localGeneration) scope.launch { if (generation == localGeneration) onEnded(turnId) }
+                        val played = local.playbackHeadPosition.toLong() and 0xffffffffL
+                        synchronized(trackLock) {
+                            if (generation == localGeneration) completedFrames = played
+                        }
+                        if (generation == localGeneration && isActive) scope.launch {
+                            if (generation == localGeneration) {
+                                if (played >= framesWritten) onEnded(turnId)
+                                else onFailure("La reproducción se interrumpió antes de terminar. Podés intentar una consulta escrita.")
+                            }
+                        }
                         break
                     }
                     var offset = 0

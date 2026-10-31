@@ -54,7 +54,8 @@ async function apiFixture(t, realtime) {
     const response = await fetch(base + '/api' + path, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
-  const device = (await request('/devices', { body: { name: 'Dispositivo de prueba', territoryId: 'AR-C' } })).body;
+  const enrollment = (await request('/institution/device-invitations', { token: 'institution-test', body: {} })).body;
+  const device = (await request('/devices', { body: { name: 'Dispositivo de prueba', territoryId: 'AR-C', enrollmentCode: enrollment.enrollmentCode } })).body;
   return { base, request, device, dataFile, server };
 }
 
@@ -253,12 +254,13 @@ test('WebSocket authenticates the device before opening upstream and closes its 
 
 test('a malformed authenticated upgrade cannot leak a reserved voice slot', async t => {
   const upstream = await fakeOpenAi(t); const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
-  const { base, device } = await apiFixture(t, realtime);
+  const { base, device, dataFile } = await apiFixture(t, realtime);
   const status = await new Promise((resolve, reject) => {
     const req = httpRequest(base + '/api/assistant/realtime', { headers: { Connection: 'Upgrade', Upgrade: 'websocket', 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Key': 'bad', Authorization: `Bearer ${device.token}` } }, response => { response.resume(); response.once('end', () => resolve(response.statusCode)); });
     req.once('error', reject); req.end();
   });
   assert.equal(status, 400); await new Promise(resolve => setImmediate(resolve)); assert.equal(realtime.active.size, 0); assert.equal(upstream.requests.length, 0);
+  assert.equal(JSON.parse(await readFile(dataFile, 'utf8')).realtimeUsage, undefined);
 });
 
 test('HTTP cancellation during connection preparation cannot trigger a later model response', async t => {
@@ -308,4 +310,82 @@ test('a response timeout closes its provider connection without retrying', async
   const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint, responseTimeoutMs: 25 } });
   await assert.rejects(realtime.reply({ deviceId: 'timeout-device', text: 'Hola' }), error => error.code === 'openai_timeout');
   assert.equal(upstream.requests.length, 1); assert.equal(realtime.active.size, 0);
+});
+
+async function eventually(predicate) {
+  const deadline = Date.now() + 2000;
+  while (!predicate()) { if (Date.now() > deadline) throw new Error('Expected provider event'); await new Promise(resolve => setTimeout(resolve, 5)); }
+}
+
+test('written output stays on the same conversation with text modality and no audio events', async t => {
+  const upstream = await fakeOpenAi(t); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'output.mode', mode: 'text' });
+  conversation.handleClient({ type: 'screen.context', screen: screen() });
+  conversation.handleClient({ type: 'text', text: 'Respondeme por escrito.' });
+  await output.wait(event => event.type === 'response.done');
+  assert.deepEqual(upstream.messages.find(event => event.type === 'response.create').response.output_modalities, ['text']);
+  assert.equal(output.seen.find(event => event.type === 'response.started').outputMode, 'text');
+  assert.equal(output.seen.some(event => event.type === 'audio.delta'), false); assert.equal(upstream.requests.length, 1);
+  assert.throws(() => conversation.handleClient({ type: 'audio.start' }), /respuesta por voz/);
+});
+
+test('interruption after generation truncates the heard item and deletes later unplayed items; foreign checkpoints cannot change context', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    socket.send(JSON.stringify({ type: 'response.created', response: { id: 'two-items', metadata: event.response.metadata } }));
+    for (const id of ['heard-item', 'unheard-item']) socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: 'two-items', item_id: id, content_index: 0, delta: Buffer.alloc(48_000).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id: 'two-items', status: 'completed', output: [] } }));
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect(); conversation.handleClient({ type: 'text', text: 'Siguiente.' });
+  const done = await output.wait(event => event.type === 'response.done'); assert.equal(conversation.activeTurn, null);
+  assert.throws(() => conversation.handleClient({ type: 'cancel', playback: { turnId: done.turnId, itemId: 'not-owned', contentIndex: 0, audioEndMs: 10 } }), /supera/);
+  assert.throws(() => conversation.handleClient({ type: 'cancel', playback: { turnId: done.turnId, itemId: 'heard-item', contentIndex: 0, audioEndMs: 1001 } }), /supera/);
+  conversation.handleClient({ type: 'cancel', playback: { turnId: done.turnId, itemId: 'heard-item', contentIndex: 0, audioEndMs: 500 } });
+  await eventually(() => upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'unheard-item'));
+  assert.deepEqual(upstream.messages.find(event => event.type === 'conversation.item.truncate'), { type: 'conversation.item.truncate', item_id: 'heard-item', content_index: 0, audio_end_ms: 500 });
+  assert.equal(upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'heard-item'), false);
+});
+
+test('audio arriving after cancellation is removed from provider context instead of leaking into the next turn', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => socket.send(JSON.stringify({ type: 'response.created', response: { id: 'late-audio', metadata: event.response.metadata } })));
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect(); conversation.handleClient({ type: 'text', text: 'Interrumpir.' });
+  await eventually(() => conversation.responses.has('late-audio')); conversation.handleClient({ type: 'cancel' });
+  const socket = [...upstream.sockets][0];
+  socket.send(JSON.stringify({ type: 'response.output_item.added', response_id: 'late-audio', item: { type: 'message', id: 'late-item' } }));
+  socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: 'late-audio', item_id: 'late-item', content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
+  await eventually(() => upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'late-item'));
+  assert.equal(output.seen.some(event => event.type === 'audio.delta'), false);
+});
+
+test('fully drained playback remains in task context when the next turn starts', async t => {
+  let number = 0;
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    const id = `played-response-${++number}`;
+    socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: `played-item-${number}`, content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect(); conversation.handleClient({ type: 'text', text: 'Primero.' });
+  const done = await output.wait(event => event.type === 'response.done');
+  conversation.handleClient({ type: 'playback.complete', turnId: done.turnId });
+  conversation.handleClient({ type: 'text', text: 'Continuar.' });
+  await eventually(() => number === 2);
+  assert.equal(upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'played-item-1'), false);
+  assert.equal(upstream.messages.some(event => event.type === 'conversation.item.truncate'), false);
+});
+
+test('a screen change after generation safely removes unheard audio when the client has no playback checkpoint', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    socket.send(JSON.stringify({ type: 'response.created', response: { id: 'screen-change-response', metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: 'screen-change-response', item_id: 'screen-change-audio', content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id: 'screen-change-response', status: 'completed', output: [] } }));
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect(); conversation.handleClient({ type: 'text', text: 'Actualizar.' });
+  await output.wait(event => event.type === 'response.done');
+  conversation.handleClient({ type: 'screen.clear' });
+  await eventually(() => upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'screen-change-audio'));
 });

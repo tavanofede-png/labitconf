@@ -7,19 +7,20 @@ import android.view.accessibility.AccessibilityNodeInfo
 import org.nieto.assistant.flow.Box
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.MessageDigest
 import java.util.UUID
 
 data class CollectedScreen(val context: ScreenContext, val redactions: List<Box>, val windowId: Int, val imageAllowed: Boolean = true)
 
 object RemoteScreenCollector {
-    fun collect(root: AccessibilityNodeInfo, width: Int, height: Int, now: Long): CollectedScreen {
+    private val localFingerprint = LocalScreenFingerprint()
+    fun collect(root: AccessibilityNodeInfo, width: Int, height: Int, now: Long, revision: Long = 0): CollectedScreen {
         val pkg = root.packageName?.toString().orEmpty()
         val controls = mutableListOf<ScreenControl>()
         val redactions = mutableListOf<Box>()
         var blocked = ScreenPolicy.blockedPackage(pkg)
         var visited = 0
         var imageAllowed = true
+        val digest = localFingerprint.begin("$pkg|${root.windowId}|$width|$height|$revision")
         fun box(node: AccessibilityNodeInfo): Box {
             val rect = Rect(); node.getBoundsInScreen(rect)
             return Box(rect.left.coerceIn(0, width), rect.top.coerceIn(0, height), rect.right.coerceIn(0, width), rect.bottom.coerceIn(0, height))
@@ -44,6 +45,11 @@ object RemoteScreenCollector {
                 } else imageAllowed = false
                 return
             }
+            // A local keyed digest notices new prose even when every button stays in place.
+            // Static content and its digest are never exported as controls or telemetry.
+            digest.add(node.className)
+            digest.add(node.text)
+            digest.add(node.contentDescription)
             // Detect sensitive screen headings locally; their text is never included as general screen prose.
             if (ScreenPolicy.sensitiveLabel(node.text?.toString()?.take(120).orEmpty()) || ScreenPolicy.sensitiveLabel(node.contentDescription?.toString()?.take(120).orEmpty())) blocked = true
             val actionable = node.isClickable || node.isLongClickable || node.isCheckable || node.isScrollable
@@ -63,8 +69,8 @@ object RemoteScreenCollector {
             }
         }
         if (!blocked) visit(root, 0)
-        val content = "$pkg|${root.windowId}|$width|$height|$blocked|" + controls.joinToString { "${it.id}:${it.label}:${it.role}:${it.bounds}" } + redactions.joinToString()
-        val fingerprint = MessageDigest.getInstance("SHA-256").digest(content.toByteArray()).joinToString("") { "%02x".format(it) }
+        digest.add("$blocked|$imageAllowed|" + controls.joinToString { "${it.id}:${it.label}:${it.role}:${it.bounds}" } + redactions.joinToString())
+        val fingerprint = digest.finish()
         return CollectedScreen(ScreenContext(UUID.randomUUID().toString(), pkg, width, height, if (blocked) emptyList() else controls,
             now, fingerprint, blocked = blocked, notice = if (blocked) "Pantalla sensible: no se envió su contenido. Volvé a una pantalla sin datos privados."
             else if (Build.VERSION.SDK_INT < 30) "Android 8–10: asistencia con controles accesibles, sin captura."

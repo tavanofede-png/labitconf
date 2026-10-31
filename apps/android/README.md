@@ -1,6 +1,6 @@
 # NIETO Android · Labitconf
 
-Aplicación Kotlin + Compose, Android 8+ (API 26), compile/target 36. Versión 0.3.0-screen-assist (código 3). La asistencia principal entiende una tarea con la pantalla actual; la guía local de ubicación por WhatsApp queda como práctica opcional.
+Aplicación Kotlin + Compose, Android 8+ (API 26), compile/target 36. Versión **0.5.0-labitconf (código 5)**. La asistencia principal entiende una tarea con la pantalla actual; la guía local de ubicación por WhatsApp queda como práctica opcional.
 
 ## Compilar
 
@@ -16,15 +16,15 @@ JDK 17+, platform 36/build-tools35.0.0. El script descubre herramientas locales 
 
 ## Asistencia de pantalla
 
-1. Guardar dirección del servidor en Ajustes y conectar el teléfono. El token NIETO se cifra con Android Keystore; ninguna clave de OpenAI/OpenARG llega al APK. Debug admite HTTP/WS local, release requiere HTTPS/WSS.
+1. El operador genera en el portal Conexión un código de conexión de 12 caracteres, de un uso y 15 minutos. Guardar dirección del servidor y ese código en Ajustes para registrar o activar el teléfono. Las instalaciones anteriores requieren activación para IA; Familia y telemetría conservan su credencial. El código sólo vive en el formulario y se limpia al ser aceptado; nunca se ingresa la credencial institucional en Android. El token NIETO se cifra con Android Keystore; ninguna clave de OpenAI/OpenARG llega al APK. Debug admite HTTP/WS local, release requiere HTTPS/WSS.
 2. Aceptar consentimiento remoto nuevo para controles, consultas y voz. El permiso local de la versión anterior no autoriza envío. Las capturas tienen una autorización adicional desactivada por defecto.
-3. Habilitar NIETO en Accesibilidad. Activar acompañamiento, abrir la app objetivo y tocar la burbuja N. La burbuja permite escribir la tarea, leer el paso actual, repetir, pedir otra explicación y actualizar pantalla. No muestra ni persiste historial.
+3. Habilitar NIETO en Accesibilidad. Activar acompañamiento termina cualquier guía local anterior; ambos modos son excluyentes. Abrir la app objetivo y tocar la burbuja N. La burbuja permite escribir la tarea, leer el paso actual, repetir, pedir otra explicación y actualizar pantalla. Una consulta escrita elige salida silenciosa y no abre AudioTrack ni TTS; el modo se conserva para los siguientes pasos hasta iniciar voz explícitamente. El borrador se conserva cuando el envío no es aceptado o NIETO está ocupado. No muestra ni persiste historial.
 4. Hablar abre una actividad transparente visible encima de la app objetivo. Sólo ese gesto y el permiso Android permiten micrófono. El contexto se captura antes de abrirla y se revalida al enviar; un permiso demorado o pantalla cambiada descarta el snapshot preparado. Salir apaga el micrófono; la sesión de tarea puede continuar en la burbuja si terminó la respuesta.
 5. El agente devuelve una instrucción y un controlId/screenId. Sólo se resalta un control único, vigente y dentro de bounds. Nunca se ejecutan clics, gestos, escritura, envíos ni navegación. La persona realiza cada acción.
-6. Cambios reales invalidan el marcador y cancelan la respuesta anterior; después de estabilizar se envía contexto para el siguiente paso, limitado a un seguimiento cada 4 segundos y hasta 18 seguimientos automáticos por tarea. Actualizaciones manuales respetan 1 segundo mínimo. El servidor limita a 20 turnos totales por conexión, incluyendo consultas manuales; al alcanzar un límite se informa el error y debe reiniciarse la asistencia.
+6. Cambios reales invalidan el marcador y cancelan la respuesta anterior, incluso con iguales botones y distinto contenido. Se usa una revisión local y HMAC con clave efímera de texto estático; ni ese texto ni su digest salen en el protocolo. Después de estabilizar se envía contexto para el siguiente paso, limitado a un seguimiento cada 4 segundos y hasta 18 seguimientos automáticos por tarea. Actualizaciones manuales respetan 1 segundo mínimo. El servidor limita a 20 turnos totales por conexión, incluyendo consultas manuales; al alcanzar un límite se informa el error y debe reiniciarse la asistencia.
 7. Apagar o revocar cancela micrófono/reproducción, cierra la conexión y borra snapshot, respuesta y contexto efímero. El servidor descarta la conversación upstream al cerrar. Los bloques ya enviados no se pueden retirar.
 
-El protocolo screen.context/screen.clear/guidance.step se describe en docs/SCREEN_ASSISTANCE_CONTRACT.md. Audio PCM16 signed little-endian 24kHz mono, bloques 100ms, máximo 45segundos de entrada y 90 segundos de salida. AudioTrack reproduce incrementalmente; no hay SpeechRecognizer ni transcripción de entrada adicional. El texto visible es salida del modelo. Las instrucciones locales pueden usar TTS Android.
+El protocolo screen.context/screen.clear/guidance.step se describe en docs/SCREEN_ASSISTANCE_CONTRACT.md. Audio PCM16 signed little-endian 24kHz mono, bloques 100ms, máximo 45segundos de entrada y 90 segundos de salida. AudioTrack reproduce incrementalmente únicamente en modo voz; no hay SpeechRecognizer ni transcripción de entrada adicional. Al interrumpir, se informa el mensaje y los milisegundos efectivamente reproducidos para truncar el contexto pendiente. `playback.complete` se envía sólo después de vaciar la reproducción. El texto visible es salida del modelo. Las instrucciones locales pueden usar TTS Android; la asistencia escrita silencia también los avisos TTS.
 
 ## Captura y privacidad
 
@@ -36,7 +36,7 @@ No se solicitan ubicación, cámara, contactos ni SMS. La burbuja usa TYPE_ACCES
 
 ## Métricas y Familia
 
-La asistencia dinámica registra sólo sesión, eventos cerrados de paso/repetición/dificultad/cancelación y duración. Nunca registra texto, paquete, captura ni IDs de pantalla en métricas; tampoco acredita finalización ni autonomía por lo que dice el agente. La guía local conserva su verificación determinista limitada a WhatsApp 2.26.* en español.
+La asistencia dinámica registra sólo sesión, eventos cerrados de paso/repetición/dificultad/cancelación y duración. Nunca registra texto, paquete, captura ni IDs de pantalla en métricas; tampoco acredita finalización ni autonomía por lo que dice el agente. La guía local reconoce controles de WhatsApp 2.26.* en español y registra sólo el reporte explícito de la persona (`self_reported`). No verifica que se envió un mensaje nuevo ni acredita autonomía. El alcance vigente se documenta en [MVP_FUNCTIONAL_SCOPE.md](../../docs/MVP_FUNCTIONAL_SCOPE.md).
 
 El consentimiento institucional se desactiva por defecto y es independiente de Familia. Se configura mediante GET/PATCH /api/devices/me y permite estadísticas agregadas de actividad y dificultades de los últimos 30 días. Revocarlo excluye la actividad de agregados.
 

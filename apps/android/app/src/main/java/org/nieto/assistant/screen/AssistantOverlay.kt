@@ -7,6 +7,8 @@ import android.os.SystemClock
 import android.view.*
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
+import android.text.Editable
+import android.text.TextWatcher
 import org.nieto.assistant.AppState
 import org.nieto.assistant.MainActivity
 import org.nieto.assistant.NietoApp
@@ -26,26 +28,28 @@ class AssistantOverlay(private val service: NietoAccessibilityService, private v
     private var status: TextView? = null
     private var voice: Button? = null
     private var editor: EditText? = null
-    private var draft = ""
+    private var sendButton: Button? = null
+    private val draft = WrittenDraft()
     private var expanded = false
     private var inputMode = false
     private var panelParams: WindowManager.LayoutParams? = null
     private var marked: org.nieto.assistant.flow.Box? = null
     fun clear() {
-        if(app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) editor?.let { draft = it.text.toString() }
-        else { draft=""; editor?.setText(""); expanded=false; inputMode=false }
+        if(app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) editor?.let { draft.edit(it.text.toString()) }
+        else { draft.clear(); editor?.setText(""); expanded=false; inputMode=false }
         listOfNotNull(bubble,panel,highlight).forEach { runCatching { manager.removeView(it) } }
-        bubble=null; panel=null; highlight=null; editor=null; marked=null
+        bubble=null; panel=null; highlight=null; editor=null; sendButton=null; marked=null
     }
     fun render(state: AppState, captureVisible: Boolean) {
         if (!state.assistanceEnabled || !app.settings.remoteScreenConsent || !state.overlayEnabled || (state.nativeSurfaceVisible && !state.voiceSurfaceVisible) || !captureVisible) { clear(); return }
         if(state.voiceSurfaceVisible) {
-            editor?.let { draft=it.text.toString() }; remove(bubble); remove(panel); bubble=null; panel=null; editor=null
+            editor?.let { draft.edit(it.text.toString()) }; remove(bubble); remove(panel); bubble=null; panel=null; editor=null; sendButton=null
         } else {
             if (bubble == null) createBubble()
             if (expanded && panel == null) createPanel()
         }
-        if (!expanded && panel != null) { editor?.let { draft=it.text.toString() }; remove(panel); panel=null; editor=null }
+        if (!expanded && panel != null) { editor?.let { draft.edit(it.text.toString()) }; remove(panel); panel=null; editor=null; sendButton=null }
+        sendButton?.isEnabled = !state.busy && !state.voice.active && !draft.sending
         message?.text = state.voice.partialText.ifBlank { state.answer }
         status?.text = (if (state.screen?.blocked == true) state.screen.notice else state.voice.message + "\n" + state.screen?.notice.orEmpty()) +
             state.ttsNotice.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty()
@@ -87,21 +91,41 @@ class AssistantOverlay(private val service: NietoAccessibilityService, private v
             }
         }
         button("Escribir una consulta") {
+            app.selectWrittenMode()
             inputMode=true
             panelParams?.let { it.flags=0; manager.updateViewLayout(panel,it) }
             editor?.requestFocus()
             editor?.post { (service.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editor,InputMethodManager.SHOW_IMPLICIT) }
         }
-        editor=EditText(service).apply { hint="¿Qué querés hacer?"; textSize=18f; maxLines=3; setText(draft); inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            filters=arrayOf(android.text.InputFilter.LengthFilter(1000)); importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS }
+        editor=EditText(service).apply { hint="¿Qué querés hacer?"; textSize=18f; maxLines=3; setText(draft.value); inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            filters=arrayOf(android.text.InputFilter.LengthFilter(1000)); importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { draft.edit(s?.toString().orEmpty()) }
+                override fun afterTextChanged(s: Editable?) {}
+            }) }
         layout.addView(editor)
-        button("Enviar consulta escrita") { val text=editor?.text.toString().trim(); if(text.isNotBlank()) { draft=""; editor?.setText(""); afterKeyboard { app.sendMessage(text) } } }
+        sendButton=button("Enviar consulta escrita") {
+            editor?.let { draft.edit(it.text.toString()) }
+            val state = app.state.value
+            val submission = draft.begin(!state.busy && !state.voice.active)
+            if (submission != null) {
+                sendButton?.isEnabled = false
+                afterKeyboard {
+                    app.sendMessage(submission.text, onSubmitted = { accepted ->
+                        draft.complete(submission, accepted)
+                        editor?.setText(draft.value)
+                        render(app.state.value, true)
+                    })
+                }
+            } else if (draft.value.isNotBlank()) app.status("Esperá a que termine la respuesta. Tu consulta escrita se conserva.")
+        }
         button("Ya lo hice · actualizar pantalla") { afterKeyboard { app.refreshScreen() } }
         button("Repetir este paso") { app.repeatAssistance() }
         button("Me perdí") { afterKeyboard { app.lostAssistance() } }
         button("Abrir Familia") { service.startActivity(Intent(service,FamilyActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         button("Abrir NIETO") { service.startActivity(Intent(service,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
-        button("Apagar asistencia y borrar tarea") { hideKeyboard(); draft=""; app.stopAssistance() }
+        button("Apagar asistencia y borrar tarea") { hideKeyboard(); draft.clear(); app.stopAssistance() }
         panel=ScrollView(service).apply { addView(layout) }
         val display=service.resources.displayMetrics
         panelParams=WindowManager.LayoutParams(display.widthPixels-dp(24),(display.heightPixels*0.46).toInt(),WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,

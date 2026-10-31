@@ -51,12 +51,16 @@ class NietoApi(private val settings: LocalSettings) {
                                         result.append(buffer, 0, count)
                                     }; result.toString()
                                 }.orEmpty()
-                                if (!response.isSuccessful) throw ApiFailure(when (response.code) {
-                                    401, 403 -> "El servidor no autorizó esta acción. Revisá la conexión y los permisos."
-                                    404 -> "No encontré el recurso. Revisá el código de invitación o la dirección del servidor."
-                                    409 -> if (path == "/assistant/message") "Ya hay una respuesta de voz activa. Cancelala y volvé a intentar." else "Esta invitación ya fue usada o el teléfono ya está vinculado."
-                                    429 -> "Hubo muchas consultas. Esperá un momento e intentá de nuevo."
-                                    else -> runCatching { JSONObject(text).optJSONObject("error")?.optString("message")?.take(180) }.getOrNull()
+                                val publicError = if (!response.isSuccessful) runCatching { JSONObject(text).optJSONObject("error") }.getOrNull() else null
+                                if (!response.isSuccessful) throw ApiFailure(when {
+                                    publicError?.optString("code") == "device_activation_required" -> "La asistencia necesita autorización. Pedí un código al equipo e ingresalo en Ajustes."
+                                    path in listOf("/devices", "/devices/me/activation") && response.code in listOf(400, 401, 403, 404, 409, 410) ->
+                                        "El código de conexión no fue aceptado. Pedí uno nuevo al equipo; es de un solo uso y vence a los 15 minutos."
+                                    response.code in listOf(401, 403) -> "El servidor no autorizó esta acción. Revisá la conexión y los permisos."
+                                    response.code == 404 -> "No encontré el recurso. Revisá el código de invitación o la dirección del servidor."
+                                    response.code == 409 -> if (path == "/assistant/message") "Ya hay una respuesta de voz activa. Cancelala y volvé a intentar." else "Esta invitación ya fue usada o el teléfono ya está vinculado."
+                                    response.code == 429 -> "Hubo muchas consultas. Esperá un momento e intentá de nuevo."
+                                    else -> publicError?.optString("message")?.take(180)
                                         ?.takeIf { it.isNotBlank() } ?: "El servidor no pudo completar la acción (HTTP ${response.code})."
                                 }, response.code)
                                 val result = if (text.isBlank()) JSONObject() else JSONObject(text)
@@ -72,9 +76,17 @@ class NietoApi(private val settings: LocalSettings) {
             }
         }
 
-    suspend fun register() {
-        if (settings.token.isNotBlank()) return
-        val response = request("/devices", "POST", JSONObject().put("name", settings.deviceName).put("territoryId", settings.territoryId), false)
+    suspend fun register(enrollmentCode: String = "") {
+        val code = enrollmentCode.trim().uppercase(java.util.Locale.ROOT)
+        if (settings.token.isNotBlank()) {
+            if (code.isNotBlank()) {
+                require(code.matches(Regex("[A-F0-9]{12}"))) { "Ingresá el código de conexión de 12 caracteres que te dio el equipo." }
+                request("/devices/me/activation", "POST", JSONObject().put("enrollmentCode", code))
+            }
+            return
+        }
+        require(code.matches(Regex("[A-F0-9]{12}"))) { "Pedí un código de conexión al equipo e ingresalo en Ajustes antes de conectar este teléfono." }
+        val response = request("/devices", "POST", JSONObject().put("name", settings.deviceName).put("territoryId", settings.territoryId).put("enrollmentCode", code), false)
         val credential = response.getString("token")
         require(credential.isNotBlank())
         settings.token = credential

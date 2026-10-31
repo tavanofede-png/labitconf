@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.nieto.assistant.data.LocalSettings
 import org.nieto.assistant.data.NietoApi
+import org.nieto.assistant.data.ApiFailure
 import org.nieto.assistant.flow.*
 import org.nieto.assistant.voice.RealtimeVoice
 import org.nieto.assistant.voice.VoicePhase
@@ -52,6 +53,8 @@ data class AppState(
     val territoryId: String = "AR-C",
     val nativeSurfaceVisible: Boolean = false,
     val voiceSurfaceVisible: Boolean = false,
+    val textOnly: Boolean = false,
+    val realtimeApproved: Boolean = false,
 )
 
 class NietoApp : Application() {
@@ -104,7 +107,7 @@ class NietoApp : Application() {
         mutable.value = mutable.value.copy(territoryId = settings.territoryId)
         realtime = RealtimeVoice(scope,
             onState = { voice -> mutable.value = mutable.value.copy(voice = voice); if (!voice.active) scheduleScreenFollowUp() },
-            onAnswer = { answer -> mutable.value = mutable.value.copy(answer = answer) },
+            onAnswer = { answer -> if (state.value.screen == null || state.value.screenValid) mutable.value = mutable.value.copy(answer = answer) },
             onGuidanceOffer = {},
             onStep = { step ->
                 if (state.value.screenValid && ScreenPolicy.target(step, state.value.screen, android.os.SystemClock.elapsedRealtime()) != null) {
@@ -131,7 +134,7 @@ class NietoApp : Application() {
 
     fun status(text: String) { mutable.value = mutable.value.copy(status = text) }
     fun speak(text: String = state.value.guide.notice ?: state.value.guide.instruction) {
-        if (text.isBlank()) return
+        if (text.isBlank() || (state.value.assistanceEnabled && state.value.textOnly)) return
         if (!ttsReady) {
             if (!ttsInitialized) { pendingSpeech = text; speechNotice("La voz se está preparando. La instrucción sigue disponible en pantalla.") }
             else if (state.value.ttsNotice.isBlank()) speechNotice("La lectura por voz no está disponible. Podés leer la instrucción en pantalla.")
@@ -169,12 +172,22 @@ class NietoApp : Application() {
     fun retryTelemetry() { TelemetrySync.retryRetained(this) }
     fun enableAssistance() {
         if (!settings.remoteScreenConsent || !settings.openAiConsent) { status("Aceptá el permiso nuevo de asistencia con OpenAI."); return }
+        if (state.value.busy) { status("Esperá a que termine la acción actual antes de cambiar de modo."); return }
+        // Cancel while the original session is still bound, then detach it before remote events can arrive.
+        engine.cancel()
+        guideSession = null
+        guideAnnouncements.reset()
+        stopSpeaking()
         lastScreenNotice = null
-        mutable.value = mutable.value.copy(assistanceEnabled = true, overlayEnabled = true, answer = "Abrí la app que querés usar y tocá la burbuja N para contarme tu tarea.")
+        mutable.value = mutable.value.copy(guide = engine.state, assistanceEnabled = true, overlayEnabled = true,
+            answer = "Abrí la app que querés usar y tocá la burbuja N para contarme tu tarea.")
         status("Asistencia activa. Vos hacés cada toque. El micrófono sigue apagado.")
     }
     fun prepareVoice(onReady: () -> Unit) {
         if (!state.value.assistanceEnabled || !settings.remoteScreenConsent) return
+        mutable.value = mutable.value.copy(textOnly = false)
+        stopSpeaking()
+        realtime.selectOutputMode(textOnly = false)
         val request = assistantRequest
         val ready: (ScreenContext?) -> Unit = { screen ->
             if (request == assistantRequest && state.value.assistanceEnabled) {
@@ -196,6 +209,8 @@ class NietoApp : Application() {
         voiceStartJob = scope.launch {
             try {
                 api.register()
+                if (!state.value.deviceSettingsLoaded || !state.value.realtimeApproved) readDeviceSettings()
+                if (!state.value.realtimeApproved) throw ApiFailure("Para usar la asistencia, pedí un código de conexión al equipo e ingresalo en Ajustes.")
                 if (assistantSession == null) {
                     assistantSession = TelemetrySync.session(settings.baseUrl, settings.token, "screen-assistance")
                     assistantStartedAt = android.os.SystemClock.elapsedRealtime()
@@ -209,11 +224,13 @@ class NietoApp : Application() {
                     state.value.screenPackage == it.packageName && android.os.SystemClock.elapsedRealtime() - it.capturedAt in 0..15_000 }
                 lastScreenSent = currentScreen?.id
                 lastSnapshotSentAt = android.os.SystemClock.elapsedRealtime()
-                realtime.start(settings.baseUrl, settings.token, currentScreen?.toWire(), text)
+                realtime.start(settings.baseUrl, settings.token, currentScreen?.toWire(), text, textOnly = state.value.textOnly)
                 if (screen?.notice?.isNotBlank() == true) status(screen.notice)
             } catch (_: CancellationException) { }
-            catch (_: Exception) {
-                if (request == assistantRequest) mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR, "No pude conectar la asistencia. Revisá el servidor desde Ajustes."))
+            catch (error: Exception) {
+                if (request == assistantRequest) mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR,
+                    if (error is ApiFailure || error is IllegalArgumentException) error.message.orEmpty().take(200)
+                    else "No pude conectar la asistencia. Revisá el servidor desde Ajustes."))
             } finally { if (request == assistantRequest) mutable.value = mutable.value.copy(busy = false) }
         }
     }
@@ -248,7 +265,14 @@ class NietoApp : Application() {
         settings.openAiConsent = false; settings.remoteScreenConsent = false; settings.screenImagesConsent = false
         status("Permiso remoto revocado. Micrófono, pantalla y contexto de tarea eliminados.")
     }
-    fun invalidateScreenTarget() { mutable.value = mutable.value.copy(screenValid = false) }
+    fun invalidateScreenTarget(cancelResponse: Boolean = false) {
+        // Focus/visibility events hide the target while rechecking the same screen.
+        // Navigation retires the step; an unchanged snapshot may restore only a visibility-hidden step.
+        mutable.value = mutable.value.copy(screenValid = false, screenStep = if (cancelResponse) null else state.value.screenStep)
+        if (cancelResponse && state.value.assistanceEnabled && state.value.voice.phase in listOf(VoicePhase.WAITING, VoicePhase.SPEAKING)) {
+            realtime.cancelResponseForScreenChange()
+        }
+    }
     fun screenUnavailable() {
         if (state.value.assistanceEnabled) {
             followUp?.cancel(); followUp = null
@@ -313,7 +337,7 @@ class NietoApp : Application() {
         assistantEvent("user_lost")
         if (state.value.voice.phase in listOf(VoicePhase.LISTENING, VoicePhase.CONNECTING)) cancelRealtimeVoice()
         else if (state.value.voice.active) realtime.cancelResponseForScreenChange()
-        sendMessage("Me perdí. Explicame el próximo paso de otra manera con la pantalla actual.")
+        sendMessage("Me perdí. Explicame el próximo paso de otra manera con la pantalla actual.", textOnly = state.value.textOnly)
     }
     private fun assistantEvent(type: String, withStep: Boolean = true, duration: Boolean = false) {
         val session = assistantSession ?: return
@@ -326,7 +350,8 @@ class NietoApp : Application() {
     fun startGuide(practice: Boolean = false, onReady: (() -> Unit)? = null) {
         if (state.value.busy) return
         if (practice && guideSession == null) { status("Comenzá un intento acompañado antes de practicar con esta conexión."); return }
-        cancelRealtimeVoice()
+        if (state.value.assistanceEnabled) stopAssistance() else cancelRealtimeVoice()
+        mutable.value = mutable.value.copy(textOnly = false)
         mutable.value = mutable.value.copy(guidanceOffered = false)
         mutable.value = mutable.value.copy(busy = true)
         scope.launch {
@@ -337,6 +362,7 @@ class NietoApp : Application() {
                     guideSession = TelemetrySync.session(settings.baseUrl, settings.token, GuidanceEngine.FLOW_ID)
                     startedAt = android.os.SystemClock.elapsedRealtime()
                 }
+                guideAnnouncements.reset()
                 updateGuide(engine.start(practice))
                 setOverlay(true)
                 status(if (state.value.accessibilityConnected && settings.screenConsent) "Guía iniciada. Solo observo WhatsApp mientras esté activa." else "Activá Accesibilidad y el permiso local de pantalla para verificar los pasos.")
@@ -346,7 +372,7 @@ class NietoApp : Application() {
         }
     }
     fun observe(screen: SafeScreen) {
-        if (!settings.screenConsent) return
+        if (!AssistanceModePolicy.observeLocal(state.value.assistanceEnabled, settings.screenConsent, engine.state.stage)) return
         updateGuide(engine.observe(screen))
     }
     private fun updateGuide(next: GuideState, forceSpeech: Boolean = false) {
@@ -361,16 +387,40 @@ class NietoApp : Application() {
     fun screenConnection(connected: Boolean) { mutable.value = mutable.value.copy(accessibilityConnected = connected) }
     fun setOverlay(enabled: Boolean) { mutable.value = mutable.value.copy(overlayEnabled = enabled) }
 
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String, textOnly: Boolean = true, onSubmitted: (Boolean) -> Unit = {}): Boolean {
         val clean = text.trim().take(1000)
-        if (clean.isBlank() || !state.value.assistanceEnabled || !settings.remoteScreenConsent || !settings.openAiConsent || state.value.busy || state.value.voice.active) return
-        val request = assistantRequest
+        if (clean.isBlank() || !state.value.assistanceEnabled || !settings.remoteScreenConsent || !settings.openAiConsent || state.value.busy || state.value.voice.active) {
+            onSubmitted(false)
+            if (clean.isNotBlank()) status("Esperá a que termine la respuesta. Tu consulta escrita se conserva.")
+            return false
+        }
+        val request = ++assistantRequest
+        mutable.value = mutable.value.copy(busy = true, textOnly = textOnly)
+        stopSpeaking()
         val ready: (ScreenContext?) -> Unit = { screen ->
             if (request == assistantRequest && state.value.assistanceEnabled) {
-                if (screen?.blocked == true) status(screen.notice) else submitAssistant(clean, screen)
-            }
+                if (screen?.blocked == true) {
+                    mutable.value = mutable.value.copy(busy = false)
+                    status(screen.notice)
+                    onSubmitted(false)
+                } else { submitAssistant(clean, screen); onSubmitted(true) }
+            } else onSubmitted(false)
         }
-        screenCapture?.capture(ready) ?: ready(null)
+        try { screenCapture?.capture(ready) ?: ready(null) }
+        catch (_: Exception) {
+            if (request == assistantRequest) mutable.value = mutable.value.copy(busy = false)
+            status("No pude preparar la pantalla. Tu consulta escrita se conserva.")
+            onSubmitted(false)
+        }
+        return true
+    }
+    fun selectWrittenMode() {
+        if (!state.value.assistanceEnabled) return
+        val changed = !state.value.textOnly
+        mutable.value = mutable.value.copy(textOnly = true)
+        stopSpeaking()
+        if (changed && state.value.voice.phase in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING)) cancelRealtimeVoice()
+        realtime.selectOutputMode(textOnly = true)
     }
     fun setInstitutionMetricsConsent(allowed: Boolean) = work {
         require(state.value.deviceSettingsLoaded) { "Primero consultá los permisos vigentes del servidor." }
@@ -393,7 +443,8 @@ class NietoApp : Application() {
         if (server != settings.baseUrl || token != settings.token) return
         val territory = device.optString("territoryId", settings.territoryId)
         if (org.nieto.assistant.data.Territories.names.containsKey(territory)) settings.territoryId = territory
-        mutable.value = mutable.value.copy(institutionMetricsConsent = device.optBoolean("institutionMetricsConsent", false), deviceSettingsLoaded = true, territoryId = settings.territoryId)
+        mutable.value = mutable.value.copy(institutionMetricsConsent = device.optBoolean("institutionMetricsConsent", false),
+            realtimeApproved = device.optBoolean("realtimeApproved", false), deviceSettingsLoaded = true, territoryId = settings.territoryId)
     }
     fun saveTerritory(id: String) = work {
         require(org.nieto.assistant.data.Territories.names.containsKey(id)) { "Elegí una jurisdicción argentina." }
@@ -403,25 +454,28 @@ class NietoApp : Application() {
         mutable.value = mutable.value.copy(territoryId = id)
         status("Jurisdicción declarada actualizada. No se usó GPS ni ubicación automática.")
     }
-    fun connect() = work {
-        api.register()
+    fun connect(enrollmentCode: String = "", onConnected: () -> Unit = {}) = work {
+        api.register(enrollmentCode)
+        // Clear an accepted one-use code even if a later, unrelated refresh loses connectivity.
+        onConnected()
         api.request("/devices/me", "PATCH", JSONObject().put("name", settings.deviceName))
         readDeviceSettings()
         api.request("/health", authenticated = false)
         refreshFamilyInternal()
-        status("Teléfono conectado. Las credenciales quedan cifradas en este dispositivo.")
+        status(if (state.value.realtimeApproved) "Teléfono conectado y autorizado para la asistencia. La credencial NIETO queda cifrada en este dispositivo."
+            else "Teléfono conectado. Para habilitar la asistencia, ingresá el código de conexión que te dio el equipo.")
     }
-    fun saveServer(url: String, name: String) {
+    fun saveServer(url: String, name: String, enrollmentCode: String = "", onConnected: () -> Unit = {}) {
         runCatching {
             require(state.value.guide.stage in listOf(Stage.IDLE, Stage.COMPLETE, Stage.CANCELLED)) { "Terminá la guía antes de cambiar de servidor." }
             stopAssistance()
             deviceSettingsJob?.cancel(); deviceSettingsJob = null
             settings.deviceName = name
             settings.baseUrl = url
-            mutable.value = mutable.value.copy(deviceSettingsLoaded = false, institutionMetricsConsent = false)
+            mutable.value = mutable.value.copy(deviceSettingsLoaded = false, institutionMetricsConsent = false, realtimeApproved = false)
             guideSession = null
             mutable.value = mutable.value.copy(familyName = null, shareProgress = false, allowHelp = false)
-        }.onSuccess { connect() }.onFailure { status(it.message ?: "Revisá la dirección.") }
+        }.onSuccess { connect(enrollmentCode, onConnected) }.onFailure { status(it.message ?: "Revisá la dirección.") }
     }
     fun refreshFamily() = work { api.register(); refreshFamilyInternal() }
     private suspend fun refreshFamilyInternal() {

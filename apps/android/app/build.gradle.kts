@@ -11,8 +11,8 @@ android {
         applicationId = "org.nieto.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0-labitconf"
+        versionCode = 5
+        versionName = "0.5.0-labitconf"
     }
     buildFeatures { compose = true; buildConfig = true }
     buildTypes {

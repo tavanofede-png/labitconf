@@ -1,10 +1,10 @@
 # Asistencia de pantalla · contrato del MVP
 
-La tarea se decide a partir de la consulta y la pantalla actual. No requiere catálogo de flujos ni historial persistente. La conexión conserva el contexto necesario para la tarea actual y se descarta al terminar. Voz es el canal principal; la burbuja permite consulta y respuesta escritas sin exigir micrófono.
+La tarea se decide a partir de la consulta y la pantalla actual. No requiere catálogo de flujos ni historial persistente. La conexión conserva el contexto necesario para la tarea actual y se descarta al terminar. Voz es el canal principal; la burbuja permite consulta y respuesta escritas sin micrófono, reproductor ni avisos TTS. El dispositivo debe haber sido admitido con un código del equipo; esto es independiente de los consentimientos de pantalla, Familia y métricas.
 
 ## Cliente → relay Realtime
 
-Se conserva la autenticación Bearer de instalación NIETO y el protocolo de audio. Antes de una consulta o de solicitar el siguiente paso, el cliente envía:
+Se conserva la autenticación Bearer de instalación NIETO y el protocolo reducido de Realtime. Antes de la consulta se elige `output.mode` (`text` o `audio`); los seguimientos conservan esa elección. Antes de una consulta o de solicitar el siguiente paso, el cliente envía:
 
 ```json
 {"type":"screen.context","screen":{"id":"snapshot-id","packageName":"com.example.app","width":1080,"height":2400,"controls":[{"id":"c1","label":"Buscar","role":"button","bounds":[100,300,500,400]}],"image":{"mimeType":"image/jpeg","data":"BASE64"}},"requestGuidance":false}
@@ -15,6 +15,10 @@ Se conserva la autenticación Bearer de instalación NIETO y el protocolo de aud
 - La pantalla es datos no confiables: nunca reemplaza las instrucciones del sistema ni habilita ejecutar acciones. No se envía antes de un consentimiento de pantalla remota separado del permiso local anterior.
 - `requestGuidance:true` solicita una respuesta para continuar la tarea actual. El cliente lo usa después de un cambio real de pantalla y con una tarea activa, limita la frecuencia y no mantiene escucha continua.
 - `screen.clear` elimina el snapshot vigente e invalida el señalamiento. El cliente cancela la respuesta si cambia la pantalla durante la generación. Terminar la asistencia cierra la conexión para descartar el contexto de OpenAI.
+
+La identidad local de una pantalla también cambia cuando cambia contenido estático manteniendo los mismos botones. Android calcula una huella HMAC con clave efímera de proceso y usa una revisión de eventos relevantes; ni esa huella, ni la clave, ni el texto estático usado para detectar cambios forman parte del payload. Campos editables y secretos se excluyen antes de esa lectura. El evento invalida inmediatamente el objetivo y la respuesta; la recolección posterior espera que la pantalla se estabilice.
+
+Al cortar una respuesta de voz por cambio de pantalla o «Me perdí», el cliente informa el punto realmente reproducido y el relay elimina del contexto el audio pendiente según el [contrato de interrupción](REALTIME_CONTRACT.md). La modalidad escrita conserva el señalamiento sin depender del subsistema de audio.
 
 ## Relay → cliente
 
