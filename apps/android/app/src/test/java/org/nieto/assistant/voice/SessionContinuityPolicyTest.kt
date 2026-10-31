@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SessionContinuityPolicyTest {
+    @Test fun `lease cleanup may use its full server timeout and conflict retry cannot replay started input`() {
+        assertTrue(SessionContinuityPolicy.OWNER_RELEASE_TIMEOUT_MS >= 22_000)
+        assertTrue(SessionContinuityPolicy.leaseRetryAllowed("realtime_already_active", true, false, 0))
+        assertFalse(SessionContinuityPolicy.leaseRetryAllowed("realtime_already_active", true, true, 0))
+        assertFalse(SessionContinuityPolicy.leaseRetryAllowed("realtime_already_active", false, false, 0))
+        assertFalse(SessionContinuityPolicy.leaseRetryAllowed("realtime_already_active", true, false, 3))
+        assertFalse(SessionContinuityPolicy.leaseRetryAllowed("insufficient_quota", true, false, 0))
+    }
     @Test fun `errors are audible for a requested turn but not an unanswered automatic reply window`() {
         assertTrue(SessionContinuityPolicy.shouldSpeakError(false, false))
         assertFalse(SessionContinuityPolicy.shouldSpeakError(true, false))

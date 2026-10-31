@@ -7,7 +7,12 @@ import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
-import org.nieto.assistant.voice.WakeWordPolicy
+import org.nieto.assistant.voice.WakeActivationPolicy
+import org.nieto.assistant.voice.WakeRecognitionWord
+import org.nieto.assistant.voice.LocalEndPolicy
+import org.nieto.assistant.voice.WakeTimedWord
+import org.nieto.assistant.voice.WakePcmRingBuffer
+import org.nieto.assistant.voice.WakeInvocationPCM
 import org.nieto.assistant.voice.WakeWordService
 
 /** Exercises the real Android native decoder with synthetic speech, without recording a microphone. */
@@ -40,27 +45,63 @@ class VoiceSmokeInstrumentation : Instrumentation() {
             copy(WakeWordService.MODEL_ASSET, directory)
             val model = Model(directory.absolutePath)
             try {
-                fun decode(asset: String, wake: Boolean): String {
+                data class DecodedUtterance(val text: String, val words: List<WakeRecognitionWord>?,
+                    val timedWords: List<WakeTimedWord>?, val invocation: WakeInvocationPCM?) {
+                    fun acceptedWake() = WakeActivationPolicy.accepts(isFinal = true, text = text, words = words)
+                    fun acceptedEnd() = LocalEndPolicy.accepts(isFinal = true, text = text, words = words, activeConversation = true)
+                }
+                fun decode(asset: String, wake: Boolean, captureInvocation: Boolean = false): List<DecodedUtterance> {
                     val recognizer = if (wake) Recognizer(model, 16000f, "[\"hola tino\",\"[unk]\"]") else Recognizer(model, 16000f)
+                    val ring = if (captureInvocation) WakePcmRingBuffer() else null
                     try {
-                        val results = mutableListOf<String>()
+                        recognizer.setWords(true)
+                        val results = mutableListOf<DecodedUtterance>()
+                        fun finalResult(result: String) {
+                            val json = JSONObject(result)
+                            val timed = json.optJSONArray("result")?.let { array -> (0 until array.length()).map { index ->
+                                val word = array.optJSONObject(index)
+                                WakeTimedWord(word?.optString("word").orEmpty(), (word?.opt("conf") as? Number)?.toDouble(),
+                                    (word?.opt("start") as? Number)?.toDouble(), (word?.opt("end") as? Number)?.toDouble())
+                            } }
+                            val text = json.optString("text")
+                            results += DecodedUtterance(text, timed?.map { WakeRecognitionWord(it.word, it.confidence) }, timed,
+                                ring?.extractInvocation(true, text, timed))
+                        }
                         fun feed(bytes: ByteArray, count: Int) {
-                            if (recognizer.acceptWaveForm(bytes, count)) results += JSONObject(recognizer.result).optString("text")
+                            if (ring != null) check(ring.appendPcm16(bytes, count)) { "La muestra sintética no está alineada como PCM16." }
+                            if (recognizer.acceptWaveForm(bytes, count)) finalResult(recognizer.result)
                         }
                         context.assets.open(asset).use { input -> val buffer = ByteArray(6400); while (true) { val count = input.read(buffer); if (count < 0) break; feed(buffer, count) } }
                         repeat(15) { val silence = ByteArray(6400); feed(silence, silence.size) }
-                        results += JSONObject(recognizer.finalResult).optString("text")
-                        return results.joinToString(" ").trim()
-                    } finally { recognizer.close() }
+                        finalResult(recognizer.finalResult)
+                        return results
+                    } finally { recognizer.close(); ring?.clear() }
                 }
                 val positive = decode("wake-positive.pcm", true)
-                check(WakeWordPolicy.matches(positive)) { "No reconoció la activación: $positive" }
+                check(positive.any { it.acceptedWake() }) { "La muestra sintética positiva no superó la política final de activación." }
+                check(positive.none { it.acceptedEnd() }) { "La muestra sintética de activación se confundió con un cierre." }
                 val negative = decode("wake-negative.pcm", true)
-                check(!WakeWordPolicy.matches(negative)) { "Activación incorrecta: $negative" }
+                check(negative.none { it.acceptedWake() }) { "La muestra sintética ajena activó incorrectamente la política final." }
+                check(negative.none { it.acceptedEnd() }) { "La muestra sintética ajena se confundió con un cierre." }
                 val command = decode("voice-command.pcm", false)
-                check(command.contains("correo")) { "No reconoció la consulta: $command" }
-                output.putString("stream", "\nPASS: wake phrase recognized; unrelated speech rejected; command recognized.\n")
-                output.putInt("tests", 3)
+                check(command.joinToString(" ") { it.text }.contains("correo")) { "No reconoció correo en la consulta sintética." }
+                check(command.none { it.acceptedEnd() }) { "La consulta sintética de correo se confundió con un cierre." }
+                // END uses unrestricted local dictation: negative and additional words must survive decoding.
+                val endPositive = decode("end-positive.pcm", false)
+                check(endPositive.any { it.acceptedEnd() }) { "La muestra sintética de cierre no superó la política de fin local con dictado libre." }
+                val endNegative = decode("end-negative.pcm", false)
+                check(endNegative.none { it.acceptedEnd() }) { "La negación sintética fue interpretada como un cierre local." }
+                val inline = decode("wake-inline.pcm", false, captureInvocation = true)
+                val complete = inline.firstOrNull { it.invocation != null && (it.timedWords?.size ?: 0) > 2 }
+                    ?: error("La muestra sin pausa no conservó la consulta posterior a Hola Tino.")
+                val invocation = complete.invocation!!
+                val timed = complete.timedWords!!
+                check(invocation.startSample16k >= kotlin.math.ceil(timed.first().startSeconds!! * 16000).toLong()) { "El recorte sintético incluyó audio anterior a la activación." }
+                check(invocation.endSample16k >= kotlin.math.ceil(timed.last().endSeconds!! * 16000).toLong()) { "El recorte sintético perdió parte de la consulta." }
+                check(invocation.pcm24k.size == (((invocation.endSample16k - invocation.startSample16k) * 3 + 1) / 2 * 2).toInt()) { "La consulta sintética no quedó en PCM24k alineado." }
+                invocation.pcm24k.fill(0)
+                output.putString("stream", "\nPASS: strict final wake accepted; unrelated speech rejected; correo recognized; local ending accepted; unfinished-task negation rejected; inline wake retains actual query PCM at 24k.\n")
+                output.putInt("tests", 6)
                 finish(Activity.RESULT_OK, output)
             } finally { model.close(); directory.deleteRecursively() }
         } catch (error: Throwable) {

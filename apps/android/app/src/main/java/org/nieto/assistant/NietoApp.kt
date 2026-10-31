@@ -88,7 +88,6 @@ data class AppState(
     val wakeStatus: String = "Activación por voz desactivada",
     val ttsSpeaking: Boolean = false,
     val assistantSelected: Boolean = false,
-    val followUpPending: Boolean = false,
 )
 
 class NietoApp : Application() {
@@ -119,6 +118,7 @@ class NietoApp : Application() {
     var screenCapture: ScreenCaptureBridge? = null
     private var preparedVoiceScreen: ScreenContext? = null
     private var voicePreparationTimeout: Job? = null
+    private var observationRefresh: Job? = null
     private var screenCaptureWait: Job? = null
     private var hasTask = false
     private var followUp: Job? = null
@@ -147,18 +147,14 @@ class NietoApp : Application() {
         mutable.value = mutable.value.copy(territoryId = settings.territoryId)
         realtime = RealtimeVoice(scope,
             onState = { voice ->
-                val previous = state.value.voice
                 if (state.value.voice.phase == VoicePhase.LISTENING && voice.phase == VoicePhase.WAITING) hasTask = true
                 mutable.value = mutable.value.copy(voice = voice)
-                if (state.value.wakeEnabled && previous.active && voice.phase == VoicePhase.ERROR && voice.audibleError &&
-                    (previous.phase != VoicePhase.ERROR || previous.message != voice.message)) {
-                    speak(voice.message)
-                }
                 if (!voice.active && voice.phase != VoicePhase.ERROR) scheduleScreenFollowUp()
             },
             onAnswer = { answer -> mutable.value = mutable.value.copy(answer = answer) },
             onTaskContext = { context -> hasTask = context != null },
-            onFollowUpRequested = { requestFollowUpVoice() },
+            onConversationEnded = { clearConversationState() },
+            onObservationRefresh = { refreshSilentObservation() },
             onGuidanceOffer = {},
             onStep = { step ->
                 if (state.value.screenValid && ScreenPolicy.target(step, state.value.screen, android.os.SystemClock.elapsedRealtime()) != null) {
@@ -219,38 +215,16 @@ class NietoApp : Application() {
         startService(Intent(this, WakeWordService::class.java).setAction(WakeWordService.ACTION_TALK))
     }
     /** Called only after the foreground service has released the local wake microphone. */
-    fun requestFollowUpVoice() {
-        if (!state.value.wakeEnabled || !state.value.assistanceEnabled || state.value.busy) {
-            realtime.skipFollowUp(); return
-        }
-        mutable.value = mutable.value.copy(followUpPending = true)
-        runCatching { startService(Intent(this, WakeWordService::class.java).setAction(WakeWordService.ACTION_FOLLOW_UP)) }
-            .onFailure { mutable.value = mutable.value.copy(followUpPending = false); realtime.skipFollowUp() }
-    }
-    fun skipFollowUpVoice() {
-        mutable.value = mutable.value.copy(followUpPending = false)
-        realtime.skipFollowUp()
-    }
-    fun startVoiceFromWake(greet: Boolean = true, followUp: Boolean = false) {
-        if (!state.value.wakeEnabled || !state.value.assistanceEnabled || state.value.busy ||
-            (state.value.voice.active && !(followUp && state.value.followUpPending))) return
-        if (followUp && !state.value.followUpPending) return
-        mutable.value = mutable.value.copy(followUpPending = false)
+    fun startVoiceFromWake() {
+        if (!state.value.wakeEnabled || !state.value.assistanceEnabled || state.value.busy || state.value.voice.active) return
         if ((getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked) {
-            if (followUp) realtime.skipFollowUp()
-            speak("Hola, estoy acá. Desbloqueá la tablet para que pueda ayudarte con la pantalla."); return
+            status("Desbloqueá el teléfono para usar la asistencia."); return
         }
-        wakeGreetingJob?.cancel()
-        val request = assistantRequest
-        wakeGreetingJob = scope.launch {
-            if (greet) speak("Hola, estoy acá. Un momento.")
-            // Release the local greeting before opening the remote microphone, without an Activity.
-            var waited = 0
-            if (greet) delay(200)
-            while ((pendingSpeech != null || state.value.ttsSpeaking || tts?.isSpeaking == true) && waited < 6000) { delay(100); waited += 100 }
-            stopSpeaking()
-            if (request == assistantRequest && state.value.wakeEnabled && state.value.assistanceEnabled) prepareVoice(quietFailure = followUp) { startRealtimeVoice(followUp) }
-        }
+        realtime.noteUserRequest()
+        observationRefresh?.cancel(); observationRefresh = null
+        stopSpeaking()
+        mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.CONNECTING, "Preparando la consulta…"))
+        prepareVoice { startRealtimeVoice() }
     }
     fun speak(text: String = state.value.guide.notice ?: state.value.guide.instruction) {
         if (text.isBlank() || (state.value.assistanceEnabled && state.value.textOnly)) return
@@ -316,8 +290,8 @@ class NietoApp : Application() {
             voicePreparationTimeout?.cancel(); voicePreparationTimeout = null
             val message = "No pude preparar la consulta. Podés volver a decir Hola Tino."
             if (quietFailure) realtime.skipFollowUp()
-            mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR, message, audibleError = !quietFailure), followUpPending = false)
-            if (!quietFailure && state.value.wakeEnabled) speak(message)
+            mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR, message, audibleError = !quietFailure))
+            realtime.requestedAttemptFinished()
         }
         voicePreparationTimeout = scope.launch { delay(6000); failed() }
         val ready: (ScreenContext?) -> Unit = { screen ->
@@ -332,10 +306,13 @@ class NietoApp : Application() {
         catch (_: Exception) { failed() }
     }
     fun startRealtimeVoice(followUp: Boolean = false) {
-        if (!settings.openAiConsent || !settings.remoteScreenConsent || !state.value.assistanceEnabled || state.value.busy) return
+        if (!settings.openAiConsent || !settings.remoteScreenConsent || !state.value.assistanceEnabled || state.value.busy) {
+            realtime.abandonPreparation(); return
+        }
         submitAssistant(null, preparedVoiceScreen.also { preparedVoiceScreen = null }, followUp)
     }
     private fun submitAssistant(text: String?, screen: ScreenContext?, followUp: Boolean = false) {
+        realtime.noteUserRequest()
         stopSpeaking()
         val request = ++assistantRequest
         voiceStartRequest = request
@@ -365,8 +342,8 @@ class NietoApp : Application() {
                     val message = if (error is ApiFailure || error is IllegalArgumentException) error.message.orEmpty().take(200)
                         else "No pude conectar la asistencia. Revisá el servidor desde Ajustes."
                     if (followUp) realtime.skipFollowUp()
-                    mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR, message, audibleError = !followUp), followUpPending = false)
-                    if (!followUp && state.value.wakeEnabled && state.value.assistanceEnabled) speak(message)
+                    mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR, message, audibleError = !followUp))
+                    realtime.requestedAttemptFinished()
                 }
             } finally { if (request == assistantRequest) mutable.value = mutable.value.copy(busy = false) }
         }
@@ -375,12 +352,63 @@ class NietoApp : Application() {
     fun cancelRealtimeVoice(clearTaskContext: Boolean = true) {
         voicePreparationTimeout?.cancel(); voicePreparationTimeout = null
         screenCaptureWait?.cancel(); screenCaptureWait = null
-        mutable.value = mutable.value.copy(screenCapturePending = false)
         ++assistantRequest; ++voiceStartRequest
         voiceStartJob?.cancel(); voiceStartJob = null
-        realtime.cancel(clearTaskContext = clearTaskContext)
-        mutable.value = mutable.value.copy(busy = false, screenStep = null, followUpPending = false)
+        mutable.value = mutable.value.copy(busy = true, screenCapturePending = false)
+        val release = realtime.cancel(clearTaskContext = clearTaskContext)
+        val request = assistantRequest
+        scope.launch {
+            release?.join()
+            if (request == assistantRequest) mutable.value = mutable.value.copy(busy = false, screenStep = null)
+        }
     }
+
+    fun handleWakeControl(action: org.nieto.assistant.voice.WakeControlAction) {
+        val decision = org.nieto.assistant.voice.WakeControlPolicy.decide(action)
+        if (decision.disableWake) stopAssistance()
+        else if (decision.clearConversation) endConversation()
+    }
+
+    val hasActiveConversation: Boolean get() = realtime.hasActiveConversation
+    val taskMemoryPresent: Boolean get() = realtime.taskMemoryPresent
+    val transportReady: Boolean get() = realtime.transportReady
+    val idleRemainingMs: Long get() = realtime.idleRemainingMs
+    fun onUserScreenAction(kind: String) {
+        if (state.value.assistanceEnabled && state.value.wakeEnabled) realtime.noteUserActivity(kind)
+    }
+
+    private fun refreshSilentObservation() {
+        observationRefresh?.cancel()
+        val request = assistantRequest
+        observationRefresh = scope.launch {
+            delay(650)
+            if (request != assistantRequest || !state.value.assistanceEnabled || state.value.voice.active ||
+                !realtime.taskMemoryPresent || !realtime.hasActiveConversation) return@launch
+            screenCapture?.capture { screen ->
+                if (request == assistantRequest && state.value.assistanceEnabled && screen != null && !screen.blocked &&
+                    realtime.taskMemoryPresent && realtime.hasActiveConversation && !state.value.voice.active) {
+                    realtime.resumeObservation(screen.copy(image = null).toWire())
+                }
+            }
+        }
+    }
+
+    fun endConversation() { cancelRealtimeVoice(clearTaskContext = true) }
+
+    private fun clearConversationState() {
+        observationRefresh?.cancel(); observationRefresh = null
+        ++assistantRequest; ++voiceStartRequest
+        wakeGreetingJob?.cancel(); wakeGreetingJob = null
+        voicePreparationTimeout?.cancel(); voicePreparationTimeout = null
+        voiceStartJob?.cancel(); voiceStartJob = null
+        messageJob?.cancel(); messageJob = null
+        followUp?.cancel(); followUp = null
+        preparedVoiceScreen = null; hasTask = false; lastScreenSent = null; automaticSteps = 0
+        stopSpeaking()
+        mutable.value = mutable.value.copy(answer = "", screenStep = null, screen = null, screenValid = false, chat = emptyList(),
+            suggestedFlow = null, emailDraft = null, screenCapturePending = false)
+    }
+
     fun onAssistantBackground() {
         if (state.value.wakeEnabled) return
         if (voiceStartJob?.isActive == true || state.value.voice.phase in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING)) cancelRealtimeVoice(clearTaskContext = false)
@@ -409,7 +437,7 @@ class NietoApp : Application() {
         realtime.cancel(clearTaskContext = clearWakePreference); stopSpeaking()
         preparedVoiceScreen = null; hasTask = false; lastScreenSent = null; automaticSteps = 0
         mutable.value = mutable.value.copy(assistanceEnabled = false, overlayEnabled = false, screen = null, screenValid = false,
-            screenStep = null, answer = "La asistencia terminó. El contexto de pantalla se eliminó.", busy = false, followUpPending = false)
+            screenStep = null, answer = "La asistencia terminó. El contexto de pantalla se eliminó.", busy = false)
     }
     fun revokeOpenAiConsent() {
         stopAssistance()
@@ -530,7 +558,11 @@ class NietoApp : Application() {
     fun reportGuideOutcome() { updateGuide(engine.reportSent()) }
     fun repeat() { updateGuide(engine.repeat(), forceSpeech = true) }
     fun lost() { updateGuide(engine.lost(), forceSpeech = true) }
-    fun cancel() { stopSpeaking(); updateGuide(engine.cancel()) }
+    fun cancel(silent: Boolean = false) {
+        stopSpeaking()
+        val next = engine.cancel()
+        if (silent) mutable.value = mutable.value.copy(guide = next) else updateGuide(next)
+    }
     fun screenConnection(connected: Boolean) {
         mutable.value = mutable.value.copy(accessibilityConnected = connected)
         if (!connected) {

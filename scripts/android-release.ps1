@@ -44,8 +44,14 @@ try {
             $testApk = Join-Path (Get-Location) 'app\build\outputs\apk\androidTest\release\app-release-androidTest.apk'
             & (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe') -s $DeviceSerial install -r $testApk
             if ($LASTEXITCODE -ne 0) { throw 'No se pudo instalar el verificador nativo.' }
-            & (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe') -s $DeviceSerial shell am instrument -w org.nieto.assistant.tino.test/org.nieto.assistant.presence.VoiceSmokeInstrumentation
-            if ($LASTEXITCODE -ne 0) { throw 'El verificador nativo terminó con error.' }
+            $smokeOutput = & (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe') -s $DeviceSerial shell am instrument -w org.nieto.assistant.tino.test/org.nieto.assistant.presence.VoiceSmokeInstrumentation 2>&1
+            $smokeExitCode = $LASTEXITCODE
+            $smokeText = $smokeOutput -join "`n"
+            $smokeOutput | ForEach-Object { Write-Host $_ }
+            # adb can exit successfully even when Instrumentation reports a failed check.
+            if ($smokeExitCode -ne 0 -or $smokeText -notmatch '(?m)^PASS:' -or $smokeText -match '(?m)^FAIL:|INSTRUMENTATION_FAILED') {
+                throw 'El verificador nativo no confirmó las comprobaciones de voz.'
+            }
         }
     }
 } finally {

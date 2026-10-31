@@ -58,7 +58,7 @@ class SessionContinuityPolicy {
         // 45 s input + 60 s generation + 90 s queued playback + 15 s network margin.
         const val TURN_BUDGET_MS = 210_000L
         const val LEASE_RELEASE_MS = 500L
-        const val IDLE_CLOSE_MS = 30_000L
+        const val OWNER_RELEASE_TIMEOUT_MS = 22_000L
         const val MAX_RETRIES = 3
 
         fun retryDelay(attempt: Int, jitterMs: Long): Long? = when (attempt) {
@@ -69,5 +69,7 @@ class SessionContinuityPolicy {
         }?.plus(jitterMs.coerceIn(0, 200))
 
         fun shouldSpeakError(automaticReply: Boolean, hasSpeech: Boolean): Boolean = !automaticReply || hasSpeech
+        fun leaseRetryAllowed(code: String, pending: Boolean, inputStarted: Boolean, attempt: Int): Boolean =
+            code == "realtime_already_active" && pending && !inputStarted && attempt < MAX_RETRIES
     }
 }

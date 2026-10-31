@@ -35,6 +35,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
     private var captureGeneration = 0L
     private var localObserving = false
     private var remoteRevision = 0L
+    private var lastUserApp: String? = null
 
     override fun onServiceConnected() {
         app.screenConnection(true)
@@ -55,6 +56,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (windows.any { it.id == event.windowId && it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }) return
+        reportUserScreenAction(event)
         val localGuideActive = AssistanceModePolicy.observeLocal(app.state.value.assistanceEnabled, app.settings.screenConsent, app.state.value.guide.stage)
         if (event.packageName?.toString() == packageName) {
             if (localGuideActive) {
@@ -85,6 +87,27 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
         app.invalidateScreenTarget(cancelResponse = navigation)
         handler.removeCallbacks(inspect)
         handler.postDelayed(inspect, 550)
+    }
+    private fun reportUserScreenAction(event: AccessibilityEvent) {
+        if (windows.none { it.id == event.windowId && it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION }) return
+        val kind = when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> "tap"
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> "scroll"
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                val source = event.source
+                val editable = source?.isEditable == true
+                @Suppress("DEPRECATION") source?.recycle()
+                if (editable) "text" else null
+            }
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                val current = event.packageName?.toString()
+                val changed = lastUserApp != null && current != null && lastUserApp != current
+                if (current != null) lastUserApp = current
+                if (changed) "navigation" else null
+            }
+            else -> null
+        }
+        if (kind != null) app.onUserScreenAction(kind)
     }
     private fun collectScreen() {
         val root = rootInActiveWindow ?: run {
@@ -193,7 +216,7 @@ class NietoAccessibilityService : AccessibilityService(), ScreenCaptureBridge {
             catch (_: Exception) { captureInProgress = false; overlay?.render(app.state.value, true); callback(collected.context) }
         }, 120)
     }
-    override fun onInterrupt() { app.stopAssistance(clearWakePreference = false); app.cancel(); overlay?.clear(); localOverlay?.clear() }
+    override fun onInterrupt() { app.stopAssistance(clearWakePreference = false); app.cancel(silent = true); overlay?.clear(); localOverlay?.clear() }
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         collector?.cancel()

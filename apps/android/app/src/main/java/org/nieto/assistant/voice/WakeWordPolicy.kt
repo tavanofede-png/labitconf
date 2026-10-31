@@ -18,6 +18,8 @@ class WakeWordPolicy {
     private var voiceObserved = false
     private var resumeAfter = 0L
 
+    fun reset() { handoffStartedAt = null; voiceObserved = false; resumeAfter = 0L }
+
     fun updateVoice(voiceBusy: Boolean, now: Long) {
         val started = handoffStartedAt ?: return
         if (voiceBusy) voiceObserved = true

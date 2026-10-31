@@ -4,6 +4,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WakeWordPolicyTest {
+    @Test fun `ending a conversation releases the old wake handoff without disabling new activation`() {
+        val policy = WakeWordPolicy()
+        assertTrue(policy.accept("hola tino", ready, 0))
+        assertFalse(policy.canListen(ready, 1))
+        policy.reset()
+        assertTrue(policy.canListen(ready, 2))
+        assertTrue(policy.accept("hola tino", ready, 2))
+    }
     private val ready = WakeWordConditions(true, true, true, false, false, false)
 
     @Test fun `activation requires adjacent complete wake words`() {

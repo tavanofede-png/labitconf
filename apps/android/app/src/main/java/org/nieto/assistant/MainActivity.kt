@@ -104,12 +104,13 @@ private val Cream=Color(0xFFFAF8F2)
             if(!state.assistantSelected) BigButton("Elegir asistente TINO",onAssistant)
             if(state.wakeEnabled) {
                 Text(state.wakeStatus,fontWeight=FontWeight.Bold,color=Forest)
-                Text("Ya podés volver a tus aplicaciones. TINO no pulsa ni escribe por vos. La notificación de Android permite detener la escucha.")
-                BigButton("Detener TINO",{app.stopAssistance()})
+                Text("La notificación permite terminar la conversación. Hola Tino sigue disponible para otra consulta.")
+                BigButton("Apagar TINO",{app.handleWakeControl(org.nieto.assistant.voice.WakeControlAction.FULL_OFF)})
+                Text("Apagar TINO desactiva Hola Tino. Para volver a usarlo, habilitalo aquí.",fontSize=16.sp)
             } else BigButton("Habilitar Hola Tino",{
                 if(app.settings.openAiConsent && app.settings.remoteScreenConsent) onVoice() else consent=true
             })
-            Text("La escucha local queda habilitada por tu elección. Android muestra el uso del micrófono. Tras reiniciar, el sistema puede restaurar el asistente después del primer desbloqueo; debemos verificarlo en esta Galaxy Tab S10+.",fontSize=16.sp)
+            Text("Tras 30 segundos sin actividad, TINO olvida la conversación y espera un nuevo Hola Tino. Android muestra el uso del micrófono.",fontSize=16.sp)
             OutlinedButton(onClick=onFamily,modifier=Modifier.fillMaxWidth()) {Text("Configuración familiar")}
         }
         if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
