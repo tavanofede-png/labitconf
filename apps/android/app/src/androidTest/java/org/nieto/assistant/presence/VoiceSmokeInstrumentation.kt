@@ -48,13 +48,13 @@ class VoiceSmokeInstrumentation : Instrumentation() {
             finish(if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
             return
         }
-        if (suite == "realtime-production") {
-            val result = realtimeProductionSmoke(this)
+        if (suite == "realtime-production" || suite == "realtime-dialogue") {
+            val result = realtimeProductionSmoke(this, continuous = suite == "realtime-dialogue")
             finish(if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
             return
         }
-        if (suite == "realtime-transport") {
-            val result = realtimeTransportSmoke(this)
+        if (suite == "realtime-transport" || suite == "realtime-transport-dialogue") {
+            val result = realtimeTransportSmoke(this, continuous = suite == "realtime-transport-dialogue")
             finish(if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
             return
         }
@@ -137,8 +137,13 @@ class VoiceSmokeInstrumentation : Instrumentation() {
                 check(invocation.endSample16k >= kotlin.math.ceil(timed.last().endSeconds!! * 16000).toLong()) { "El recorte sintético perdió parte de la consulta." }
                 check(invocation.pcm24k.size == (((invocation.endSample16k - invocation.startSample16k) * 3 + 1) / 2 * 2).toInt()) { "La consulta sintética no quedó en PCM24k alineado." }
                 invocation.pcm24k.fill(0)
-                output.putString("stream", "\nPASS: strict final wake accepted; unrelated speech rejected; correo recognized; local ending accepted; unfinished-task negation rejected; inline wake retains actual query PCM at 24k.\n")
-                output.putInt("tests", 6)
+                val followup = context.assets.open("voice-command.pcm").use { decodeSyntheticConversation(model, it) }
+                check(followup != null && followup.pcm24k.size >= 4800) { "No conservó el audio real del seguimiento sin Hola Tino." }
+                followup.pcm24k.fill(0)
+                val silence = java.io.ByteArrayInputStream(ByteArray(16000 * 2 * 3)).use { decodeSyntheticConversation(model, it) }
+                check(silence == null) { "El silencio creó una consulta de seguimiento." }
+                output.putString("stream", "\nPASS: strict wake; unrelated speech rejected; correo recognized; local ending; negation preserved; full inline wake PCM; follow-up without keyword; silence produces no turn.\n")
+                output.putInt("tests", 8)
                 finish(Activity.RESULT_OK, output)
             } finally { model.close(); directory.deleteRecursively() }
         } catch (error: Throwable) {

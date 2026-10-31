@@ -13,12 +13,12 @@ Se conserva la autenticación Bearer de instalación NIETO y el protocolo reduci
 - `image` es opcional. Android 30+ usa captura autorizada; 26–29 aporta controles accesibles. Si no hay evidencia suficiente, el modelo debe pedir aclaración.
 - Máximo 60 controles, etiquetas de 120 caracteres, imagen JPEG de 300 KB, dimensiones positivas de hasta 10000 px. Identificadores únicos, bounds dentro de pantalla.
 - La pantalla es datos no confiables: nunca reemplaza las instrucciones del sistema ni habilita ejecutar acciones. No se envía antes de un consentimiento de pantalla remota separado del permiso local anterior.
-- `requestGuidance:true` solicita una respuesta para continuar la tarea actual. El cliente lo usa después de un cambio real de pantalla y con una tarea activa, limita la frecuencia y no mantiene escucha continua.
-- `screen.clear` elimina el snapshot vigente e invalida el señalamiento. El cliente cancela la respuesta si cambia la pantalla durante la generación. Terminar la asistencia cierra la conexión para descartar el contexto de OpenAI.
+- `requestGuidance:true` solicita explícitamente una respuesta para continuar la tarea actual. La observación automática usa `false`: el servidor comprueba por separado que una acción real completó el paso pendiente antes de generar una sola continuación. Una pantalla pasiva no solicita voz.
+- `screen.clear` elimina el snapshot vigente e invalida el señalamiento, conservando la entrada de voz y la respuesta solicitada en curso. Terminar la asistencia cierra la conexión y descarta el contexto.
 
 La identidad local de una pantalla también cambia cuando cambia contenido estático manteniendo los mismos botones. Android calcula una huella HMAC con clave efímera de proceso y usa una revisión de eventos relevantes; ni esa huella, ni la clave, ni el texto estático usado para detectar cambios forman parte del payload. Campos editables y secretos se excluyen antes de esa lectura. El evento invalida inmediatamente el objetivo y la respuesta; la recolección posterior espera que la pantalla se estabilice.
 
-Al cortar una respuesta de voz por cambio de pantalla o «Me perdí», el cliente informa el punto realmente reproducido y el relay elimina del contexto el audio pendiente según el [contrato de interrupción](REALTIME_CONTRACT.md). La modalidad escrita conserva el señalamiento sin depender del subsistema de audio.
+Al interrumpir explícitamente una respuesta de voz o pedir «Me perdí», el cliente informa el punto realmente reproducido y el relay elimina del contexto el audio pendiente según el [contrato de interrupción](REALTIME_CONTRACT.md). La modalidad escrita conserva el señalamiento sin depender del subsistema de audio.
 
 ## Relay → cliente
 

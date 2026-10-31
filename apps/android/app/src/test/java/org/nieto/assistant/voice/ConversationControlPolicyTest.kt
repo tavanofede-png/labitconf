@@ -4,6 +4,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ConversationControlPolicyTest {
+    @Test fun `actual speech extends a live conversation without reviving an expired or ended one`() {
+        val policy = ConversationIdlePolicy()
+        assertFalse(policy.speechActivity(0))
+        policy.turnFinished(0)
+        assertTrue(policy.speechActivity(29_000))
+        assertEquals(30_000L, policy.remaining(29_000))
+        assertTrue(policy.speechActivity(58_000))
+        assertEquals(30_000L, policy.remaining(58_000))
+        assertFalse(policy.speechActivity(88_000))
+        assertTrue(policy.expired(88_000))
+        policy.clear()
+        assertFalse(policy.speechActivity(88_001))
+    }
     @Test fun `only real activity or technical rotation can resume observation of a live task`() {
         assertTrue(ObservationResumePolicy.allowed(true, true, false, true))
         assertFalse(ObservationResumePolicy.allowed(false, true, false, true))

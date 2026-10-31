@@ -20,7 +20,7 @@ import org.vosk.Model
 import java.io.File
 
 /** Opt-in integration suite: two real provider turns using only bundled synthetic PCM, never a test microphone. */
-internal fun realtimeProductionSmoke(instrumentation: Instrumentation): Bundle {
+internal fun realtimeProductionSmoke(instrumentation: Instrumentation, continuous: Boolean = false): Bundle {
     val app = instrumentation.targetContext.applicationContext as NietoApp
     fun <T> main(block: () -> T): T {
         var result: Result<T>? = null
@@ -60,6 +60,7 @@ internal fun realtimeProductionSmoke(instrumentation: Instrumentation): Bundle {
     var initialWake = false
     var initialOptIn = false
     var fixture: WakeInvocationPCM? = null
+    var followupFixture: WakeInvocationPCM? = null
     var precondition = false
     var success = false
     fun clean(value: State) = !value.answer && !value.pointer && !value.task && !value.ready && !value.conversation &&
@@ -113,12 +114,24 @@ internal fun realtimeProductionSmoke(instrumentation: Instrumentation): Bundle {
         stage = "synthetic_decode"
         val synthetic = decodeProductionFixture(instrumentation)
         fixture = synthetic
+        if (continuous) {
+            val model = kotlinx.coroutines.runBlocking { org.nieto.assistant.voice.OfflineVoiceModel.load(app) }
+            followupFixture = model.use { loaded ->
+                instrumentation.context.assets.open("voice-command.pcm").use { decodeSyntheticConversation(loaded, it) }
+            }
+            check(followupFixture != null) { "followup_not_decoded" }
+        }
         for (turn in 1..2) {
             stage = "turn_${turn}_start"
             val current = state()
-            check(current.allowed && !current.occupied && !current.conversation && !current.task) { "precondition_changed" }
+            check(current.allowed && !current.occupied) { "precondition_changed" }
+            if (continuous && turn == 2) {
+                check(current.conversation && current.ready && current.idleMs > 0) { "conversation_not_retained" }
+                check(main { app.onConversationSpeechActivity() }) { "speech_not_accepted" }
+            } else check(!current.conversation && !current.task) { "previous_conversation_retained" }
             // App owns and zeroes each submitted array. A new copy is required for the second invocation.
-            val audio = synthetic.copy(pcm24k = synthetic.pcm24k.copyOf())
+            val source = if (continuous && turn == 2) followupFixture!! else synthetic
+            val audio = source.copy(pcm24k = source.pcm24k.copyOf())
             main { app.startVoiceFromWake(audio) }
             started++
             val deadline = SystemClock.elapsedRealtime() + 60_000L
@@ -131,15 +144,20 @@ internal fun realtimeProductionSmoke(instrumentation: Instrumentation): Bundle {
                 check(!value.error) { "voice_error" }
                 check(!value.liveInput) { "unexpected_live_microphone" }
                 if (value.phase in listOf(VoicePhase.WAITING, VoicePhase.SPEAKING)) progressed = true
-                if (progressed && value.answer && !value.busy && value.phase != VoicePhase.CONNECTING) { received = true; break }
+                if (progressed && value.answer && !value.busy &&
+                    (if (continuous) value.phase == VoicePhase.IDLE && value.idleMs > 0 else value.phase != VoicePhase.CONNECTING)) {
+                    received = true; break
+                }
                 SystemClock.sleep(50)
             } while (SystemClock.elapsedRealtime() < deadline)
             check(received) { "response_timeout" }
             answered++
-            stage = "turn_${turn}_end"
-            main { app.endConversation() }
-            check(waitClean(5_000)) { "end_not_clean" }
-            ended++
+            if (!continuous || turn == 2) {
+                stage = "turn_${turn}_end"
+                main { app.endConversation() }
+                check(waitClean(5_000)) { "end_not_clean" }
+                ended++
+            }
             // No lease-release sleep here: immediate second use exercises the production close/owner-ack path.
         }
         stage = "complete"
@@ -148,6 +166,7 @@ internal fun realtimeProductionSmoke(instrumentation: Instrumentation): Bundle {
         // Report stage and booleans only, never provider text, credentials, screenshots or transcripts.
     } finally {
         fixture?.pcm24k?.fill(0)
+        followupFixture?.pcm24k?.fill(0)
         if (started > 0) {
             runCatching { main { app.endConversation() }; waitClean(5_000) }
         }
@@ -161,7 +180,7 @@ internal fun realtimeProductionSmoke(instrumentation: Instrumentation): Bundle {
         putInt("turns_started", started); putInt("answers_received", answered); putInt("ends_verified", ended)
         putBoolean("memory_clear", !final.task); putBoolean("transport_ready", final.ready)
         putBoolean("answer_clear", !final.answer); putBoolean("pointer_clear", !final.pointer); putBoolean("wake_preserved", wakePreserved)
-        putString("stream", "\n${if (success) "PASS" else "FAIL"} realtime-production: stage=$stage; started=$started; answered=$answered; ended=$ended; memory_clear=${!final.task}; transport_ready=${final.ready}; answer_clear=${!final.answer}; pointer_clear=${!final.pointer}; wake_preserved=$wakePreserved.\n")
+        putString("stream", "\n${if (success) "PASS" else "FAIL"} realtime-production: continuous=$continuous; stage=$stage; started=$started; answered=$answered; ended=$ended; memory_clear=${!final.task}; transport_ready=${final.ready}; answer_clear=${!final.answer}; pointer_clear=${!final.pointer}; wake_preserved=$wakePreserved.\n")
     }
 }
 

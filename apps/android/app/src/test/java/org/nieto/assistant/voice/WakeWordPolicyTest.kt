@@ -4,6 +4,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WakeWordPolicyTest {
+    @Test fun `followup rearms promptly only inside a live conversation and respects every audio gate`() {
+        val policy = WakeWordPolicy()
+        assertFalse(policy.acceptConversationTurn(ready, false, 0))
+        assertTrue(policy.acceptVerifiedWake(ready, 0))
+        policy.updateVoice(true, 100)
+        assertFalse(policy.canListenConversation(ready, true, 200))
+        policy.updateVoice(false, 1_000)
+        assertEquals(250L, policy.nextCheckDelay(1_000, conversation = true))
+        assertFalse(policy.acceptConversationTurn(ready, true, 1_249))
+        assertFalse(policy.canListen(ready, 1_250))
+        for (blocked in listOf(ready.copy(enabled=false), ready.copy(assistanceEnabled=false),
+            ready.copy(accessibilityConnected=false), ready.copy(voiceBusy=true), ready.copy(ttsSpeaking=true))) {
+            assertFalse(policy.acceptConversationTurn(blocked, true, 1_250))
+        }
+        assertFalse(policy.acceptConversationTurn(ready, false, 1_250))
+        assertTrue(policy.acceptConversationTurn(ready, true, 1_250))
+        assertFalse(policy.acceptConversationTurn(ready, true, 1_251))
+        policy.reset()
+        assertTrue(policy.canListen(ready, 1_252))
+        assertFalse(policy.canListenConversation(ready, false, 1_252))
+    }
     @Test fun `verified audio hands off independently of free ASR spelling without bypassing readiness or cooldown`() {
         val policy = WakeWordPolicy()
         assertFalse(policy.accept("hola chino estas ahi", ready, 0))

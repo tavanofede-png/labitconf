@@ -410,6 +410,8 @@ class NietoApp : Application() {
     val taskMemoryPresent: Boolean get() = realtime.taskMemoryPresent
     val transportReady: Boolean get() = realtime.transportReady
     val idleRemainingMs: Long get() = realtime.idleRemainingMs
+    fun onConversationSpeechActivity(): Boolean = state.value.wakeEnabled && state.value.assistanceEnabled &&
+        !state.value.textOnly && realtime.noteLocalSpeechActivity()
     fun onUserScreenAction(kind: String) {
         if (phoneLocked()) return
         if (state.value.assistanceEnabled && state.value.wakeEnabled) realtime.noteUserActivity(kind)

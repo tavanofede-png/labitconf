@@ -19,7 +19,7 @@ import org.nieto.assistant.voice.VoiceState
 import org.nieto.assistant.voice.WakeInvocationPCM
 
 /** Optional native transport component test, not an App/accessibility/wake end-to-end test. */
-internal fun realtimeTransportSmoke(instrumentation: Instrumentation): Bundle {
+internal fun realtimeTransportSmoke(instrumentation: Instrumentation, continuous: Boolean = false): Bundle {
     val app = instrumentation.targetContext.applicationContext as NietoApp
     fun <T> main(block: () -> T): T {
         var result: Result<T>? = null
@@ -53,6 +53,7 @@ internal fun realtimeTransportSmoke(instrumentation: Instrumentation): Bundle {
     fun clean() = main { !answer && !pointer && endedCallback && !realtime.taskMemoryPresent && !realtime.transportReady &&
         !realtime.hasActiveConversation && realtime.idleRemainingMs <= 0 && observed.phase == VoicePhase.IDLE }
     var fixture: WakeInvocationPCM? = null
+    var followupFixture: WakeInvocationPCM? = null
     var started = 0
     var answered = 0
     var ended = 0
@@ -62,13 +63,25 @@ internal fun realtimeTransportSmoke(instrumentation: Instrumentation): Bundle {
     try {
         val synthetic = decodeProductionFixture(instrumentation)
         fixture = synthetic
+        if (continuous) {
+            val model = kotlinx.coroutines.runBlocking { org.nieto.assistant.voice.OfflineVoiceModel.load(app) }
+            followupFixture = model.use { loaded -> instrumentation.context.assets.open("voice-command.pcm").use {
+                decodeSyntheticConversation(loaded, it)
+            } }
+            check(followupFixture != null) { "followup_not_decoded" }
+        }
         for (turn in 1..2) {
             stage = "turn_${turn}_start"
             check(permitted()) { "precondition_changed" }
-            val pcm = synthetic.pcm24k.copyOf()
+            val pcm = (if (continuous && turn == 2) followupFixture!! else synthetic).pcm24k.copyOf()
             main {
+                if (continuous && turn == 2) {
+                    check(realtime.hasActiveConversation && realtime.transportReady) { "conversation_not_retained" }
+                    check(realtime.noteLocalSpeechActivity()) { "speech_not_accepted" }
+                }
                 answer = false; pointer = false; endedCallback = false
                 realtime.start(identity.first, identity.second, inputAudio = pcm)
+                if (continuous && turn == 2) check(realtime.transportReady) { "followup_closed_transport" }
             }
             started++
             stage = "turn_${turn}_response"
@@ -80,16 +93,25 @@ internal fun realtimeTransportSmoke(instrumentation: Instrumentation): Bundle {
                 check(main { !errorObserved }) { "voice_error" }
                 check(main { !liveInputObserved }) { "unexpected_live_microphone" }
                 if (state.first in listOf(VoicePhase.WAITING, VoicePhase.SPEAKING)) progressed = true
-                if (progressed && state.second && state.third) { received = true; break }
+                if (progressed && state.second && state.third && (!continuous || state.first == VoicePhase.IDLE)) { received = true; break }
                 SystemClock.sleep(50)
             } while (SystemClock.elapsedRealtime() < deadline)
             check(received) { "response_timeout" }
             answered++
-            stage = "turn_${turn}_end"
-            main { realtime.cancel(clearTaskContext = true) }
-            check(clean()) { "end_not_clean" }
-            ended++
+            if (!continuous) {
+                stage = "turn_${turn}_end"
+                main { realtime.cancel(clearTaskContext = true) }
+                check(clean()) { "end_not_clean" }
+                ended++
+            }
             // Immediately start the next turn: the production component must await the owner-close acknowledgement.
+        }
+        if (continuous) {
+            stage = "idle_end"
+            val deadline = SystemClock.elapsedRealtime() + 35_000L
+            while (!clean() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
+            check(clean()) { "idle_end_not_clean" }
+            ended++
         }
         stage = "complete"
         success = true
@@ -97,6 +119,7 @@ internal fun realtimeTransportSmoke(instrumentation: Instrumentation): Bundle {
         // Static stage/counts only: no provider transcript, credentials, screen content or microphone data.
     } finally {
         fixture?.pcm24k?.fill(0)
+        followupFixture?.pcm24k?.fill(0)
         runCatching { main { realtime.cancel(clearTaskContext = true) }; cleared = clean() }
         scope.cancel()
     }
@@ -106,6 +129,6 @@ internal fun realtimeTransportSmoke(instrumentation: Instrumentation): Bundle {
         putInt("tests", if (success) 2 else answered); putInt("turns_started", started)
         putInt("answers_received", answered); putInt("ends_verified", ended); putBoolean("local_state_clear", cleared)
         putBoolean("live_input_observed", liveInputObserved); putBoolean("voice_error_observed", errorObserved)
-        putString("stream", "\n${if (success) "PASS" else "FAIL"} realtime-transport: component_only=true; stage=$stage; started=$started; answered=$answered; ended=$ended; local_state_clear=$cleared.\n")
+        putString("stream", "\n${if (success) "PASS" else "FAIL"} realtime-transport: continuous=$continuous; component_only=true; stage=$stage; started=$started; answered=$answered; ended=$ended; local_state_clear=$cleared.\n")
     }
 }

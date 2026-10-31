@@ -61,6 +61,7 @@ class RealtimeVoice(
     private var pendingInputAudio: ByteArray? = null
     private var pendingGuidance = false
     private var quietFollowUp = false
+    private var localInputAnnounced = false
     @Volatile private var inputHadSpeech = false
     private val conversationIdle = ConversationIdlePolicy()
     private val continuity = SessionContinuityPolicy()
@@ -76,6 +77,9 @@ class RealtimeVoice(
     private var transportStartedAt = 0L
     private var pendingUserActivity: String? = null
     private var lastUserActivityAt = 0L
+    private var lastRealActionAt = 0L
+    private var consumedStepActivityAt = 0L
+    private var currentObservationId: String? = null
     private var activityFlush: Job? = null
     private var snapshotFlush: Job? = null
     private var queuedSnapshot: JSONObject? = null
@@ -110,7 +114,7 @@ class RealtimeVoice(
             if (!hadAudio || send(JSONObject().put("type", "playback.complete").put("turnId", turnId))) {
                 playback.clear()
                 conversationIdle.turnFinished(SystemClock.elapsedRealtime())
-                emit(VoiceState(message = "Decí Hola Tino para otra consulta."))
+                emit(VoiceState(message = "Te escucho. Podés seguir conversando."))
             }
         }
     }, onFailure = { message -> fail(message) })
@@ -133,6 +137,8 @@ class RealtimeVoice(
         ++requestEpoch
         connectJob?.cancel(); idleClose?.cancel()
         if (ready) interruptPlayback(ignoreAcknowledgement = true)
+        localInputAnnounced = false
+        observing = false; observationRequested = false
         player.stop(); turns.cancel(); transcript = ""; awaitingResponse = false
         pendingCapture = true; pendingScreen = screen; pendingText = text; pendingGuidance = guidance
         pendingInputAudio?.fill(0); pendingInputAudio = inputAudio
@@ -285,7 +291,8 @@ class RealtimeVoice(
         observationSnapshot = null; observationActivity = null; observationBaseline = null
         activityFlush?.cancel(); activityFlush = null; pendingUserActivity = null
         snapshotFlush?.cancel(); snapshotFlush = null; queuedSnapshot = null
-        lastScreenContextAt = 0L; ready = false; awaitingResponse = false
+        lastScreenContextAt = 0L; currentObservationId = null; ready = false; awaitingResponse = false
+        localInputAnnounced = false
         commitCapture = false; recording = false
         turns.cancel(); watchdog?.cancel(); watchdog = null
         captureDeadline?.cancel(); captureDeadline = null
@@ -331,7 +338,6 @@ class RealtimeVoice(
         if (conversationIdle.isRequestActive) return
         val now = SystemClock.elapsedRealtime()
         if (conversationIdle.expired(now)) cancel(clearTaskContext = true)
-        else if (ready) closeTransport()
         conversationIdle.beginRequest(now)
         idleClose?.cancel(); idleClose = null
     }
@@ -341,11 +347,26 @@ class RealtimeVoice(
     val transportReady: Boolean get() = ready
     val idleRemainingMs: Long get() = conversationIdle.remaining(SystemClock.elapsedRealtime()) ?: -1L
 
+    /** Actual local speech keeps this turn alive; merely opening a local listener never does. */
+    fun noteLocalSpeechActivity(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (current.active || !conversationIdle.speechActivity(now)) return false
+        armIdleClose()
+        if (ready && !localInputAnnounced) {
+            // Existing protocol suspends the server's idle clock while the real utterance is captured locally.
+            // No ambient PCM is sent here. request() cancels this empty buffer before sending the complete turn.
+            if (!send(JSONObject().put("type", "audio.start"))) return false
+            localInputAnnounced = true
+        }
+        return true
+    }
+
     fun noteUserActivity(kind: String) {
         if (kind !in setOf("tap", "scroll", "text", "navigation")) return
         val now = SystemClock.elapsedRealtime()
         if (conversationIdle.expired(now)) { cancel(clearTaskContext = true); return }
         if (!conversationIdle.screenAction(now)) return
+        lastRealActionAt = now
         armIdleClose()
         if (!ready) {
             if (ObservationResumePolicy.allowed(taskContext != null, hasActiveConversation, conversationIdle.isRequestActive, true)) {
@@ -398,9 +419,11 @@ class RealtimeVoice(
     private fun sendObserved(message: JSONObject): Boolean {
         val accepted = send(message)
         if (accepted && message.optString("type") == "screen.context") message.optJSONObject("screen")?.let {
+            currentObservationId = it.optString("id")
             lastObservation = reducedObservation(it)
             if (observing) observationSnapshot = it
         }
+        if (accepted && message.optString("type") == "screen.clear") currentObservationId = null
         return accepted
     }
 
@@ -502,7 +525,7 @@ class RealtimeVoice(
         }
     }
 
-    /** Only PCM clipped after a verified local wake reaches this path. No new microphone is opened. */
+    /** PCM from a verified wake or the active conversation listener. No second microphone is opened. */
     private fun sendVerifiedAudio(audio: ByteArray, generation: Long) {
         pendingCapture = false
         if (audio.size !in RealtimePolicy.MIN_INPUT_BYTES..RealtimePolicy.MAX_INPUT_BYTES || audio.size % 2 != 0) {
@@ -621,6 +644,8 @@ class RealtimeVoice(
                     fail("El servidor no ofrece el modelo o formato de audio esperado."); return
                 }
                 ready = true; watchdog?.cancel()
+                if (event.optJSONObject("guidance")?.optBoolean("configure") == true &&
+                    !send(JSONObject().put("type", "guidance.configure").put("mode", "one_step"))) return
                 val session = event.optJSONObject("session")
                 continuity.ready(transportStartedAt,
                     session?.optLong("maxSessionMs", SessionContinuityPolicy.DEFAULT_MAX_MS) ?: SessionContinuityPolicy.DEFAULT_MAX_MS,
@@ -663,7 +688,18 @@ class RealtimeVoice(
                 onTaskContext(taskContext)
             }
             "response.started" -> {
-                if (!awaitingResponse) return
+                if (!awaitingResponse) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (!StepContinuationPolicy.accepts(event.optString("reason"), taskContext != null, hasActiveConversation,
+                        conversationIdle.isRequestActive, current.active, localInputAnnounced,
+                        currentObservationId != null && currentObservationId == event.optString("screenId"),
+                        lastRealActionAt, consumedStepActivityAt, now)) return
+                    consumedStepActivityAt = lastRealActionAt
+                    conversationIdle.beginRequest(now)
+                    observing = false; observationRequested = false
+                    awaitingResponse = true
+                    onAnswer("")
+                }
                 val turnId = event.optString("turnId")
                 val responseMode = event.optString("outputMode", outputMode)
                 if (responseMode != outputMode) { fail("El servidor no respetó el modo de respuesta elegido. Volvé a intentar."); return }
@@ -747,7 +783,7 @@ class RealtimeVoice(
         turns.cancel()
         if (!send(JSONObject().put("type", "audio.start"))) return
         recording = true
-        // A short answer is allowed inside the current task, but capture still requires Hola Tino or an explicit mic action.
+        // Manual microphone input; hands-free follow-ups use the local conversation listener instead.
         val activity = VoiceActivityPolicy(followUp = taskContext != null)
         val silentTimeout = AtomicBoolean(false)
         emit(VoiceState(VoicePhase.CONNECTING, "Preparando el micrófono. Hablá después de la señal."))

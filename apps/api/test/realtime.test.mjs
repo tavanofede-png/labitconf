@@ -10,6 +10,7 @@ import { RealtimeConversation, RealtimeService, REALTIME_MODEL, REALTIME_VOICE, 
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
 import { validateSnapshot, MAX_IMAGE_BYTES } from '../src/screen-context.mjs';
+import { GUIDED_REPLY_TOOL } from '../src/guided-reply.mjs';
 
 function eventsFrom(target, name = 'event') {
   const seen = []; const waiting = [];
@@ -901,6 +902,110 @@ test('a screen action can finish a task silently in an isolated probe without co
   assert.equal(conversation.lastActivityAt, actionAt); assert.equal(conversation.turns, 0);
   assert.equal(output.seen.some(event => ['text.delta', 'audio.delta', 'response.started', 'response.done'].includes(event.type)), false);
   assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1);
+});
+
+test('a verified intermediate action requests exactly one next step on the current screen and retains the task', async t => {
+  let responses = 0; let probes = 0;
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    if (event.response.metadata.nieto_probe_id) {
+      probes++;
+      const input = JSON.parse(event.response.input[0].content[0].text);
+      assert.equal(input.AWAITED_STEP.instruction, 'Abrí Ajustes.');
+      assert.equal(input.AFTER.id, 'settings');
+      const id = 'progress-check';
+      socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+      socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [{ type: 'function_call',
+        name: 'report_task_completion', arguments: JSON.stringify({ completed: false, stepCompleted: true, screenId: 'settings', evidenceControlIds: ['display'] }) }] } }));
+      return;
+    }
+    responses++;
+    const id = `step-${responses}`;
+    assert.match(event.response.instructions, /SOLAMENTE la próxima acción/);
+    if (responses === 2) assert.match(event.response.instructions, /sistema verificó/);
+    const text = responses === 1 ? 'Abrí Ajustes.' : 'Tocá Pantalla.';
+    socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_text.done', response_id: id, text }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+  });
+  let screenClock = Date.now();
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true,
+    now: () => screenClock, completionProbeOptions: { debounceMs: 15 } });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'resume.context', context: { goal: 'Cambiar el brillo', targetApp: 'Ajustes', progress: 'Esperando que abra Ajustes' } });
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'home' } });
+  conversation.handleClient({ type: 'text', text: 'Ayudame a cambiar el brillo.' });
+  await output.wait(event => event.type === 'response.done');
+  assert.equal(conversation.awaitedStep.instruction, 'Abrí Ajustes.');
+  assert.equal(responses, 1);
+  conversation.handleClient({ type: 'user.activity', kind: 'tap' }); screenClock += 751;
+  conversation.handleClient({ type: 'screen.context', requestGuidance: false, screen: { ...screen(), id: 'settings',
+    controls: [{ id: 'display', label: 'Pantalla', role: 'button', bounds: [0, 0, 100, 50] }] } });
+  const next = await output.wait(event => event.type === 'response.started' && event.reason === 'step_completed');
+  assert.equal(next.screenId, 'settings');
+  await output.wait(event => event.type === 'response.done' && event.turnId === next.turnId);
+  assert.equal(responses, 2); assert.equal(probes, 1); assert.equal(conversation.closed, false);
+  assert.equal(conversation.taskContext.goal, 'Cambiar el brillo'); assert.equal(conversation.awaitedStep.instruction, 'Tocá Pantalla.');
+  screenClock += 751;
+  conversation.handleClient({ type: 'screen.context', requestGuidance: false, screen: { ...conversation.screen, id: 'passive-refresh' } });
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(responses, 2); assert.equal(probes, 1);
+});
+
+test('configured step replies repair a multi-action plan before any words reach the person', async t => {
+  let plans=0; let spoken=0;
+  const upstream=await fakeOpenAi(t,(socket,event)=>{
+    const id=`prepared-${plans}-${spoken}`;
+    socket.send(JSON.stringify({type:'response.created',response:{id,metadata:event.response.metadata}}));
+    if(event.response.tool_choice?.name===GUIDED_REPLY_TOOL.name){
+      plans++;
+      assert.deepEqual(event.response.output_modalities,['text']);
+      const plan={kind:'step',action:'home',message:plans===1?'Volvé a Inicio y abrí Ajustes.':'Volvé a Inicio.',
+        goal:'Cambiar el brillo.',targetApp:'Ajustes',progress:'Esperando que vuelva a Inicio.',screenId:'',controlId:'',endReason:''};
+      socket.send(JSON.stringify({type:'response.output_text.delta',response_id:id,delta:'Plan interno que nunca debe hablarse.'}));
+      socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[{type:'function_call',name:GUIDED_REPLY_TOOL.name,call_id:`plan-${plans}`,arguments:JSON.stringify(plan)}]}}));
+    }else{
+      spoken++; assert.equal(event.response.tool_choice,'none');
+      assert.match(event.response.instructions,/Volvé a Inicio\./);
+      socket.send(JSON.stringify({type:'response.output_text.done',response_id:id,text:'Volvé a Inicio.'}));
+      socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[]}}));
+    }
+  });
+  const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text',continuous:true});
+  t.after(()=>conversation.close()); const output=eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({type:'guidance.configure',mode:'one_step'});
+  conversation.handleClient({type:'screen.context',screen:screen()});
+  conversation.handleClient({type:'text',text:'Ayudame a cambiar el brillo.'});
+  await output.wait(event=>event.type==='response.done');
+  assert.equal(plans,2); assert.equal(spoken,1);
+  assert.deepEqual(output.seen.filter(event=>event.type==='text.done').map(event=>event.text),['Volvé a Inicio.']);
+  assert.equal(output.seen.some(event=>event.delta?.includes('Plan interno')),false);
+  assert.equal(conversation.taskContext.goal,'Cambiar el brillo.');
+  assert.equal(conversation.awaitedStep.action,'home');
+  assert.throws(()=>conversation.handleClient({type:'guidance.configure',mode:'one_step'}));
+});
+
+test('a structured conversation reply stays free of steps and structured end is silent and forgets its plan', async t=>{
+  for(const ending of [false,true]) await t.test(ending?'ending':'conversation',async sub=>{
+    const upstream=await fakeOpenAi(sub,(socket,event)=>{
+      const id=event.response.tool_choice?.name?'planning':'speaking';
+      socket.send(JSON.stringify({type:'response.created',response:{id,metadata:event.response.metadata}}));
+      if(id==='planning'){
+        const plan={kind:ending?'end':'conversation',action:'none',message:ending?'':'Sí, estoy acá.',goal:'',targetApp:'',progress:'',screenId:'',controlId:'',endReason:ending?'user_end':''};
+        socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[{type:'function_call',name:GUIDED_REPLY_TOOL.name,call_id:'reply-plan',arguments:JSON.stringify(plan)}]}}));
+      }else{
+        socket.send(JSON.stringify({type:'response.output_text.done',response_id:id,text:'Sí, estoy acá.'}));
+        socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[]}}));
+      }
+    });
+    const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text',continuous:true});
+    sub.after(()=>conversation.close()); const output=eventsFrom(conversation); await conversation.connect();
+    conversation.handleClient({type:'guidance.configure',mode:'one_step'});
+    conversation.handleClient({type:'text',text:ending?'Ya no quiero hablar.':'Hola, ¿estás ahí?'});
+    await output.wait(event=>event.type===(ending?'conversation.ended':'response.done'));
+    assert.equal(conversation.awaitedStep,null); assert.equal(conversation.taskContext,null);
+    assert.equal(output.seen.filter(event=>event.type==='guidance.step').length,0);
+    assert.equal(output.seen.filter(event=>event.type==='text.done').length,ending?0:1);
+  });
 });
 
 test('a user request cancels an unacknowledged probe and late probe metadata cannot steal its response', async t => {

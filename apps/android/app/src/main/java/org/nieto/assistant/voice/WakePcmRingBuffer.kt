@@ -12,8 +12,8 @@ data class WakeInvocationPCM(val pcm24k: ByteArray, val startSample16k: Long, va
 /** Independent constrained-decoder evidence; valid only for the ring generation that observed it. */
 class WakePrefixProof internal constructor(internal val generation: Any, internal val ranges: List<Pair<Long, Long>>)
 
-/** A bounded local buffer sharing the recognizer's sample clock. Nothing before a verified wake is exported. */
-class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
+/** Bounded PCM sharing the recognizer clock; callers authorize either a wake or an already active conversation. */
+class WakePcmRingBuffer(private val capacitySamples: Int = DEFAULT_WAKE_SAMPLES) {
     private val samples: ShortArray
     private var stored = 0
     private var writeAt = 0
@@ -99,8 +99,12 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
         return extractRange(maxOf(verifiedStart, freeStart ?: verifiedStart), finalSample, finalSample)
     }
 
+    /** Only the active-conversation listener may call this; dormant capture still requires a WakePrefixProof. */
+    @Synchronized fun extractConversationInvocation(startSample: Long, finalSample: Long): WakeInvocationPCM? =
+        extractRange(startSample, finalSample, finalSample)
+
     private fun extractRange(start: Long, speechEnd: Long, end: Long): WakeInvocationPCM? {
-        if (start < oldestSample || speechEnd <= start || end < speechEnd || end > totalSamples) return null
+        if (start < 0 || start < oldestSample || speechEnd <= start || end < speechEnd || end > totalSamples) return null
         if (deliveredSpeechEnd?.let { start < it || speechEnd <= it } == true) return null
         val size = end - start
         if (size <= 0 || size > capacitySamples) return null
@@ -157,13 +161,14 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
 
     companion object {
         const val SAMPLE_RATE = 16_000
-        const val MAX_SAMPLES = SAMPLE_RATE * 10
+        const val DEFAULT_WAKE_SAMPLES = SAMPLE_RATE * 10
+        const val MAX_SAMPLES = SAMPLE_RATE * 45
         const val POST_PADDING_SAMPLES = SAMPLE_RATE * 120 / 1000
         const val PREFIX_ALIGNMENT_SAMPLES = SAMPLE_RATE * 200 / 1000
     }
 }
 
-/** Linear 3:2 upsampling of PCM16 little-endian mono, bounded to the ten-second handoff. */
+/** Linear 3:2 upsampling of PCM16 little-endian mono, bounded to one 45-second turn. */
 object WakePcmResampler {
     fun to24k(pcm16: ByteArray): ByteArray? {
         if (pcm16.isEmpty() || pcm16.size % 2 != 0 || pcm16.size > WakePcmRingBuffer.MAX_SAMPLES * 2) return null

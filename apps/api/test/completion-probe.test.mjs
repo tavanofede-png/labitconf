@@ -7,8 +7,8 @@ const screen = (id, label = 'Confirmar operación de prueba') => ({ id, packageN
 function fixture(t, options = {}) {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 100_000 });
   const state = { ready: true, busy: false, screen: screen('before'), task: { goal: 'Completar la operación de prueba', targetApp: 'Prueba', progress: 'Falta confirmar' } };
-  const sent = []; let completed = 0;
-  const probe = new CompletionProbe({ enabled: true, current: () => state, send: event => sent.push(event), complete: () => completed++, ...options });
+  const sent = []; let completed = 0; const advances = [];
+  const probe = new CompletionProbe({ enabled: true, current: () => state, send: event => sent.push(event), complete: () => completed++, advance: event => advances.push(event), ...options });
   probe.observe(); t.after(() => probe.close());
   const change = (next = screen('after', 'Operación de prueba completada')) => { state.screen = next; probe.observe(); };
   const start = () => { probe.activity(); change(); t.mock.timers.tick(2000); return sent.find(event => event.type === 'response.create'); };
@@ -16,7 +16,7 @@ function fixture(t, options = {}) {
   const done = (args = { completed: true, screenId: state.screen.id, evidenceControlIds: ['status'] }, id = 'probe-response', output) => probe.handle({ type: 'response.done', response: { id, status: 'completed', output: output ?? [
     { type: 'function_call', name: COMPLETION_TOOL.name, arguments: JSON.stringify(args) },
   ] } });
-  return { state, sent, probe, change, start, created, done, completed: () => completed };
+  return { state, sent, probe, change, start, created, done, advances, completed: () => completed };
 }
 
 test('only real activity followed by a changed stable snapshot starts one bounded isolated probe', t => {
@@ -25,8 +25,11 @@ test('only real activity followed by a changed stable snapshot starts one bounde
   f.probe.activity(); f.change(screen('same', 'Otra pantalla pasiva')); t.mock.timers.tick(5000); assert.equal(f.sent.length, 0);
   f.change(); t.mock.timers.tick(1999); assert.equal(f.sent.length, 0); t.mock.timers.tick(1);
   const request = f.sent[0]; assert.equal(request.response.conversation, 'none'); assert.deepEqual(request.response.output_modalities, ['text']);
-  assert.deepEqual(request.response.tool_choice, { type: 'function', name: 'report_task_completion' }); assert.equal(request.response.max_output_tokens, 200);
-  assert.deepEqual(request.response.tools, [COMPLETION_TOOL]); assert.equal(request.event_id, request.response.metadata.nieto_probe_id);
+  assert.deepEqual(request.response.tool_choice, { type: 'function', name: 'report_task_completion' }); assert.equal(request.response.max_output_tokens, 800);
+  assert.equal(request.response.tools[0].name, COMPLETION_TOOL.name);
+  assert.deepEqual(request.response.tools[0].parameters.properties.screenId.enum, ['after']);
+  assert.deepEqual(request.response.tools[0].parameters.properties.evidenceControlIds.items.enum, ['status']);
+  assert.equal(request.event_id, request.response.metadata.nieto_probe_id);
   const input = JSON.parse(request.response.input[0].content[0].text);
   assert.equal(input.BEFORE.id, 'passive'); assert.equal(input.AFTER.id, 'after'); assert.equal(input.TASK.goal, f.state.task.goal);
   assert.equal(JSON.stringify(input).includes('image'), false); assert.match(request.response.instructions, /TODO el objetivo/);
@@ -43,6 +46,53 @@ test('a valid terminal check needs current visible evidence and never forwards t
   assert.equal(f.done(), true); assert.equal(f.completed(), 1);
   assert.equal(f.probe.probes.size, 0); assert.equal(f.probe.responseIds.size, 0);
   assert.equal(f.sent.some(event => event.item?.type === 'function_call_output'), false);
+});
+
+test('a completed intermediate action advances exactly once without completing the whole task', t => {
+  const f = fixture(t);
+  f.state.step = { turnId: 'first-step', instruction: 'Abrí Ajustes.', expectsReply: false };
+  const request = f.start(); f.created(request);
+  assert.equal(JSON.parse(request.response.input[0].content[0].text).AWAITED_STEP.instruction, 'Abrí Ajustes.');
+  f.done({ completed: false, stepCompleted: true, screenId: 'after', evidenceControlIds: ['status'] });
+  assert.deepEqual(f.advances, [{ screenId: 'after' }]); assert.equal(f.completed(), 0);
+  f.done({ completed: false, stepCompleted: true, screenId: 'after', evidenceControlIds: ['status'] });
+  assert.equal(f.advances.length, 1);
+});
+
+test('a stable actual launcher proves only a pending home action without another provider request', t => {
+  const f=fixture(t); f.state.step={turnId:'home-step',action:'home',instruction:'Volvé a Inicio.'};
+  f.probe.activity(); f.change({...screen('launcher','Ajustes'),navigation:{home:'gesture',back:'gesture',isLauncher:true}});
+  t.mock.timers.tick(2000);
+  assert.deepEqual(f.advances,[{screenId:'launcher'}]); assert.equal(f.sent.length,0); assert.equal(f.completed(),0);
+  f.probe.schedule(); t.mock.timers.tick(5000); assert.equal(f.advances.length,1);
+});
+
+test('an action before the new instruction was prepared cannot skip that new step', t=>{
+  const f=fixture(t); f.probe.activity(); f.change();
+  f.state.step={turnId:'new-step',instruction:'Tocá Pantalla.',issuedAfterAction:1};
+  t.mock.timers.tick(2000); assert.equal(f.sent.length,0); assert.equal(f.advances.length,0);
+  f.probe.activity(); f.change(screen('next','Pantalla abierta')); t.mock.timers.tick(2000);
+  assert.equal(f.sent.filter(event=>event.type==='response.create').length,1);
+});
+
+test('no pending step wrong actions confirmation questions and stale evidence cannot advance', async t => {
+  for (const reason of ['no-step', 'wrong-action', 'question', 'step-changed', 'empty-evidence', 'invented-evidence', 'input', 'invalid-boolean']) await t.test(reason, sub => {
+    const f = fixture(sub);
+    if (reason !== 'no-step') f.state.step = { turnId: 'step', instruction: 'Abrí Ajustes.', expectsReply: reason === 'question' };
+    const request = f.start(); f.created(request);
+    if (reason === 'step-changed') f.state.step = { ...f.state.step, instruction: 'Volvé a Inicio.' };
+    if (reason === 'input') f.state.busy = true;
+    f.done({ completed: false, stepCompleted: reason === 'invalid-boolean' ? 'true' : !['wrong-action','question'].includes(reason), screenId: 'after',
+      evidenceControlIds: reason === 'empty-evidence' ? [] : [reason === 'invented-evidence' ? 'fake' : 'status'] });
+    assert.deepEqual(f.advances, []); assert.equal(f.completed(), 0);
+  });
+});
+
+test('completion of the whole objective ends silently instead of requesting another step', t => {
+  const f = fixture(t); f.state.step = { turnId: 'final', instruction: 'Confirmá la operación.', expectsReply: false };
+  const request = f.start(); f.created(request);
+  f.done({ completed: true, stepCompleted: true, screenId: 'after', evidenceControlIds: ['status'] });
+  assert.equal(f.completed(), 1); assert.deepEqual(f.advances, []);
 });
 
 test('malicious, incomplete, protected or foreign evidence cannot complete a task', async t => {

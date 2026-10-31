@@ -64,8 +64,8 @@ class WakeWordService : Service() {
     private var timer: Job? = null
     private var model: Model? = null
     private var captureGeneration = 0L
-    private enum class CaptureMode { WAKE, WAKE_AND_END, END_ONLY }
-    private data class CaptureResult(val text: String, val end: Boolean, val invocation: WakeInvocationPCM? = null)
+    private enum class CaptureMode { WAKE, CONVERSATION, END_ONLY }
+    private data class CaptureResult(val text: String, val end: Boolean, val invocation: WakeInvocationPCM? = null, val conversationTurn: Boolean = false)
     private var captureMode: CaptureMode? = null
     private var foreground = false
     private var destroyed = false
@@ -78,6 +78,7 @@ class WakeWordService : Service() {
     @Volatile private var freeFinals = 0L
     @Volatile private var freePrefixMatches = false
     @Volatile private var invocationCount = 0L
+    @Volatile private var conversationTurnCount = 0L
     private var handoffCount = 0L
 
     private sealed interface Event {
@@ -85,7 +86,7 @@ class WakeWordService : Service() {
         data object Talk : Event
         data class Control(val action: WakeControlAction) : Event
         data class Healthy(val generation: Long) : Event
-        data class Captured(val generation: Long, val phrase: String, val end: Boolean, val invocation: WakeInvocationPCM?) : Event
+        data class Captured(val generation: Long, val phrase: String, val end: Boolean, val invocation: WakeInvocationPCM?, val conversationTurn: Boolean) : Event
         data class Failed(val generation: Long) : Event
     }
 
@@ -138,6 +139,7 @@ class WakeWordService : Service() {
         writer.println("freeFinals=" + freeFinals)
         writer.println("freePrefixMatches=" + freePrefixMatches)
         writer.println("invocationCount=" + invocationCount)
+        writer.println("conversationTurnCount=" + conversationTurnCount)
         writer.println("handoffCount=" + handoffCount)
     }
 
@@ -163,12 +165,12 @@ class WakeWordService : Service() {
             stopListening("El permiso de micrófono está apagado. Activá TINO desde la aplicación.")
             return START_NOT_STICKY
         }
-        try {
+        try { if (!foreground) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(NOTIFICATION_ID, notification("Preparando la activación local…"), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
             } else startForeground(NOTIFICATION_ID, notification("Preparando la activación local…"))
             foreground = true
-        } catch (_: RuntimeException) {
+        } } catch (_: RuntimeException) {
             stopListening("Android no permitió iniciar el micrófono. Activá TINO con la aplicación abierta.")
             return START_NOT_STICKY
         }
@@ -213,10 +215,13 @@ class WakeWordService : Service() {
         policy.updateVoice(state.voice.active || state.busy || state.recordingVoiceNote || state.screenCapturePending, now)
         scheduleCheck(now)
         val conversation = app.hasActiveConversation
+        val conversational = conversation && !state.textOnly && state.voice.phase == VoicePhase.IDLE
         val endAllowed = conversation && state.accessibilityConnected && !state.busy && !state.recordingVoiceNote &&
             !state.screenCapturePending && !state.ttsSpeaking && state.voice.phase !in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING)
-        val desiredMode = if (policy.canListen(conditions(state), now)) {
-            if (conversation) CaptureMode.WAKE_AND_END else CaptureMode.WAKE
+        val desiredMode = if (policy.canListenConversation(conditions(state), conversational, now)) {
+            CaptureMode.CONVERSATION
+        } else if (policy.canListen(conditions(state), now)) {
+            CaptureMode.WAKE
         } else if (endAllowed) CaptureMode.END_ONLY else null
         if (desiredMode == null) {
             stopCapture()
@@ -257,13 +262,13 @@ class WakeWordService : Service() {
                 try {
                     val phrase = captureWake(currentModel, generation, desiredMode)
                     // captureWake has released AudioRecord before a handoff event is sent.
-                    if (events.trySend(Event.Captured(generation, phrase.text, phrase.end, phrase.invocation)).isFailure)
+                    if (events.trySend(Event.Captured(generation, phrase.text, phrase.end, phrase.invocation, phrase.conversationTurn)).isFailure)
                         phrase.invocation?.pcm24k?.fill(0)
                 } catch (_: CancellationException) { }
                 catch (_: Exception) { events.trySend(Event.Failed(generation)) }
             }
         }
-        publishStatus("Escuchando Hola Tino · reconocimiento local.")
+        publishStatus(if (desiredMode == CaptureMode.CONVERSATION) "Te escucho · conversación activa." else "Escuchando Hola Tino · reconocimiento local.")
     }
 
     private suspend fun handleWake(event: Event.Captured) {
@@ -276,7 +281,11 @@ class WakeWordService : Service() {
             return
         }
         val now = SystemClock.elapsedRealtime()
-        if (event.invocation == null || !microphoneGranted() || !policy.acceptVerifiedWake(conditions(app.state.value), now)) { event.invocation?.pcm24k?.fill(0); return }
+        val state = app.state.value
+        val accepted = if (event.conversationTurn) policy.acceptConversationTurn(conditions(state),
+            app.hasActiveConversation && !state.textOnly && state.voice.phase == VoicePhase.IDLE, now)
+            else policy.acceptVerifiedWake(conditions(state), now)
+        if (event.invocation == null || !microphoneGranted() || !accepted) { event.invocation?.pcm24k?.fill(0); return }
         publishStatus("Preparando la consulta…")
         handoffCount++
         try { app.startVoiceFromWake(event.invocation) }
@@ -319,7 +328,8 @@ class WakeWordService : Service() {
 
     private fun scheduleCheck(now: Long) {
         timer?.cancel()
-        val wait = listOfNotNull(policy.nextCheckDelay(now), captureRetry.remaining(now)).minOrNull()
+        val conversational = app.hasActiveConversation && !app.state.value.textOnly && app.state.value.voice.phase == VoicePhase.IDLE
+        val wait = listOfNotNull(policy.nextCheckDelay(now, conversational), captureRetry.remaining(now)).minOrNull()
         timer = wait?.let { delayMs -> scope.launch { delay(delayMs); events.trySend(Event.Changed) } }
     }
 
@@ -342,9 +352,11 @@ class WakeWordService : Service() {
     private suspend fun captureWithLease(currentModel: Model, generation: Long, mode: CaptureMode): CaptureResult {
         val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE.toInt(), AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minimum <= 0) throw IOException("Unsupported microphone format")
-        val wake = if (mode != CaptureMode.END_ONLY) Recognizer(currentModel, SAMPLE_RATE, "[\"hola tino\", \"[unk]\"]") else null
+        val wake = if (mode == CaptureMode.WAKE) Recognizer(currentModel, SAMPLE_RATE, "[\"hola tino\", \"[unk]\"]") else null
         val ending = Recognizer(currentModel, SAMPLE_RATE)
-        val ring = WakePcmRingBuffer()
+        val ring = WakePcmRingBuffer(if (mode == CaptureMode.CONVERSATION) WakePcmRingBuffer.MAX_SAMPLES else WakePcmRingBuffer.DEFAULT_WAKE_SAMPLES)
+        val conversationInput = ConversationInputPolicy()
+        var lastPartialAt = 0L
         var wakeProof: WakePrefixProof? = null
         var pendingFreeFinal: Triple<String, List<WakeTimedWord>?, Long>? = null
         var recorder: AudioRecord? = null
@@ -359,9 +371,9 @@ class WakeWordService : Service() {
                 WakeRecognitionWord(item?.optString("word").orEmpty(), (item?.opt("conf") as? Number)?.toDouble())
             }
         }
-        fun timed(source: JSONObject): List<WakeTimedWord>? {
-            val items = source.optJSONArray("result") ?: return null
-            if (items.length() !in 2..64) return null
+        fun timed(source: JSONObject, key: String = "result"): List<WakeTimedWord>? {
+            val items = source.optJSONArray(key) ?: return null
+            if (items.length() !in 1..128) return null
             return (0 until items.length()).map { index ->
                 val item = items.optJSONObject(index)
                 WakeTimedWord(item?.optString("word").orEmpty(), (item?.opt("conf") as? Number)?.toDouble(),
@@ -370,11 +382,12 @@ class WakeWordService : Service() {
         }
         try {
             wake?.setWords(true); ending.setWords(true)
+            if (mode == CaptureMode.CONVERSATION) ending.setPartialWords(true)
             recorder = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, 6_400))
             if (recorder.state != AudioRecord.STATE_INITIALIZED) throw IOException("Microphone unavailable")
             val sessionId = recorder.audioSessionId
-            if (mode == CaptureMode.END_ONLY) echo = runCatching {
+            if (mode != CaptureMode.WAKE) echo = runCatching {
                 if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(sessionId)?.also { it.setEnabled(true) } else null
             }.getOrNull()
             recorder.startRecording()
@@ -404,6 +417,17 @@ class WakeWordService : Service() {
                 if (!ring.append(buffer, count)) throw IOException("Invalid local audio buffer")
                 val wakeFinal = wake?.acceptWaveForm(buffer, count) == true
                 val endFinal = ending.acceptWaveForm(buffer, count)
+                if (mode == CaptureMode.CONVERSATION && !endFinal && lastAudioAt - lastPartialAt >= 250L) {
+                    lastPartialAt = lastAudioAt
+                    val partial = JSONObject(ending.partialResult)
+                    val first = timed(partial, "partial_result")?.firstOrNull()?.startSeconds
+                        ?.takeIf { it.isFinite() && it >= 0 }?.let { (it * WakePcmRingBuffer.SAMPLE_RATE).toLong() }
+                    if (conversationInput.partial(partial.optString("partial"), ring.totalSamples, first)) {
+                        withContext(Dispatchers.Main.immediate) {
+                            if (generation == captureGeneration) app.onConversationSpeechActivity()
+                        }
+                    }
+                }
                 if (wakeFinal) {
                     constrainedFinals++
                     val json = JSONObject(wake!!.result)
@@ -419,12 +443,25 @@ class WakeWordService : Service() {
                     val words = finalWords(json)
                     if (LocalEndPolicy.accepts(true, text, words, app.hasActiveConversation,
                         state.voice.phase == VoicePhase.SPEAKING, state.voice.partialText.ifBlank { state.answer })) return CaptureResult(text, true)
-                    if (mode != CaptureMode.END_ONLY) {
+                    if (mode == CaptureMode.CONVERSATION) {
+                        val first = timed(json)?.firstOrNull()?.startSeconds?.takeIf { it.isFinite() && it >= 0 }
+                            ?.let { (it * WakePcmRingBuffer.SAMPLE_RATE).toLong() }
+                        val start = conversationInput.finalStart(text, ring.totalSamples, first)
+                        val invocation = start?.let { ring.extractConversationInvocation(it, ring.totalSamples) }
+                        if (invocation != null) {
+                            conversationTurnCount++
+                            return CaptureResult("", false, invocation, conversationTurn = true)
+                        }
+                    } else if (mode == CaptureMode.WAKE) {
                         // Either decoder can finalize first; replace metadata with the latest free utterance.
                         pendingFreeFinal = Triple(text, timed(json), ring.totalSamples)
                     }
                 }
-                if (mode != CaptureMode.END_ONLY && (wakeFinal || endFinal)) {
+                if (mode == CaptureMode.CONVERSATION && conversationInput.atLimit(ring.totalSamples)) {
+                    val invocation = conversationInput.startSample?.let { ring.extractConversationInvocation(it, ring.totalSamples) }
+                    if (invocation != null) { conversationTurnCount++; return CaptureResult("", false, invocation, conversationTurn = true) }
+                }
+                if (mode == CaptureMode.WAKE && (wakeFinal || endFinal)) {
                     pendingFreeFinal?.let { (text, words, finalSample) ->
                         // Keep the full endpoint's PCM; do not require the general ASR to spell the proper name again.
                         val invocation = wakeProof?.let { ring.extractVerifiedInvocation(it, finalSample, words) }

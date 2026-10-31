@@ -30,6 +30,7 @@ class ConversationIdlePolicy {
         if (!active) deadline = now + IDLE_MS
         return true
     }
+    fun speechActivity(now: Long): Boolean = screenAction(now)
     fun clear() { active = false; deadline = null }
     companion object { const val IDLE_MS = 30_000L }
 }

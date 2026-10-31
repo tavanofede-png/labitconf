@@ -160,7 +160,7 @@ import kotlinx.coroutines.delay
         dismissButton = { TextButton(onClick = { bubbleDisclosure = false }) { Text("Ahora no") } })
     if (wakeDisclosure) AlertDialog(onDismissRequest = { wakeDisclosure = false },
         title = { Text("Activar «Hola TINO»") },
-        text = { Text("TINO reconocerá «Hola TINO» en este dispositivo. Después de la activación enviará tu consulta y los controles accesibles de la pantalla a la asistencia de OpenAI para responderte y orientarte. La escucha ambiente no se guarda ni se envía. Las capturas de imagen tienen un permiso separado.\n\nAndroid necesita micrófono, notificaciones, TINO como asistente y su servicio de Accesibilidad. Te guiaremos por esos permisos y la escucha continuará al volver. Podés apagarla cuando quieras.") },
+        text = { Text("TINO reconocerá «Hola TINO» en este dispositivo. Después de la activación enviará tu consulta y los controles accesibles de la pantalla a la asistencia de OpenAI para responderte y orientarte. Mientras conversás escuchará tus siguientes frases sin repetir el saludo. Al terminar o pasar 30 segundos sin actividad, borrará la conversación y volverá a esperar «Hola TINO». Esa escucha de activación se procesa localmente y no se guarda ni se envía. Las capturas de imagen tienen un permiso separado.\n\nAndroid necesita micrófono, notificaciones, TINO como asistente y su servicio de Accesibilidad. Te guiaremos por esos permisos y la escucha continuará al volver. Podés apagarla cuando quieras.") },
         confirmButton = { TextButton(onClick = {
             wakeDisclosure = false
             app.settings.write("wakeDisclosurePolicy", "2")

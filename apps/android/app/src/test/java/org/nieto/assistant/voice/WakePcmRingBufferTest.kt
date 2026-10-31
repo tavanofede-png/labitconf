@@ -4,6 +4,21 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WakePcmRingBufferTest {
+    @Test fun `conversation handoff preserves an entire long followup without a wake prefix and rejects stale ranges`() {
+        val ring = WakePcmRingBuffer(WakePcmRingBuffer.MAX_SAMPLES)
+        repeat(44) { second -> ring.append(ShortArray(16_000) { if (second < 2) -1234 else 4321 }, 16_000) }
+        val result = ring.extractConversationInvocation(32_000, ring.totalSamples)!!
+        assertEquals(42 * 48_000, result.pcm24k.size)
+        assertTrue(shorts(result.pcm24k).all { it == 4321 })
+        assertNull(ring.extractConversationInvocation(32_000, ring.totalSamples))
+        ring.clear()
+        assertNull(ring.extractConversationInvocation(0, 16_000))
+        repeat(46) { ring.append(ShortArray(16_000), 16_000) }
+        assertNull(ring.extractConversationInvocation(0, ring.totalSamples))
+        assertNull(ring.extractConversationInvocation(-1, ring.totalSamples))
+        assertNull(ring.extractConversationInvocation(16_000, ring.totalSamples + 1))
+        assertNotNull(ring.extractConversationInvocation(16_000, ring.totalSamples))
+    }
     @Test fun `a verified wake exports the complete real utterance even when free ASR spells the name differently`() {
         val ring = WakePcmRingBuffer()
         ring.append(ShortArray(48_000) { if (it < 16_000) (-12345).toShort() else 4321 }, 48_000)
@@ -229,6 +244,7 @@ class WakePcmRingBufferTest {
         assertEquals(480_000, WakePcmResampler.to24k(ByteArray(320_000))!!.size)
         assertNull(WakePcmResampler.to24k(byteArrayOf(1)))
         assertNull(WakePcmResampler.to24k(byteArrayOf()))
-        assertNull(WakePcmResampler.to24k(ByteArray(320_002)))
+        assertEquals(2_160_000, WakePcmResampler.to24k(ByteArray(WakePcmRingBuffer.MAX_SAMPLES * 2))!!.size)
+        assertNull(WakePcmResampler.to24k(ByteArray(WakePcmRingBuffer.MAX_SAMPLES * 2 + 2)))
     }
 }
