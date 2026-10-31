@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {randomUUID} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -17,6 +18,12 @@ test('a real family link supports granular opt-in, pause, expiring approximate l
  const group=(await call('/family/groups','POST',{name:'Grupo de prueba'})).data;
  const perms={progress:true,help:true,usage:false,safety:true,websites:false,location:true};
  assert.equal((await call('/family/link','POST',{invitationCode:group.invitationCode,permissions:perms},user.token)).status,200);
+ const session=(await call('/assistant/sessions','POST',{flowId:'whatsapp-group',clientSessionId:randomUUID()},user.token)).data;
+ const events=[{type:'flow_started'},...['open_whatsapp','new_group','select_people','name_group','review_group','check_group'].flatMap(stepId=>[{type:'step_shown',stepId},{type:'step_completed',stepId}]),{type:'flow_reported',durationSeconds:60}];
+ for(const event of events)assert.equal((await call(`/assistant/sessions/${session.id}/events`,'POST',{eventId:randomUUID(),...event},user.token)).status,200);
+ const reported=(await call('/family/summary','GET',undefined,group.caregiverToken)).data.members[0];
+ assert.equal(reported.helpRequests,1);assert.equal(reported.activities[0].helpRequested,true);assert.equal(reported.activities[0].resultSource,'help_requested');
+ assert.match(reported.activities[0].title,/^Ayuda para crear un grupo/);assert.doesNotMatch(reported.activities[0].title,/creó|completó|por su cuenta/i);
  assert.equal((await call('/family/location','POST',{latitude:-34.603722,longitude:-58.381592,minutes:120},user.token)).status,400);
  assert.equal((await call('/family/location','POST',{latitude:-34.603722,longitude:-58.381592,minutes:15},user.token)).status,200);
  let snapshot=(await call('/family/summary','GET',undefined,group.caregiverToken)).data;

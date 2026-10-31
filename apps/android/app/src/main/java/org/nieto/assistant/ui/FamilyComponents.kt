@@ -137,19 +137,17 @@ internal fun familyMinutes(n: Int): String = if (n < 60) "$n min" else "${n / 60
     }
 }
 
-@Composable internal fun FamilyLearning(member: JSONObject, allowed: Boolean) {
+@Composable internal fun FamilyHelpRequestPreview(member: JSONObject, allowed: Boolean) {
     FamilySurface(tint=FamilyMint) {
         Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                Text("UN PASO MÁS, A SU RITMO",color=DashTeal,fontSize=10.sp,fontWeight=FontWeight.Bold,letterSpacing=.8.sp)
-                Text(if(allowed) member.optString("milestone",member.optString("learned")).takeUnless{it.isBlank()||it=="null"}?:"Sus próximas prácticas aparecerán acá." else "Su aprendizaje es privado.",color=DashInk,fontSize=17.sp,lineHeight=24.sp,fontWeight=FontWeight.SemiBold)
-                if(allowed && member.has("weeklyGoal")) {
-                    val done=member.optInt("weeklyCompleted");val goal=member.optInt("weeklyGoal").coerceAtLeast(1)
-                    LinearProgressIndicator(progress={done.toFloat()/goal},modifier=Modifier.fillMaxWidth().height(5.dp).clip(CircleShape),color=DashTeal,trackColor=Color.White)
-                    Text("$done de $goal prácticas de esta semana",color=DashTeal,fontSize=12.sp)
+                Text("AYUDA SOLICITADA A TINO",color=DashTeal,fontSize=10.sp,fontWeight=FontWeight.Bold,letterSpacing=.8.sp)
+                Text(if(allowed) member.optString("lastHelpRequest",member.optString("helpTopic")).takeUnless{it.isBlank()||it=="null"}?:"Sus próximas solicitudes de ayuda aparecerán acá." else "Sus solicitudes de ayuda son privadas.",color=DashInk,fontSize=17.sp,lineHeight=24.sp,fontWeight=FontWeight.SemiBold)
+                if(allowed && member.has("weeklyRequests")) {
+                    Text("${member.optInt("weeklyRequests")} solicitudes de ayuda esta semana",color=DashTeal,fontSize=12.sp)
                 }
             }
-            Image(painterResource(R.drawable.tino_mascot),"TINO acompaña el aprendizaje",Modifier.size(72.dp))
+            Image(painterResource(R.drawable.tino_mascot),"TINO acompaña",Modifier.size(72.dp))
         }
     }
 }

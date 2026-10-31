@@ -117,16 +117,10 @@ private fun activeFamilyLocation(member: JSONObject, permissions: JSONObject): J
     }
 }
 
-@Composable internal fun FamilyAutonomy(member: JSONObject) {
-    val rate=if(member.has("autonomyRate")) member.optInt("autonomyRate") else if(member.optInt("completedFlows")>0) member.optInt("autonomyChecks")*100/member.optInt("completedFlows") else 0
-    FamilySurface("Confianza que se construye", "Aprender no es usar más el teléfono: es necesitar menos ayuda.") {
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(18.dp)) {
-            Box(Modifier.size(76.dp),contentAlignment=Alignment.Center){CircularProgressIndicator(progress={rate.coerceIn(0,100)/100f},modifier=Modifier.fillMaxSize(),color=DashTeal,trackColor=FamilyMint,strokeWidth=7.dp);Text("$rate%",color=DashTeal,fontSize=21.sp,fontWeight=FontWeight.Bold)}
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(7.dp)){
-                Text("${member.optInt("autonomyChecks")} prácticas por su cuenta",color=DashInk,fontWeight=FontWeight.SemiBold,fontSize=15.sp)
-                Text("De ${member.optInt("completedFlows")} tareas completadas desde que usa TINO.",color=DashMuted,fontSize=12.sp,lineHeight=18.sp)
-            }
-        }
+@Composable internal fun FamilyHelpSummary(member: JSONObject) {
+    FamilySurface("Solicitudes de ayuda", "Acompañamiento pedido a TINO.") {
+        Text(if(member.has("helpRequests")&&!member.isNull("helpRequests")) "${member.optInt("helpRequests")} solicitudes" else "Sin solicitudes registradas",color=DashInk,fontWeight=FontWeight.Bold,fontSize=24.sp)
+        Text("Pedir ayuda no confirma que se haya realizado una acción en otra aplicación.",color=DashMuted,fontSize=13.sp,lineHeight=19.sp)
     }
 }
 
@@ -141,24 +135,24 @@ private fun activeFamilyLocation(member: JSONObject, permissions: JSONObject): J
         val activities=member.optJSONArray("activities").objects()
             .filter{permissions.optBoolean("websites") || it.optString("kind")!="website"}
             .filter{permissions.optBoolean("safety") || it.optString("kind")!="safety"}
-        val visible=activities.filter{when(filter){1->it.optString("kind")=="website";2->it.optBoolean("assisted");3->it.optBoolean("independent");else->true}}
+        val visible=activities.filter{when(filter){1->it.optString("kind")=="website";2->it.optBoolean("helpRequested");else->true}}
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)) {
-            listOf("Todo","Sitios web","Con TINO","Por su cuenta").forEachIndexed{i,label->FilterChip(selected=filter==i,onClick={filter=i},enabled=i!=1||permissions.optBoolean("websites"),label={Text(label,fontSize=12.sp)},shape=CircleShape,colors=FilterChipDefaults.filterChipColors(selectedContainerColor=DashTeal,selectedLabelColor=Color.White,containerColor=Color.White,labelColor=DashMuted))}
+            listOf("Todo","Sitios web","Solicitudes de ayuda").forEachIndexed{i,label->FilterChip(selected=filter==i,onClick={filter=i},enabled=i!=1||permissions.optBoolean("websites"),label={Text(label,fontSize=12.sp)},shape=CircleShape,colors=FilterChipDefaults.filterChipColors(selectedContainerColor=DashTeal,selectedLabelColor=Color.White,containerColor=Color.White,labelColor=DashMuted))}
         }
         FamilySurface {
-            Row(Modifier.fillMaxWidth()){Text("HOY",Modifier.weight(1f),fontSize=11.sp,color=DashMuted,fontWeight=FontWeight.Bold,letterSpacing=1.sp);Text("${visible.size} eventos",fontSize=11.sp,color=DashMuted)}
+            Row(Modifier.fillMaxWidth()){Text("ACTIVIDAD RECIENTE",Modifier.weight(1f),fontSize=11.sp,color=DashMuted,fontWeight=FontWeight.Bold,letterSpacing=1.sp);Text("${visible.size} eventos",fontSize=11.sp,color=DashMuted)}
             if(visible.isEmpty()) Text("No hay eventos compartidos con este filtro.",color=DashMuted,fontSize=14.sp)
             visible.forEachIndexed{i,event->
                 val isSafety=event.optString("kind")=="safety"
                 val resolved=isSafety&&alerts.find{it.optString("id")==event.optString("alertId")}?.isNull("resolvedAt")==false
                 Row(Modifier.fillMaxWidth().clickable{if(isSafety) safety() else detail(event)}.padding(vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.Top) {
                     Text(familyClock(event.optString("at")),color=DashMuted,fontSize=11.sp,modifier=Modifier.width(36.dp).padding(top=10.dp))
-                    Surface(color=if(isSafety) FamilyCream else FamilyMint,shape=RoundedCornerShape(12.dp)){Box(Modifier.size(36.dp),contentAlignment=Alignment.Center){FamilyGlyph(when{isSafety->"shield";event.optString("kind")=="website"->"web";event.optBoolean("independent")->"check";else->"phone"},Modifier.size(18.dp),if(isSafety) FamilyAmber else DashTeal)}}
+                    Surface(color=if(isSafety) FamilyCream else FamilyMint,shape=RoundedCornerShape(12.dp)){Box(Modifier.size(36.dp),contentAlignment=Alignment.Center){FamilyGlyph(when{isSafety->"shield";event.optString("kind")=="website"->"web";else->"phone"},Modifier.size(18.dp),if(isSafety) FamilyAmber else DashTeal)}}
                     Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                         Text(event.optString("title"),color=DashInk,fontWeight=FontWeight.SemiBold,fontSize=14.sp,lineHeight=20.sp)
                         Text(if(isSafety) if(resolved) "Revisado en familia" else "Pendiente de revisión" else "${event.optString("app",event.optString("detail"))}${if(event.optInt("durationMinutes")>0) " · ${event.optInt("durationMinutes")} min" else ""}",color=if(isSafety&&!resolved) FamilyAmber else DashMuted,fontSize=12.sp,lineHeight=18.sp)
                         if(event.optString("domain").isNotBlank()&&!isSafety) Text(event.optString("domain"),color=DashMuted,fontSize=11.sp)
-                        if(!isSafety&&(event.optBoolean("assisted")||event.optBoolean("independent"))) Surface(color=FamilyMint,shape=RoundedCornerShape(6.dp)){Text(if(event.optBoolean("independent")) "Lo hizo por su cuenta" else "Con la guía de TINO",Modifier.padding(horizontal=8.dp,vertical=4.dp),fontSize=10.sp,color=DashTeal,fontWeight=FontWeight.SemiBold)}
+                        if(!isSafety&&event.optBoolean("helpRequested")) Surface(color=FamilyMint,shape=RoundedCornerShape(6.dp)){Text("Solicitó ayuda de TINO",Modifier.padding(horizontal=8.dp,vertical=4.dp),fontSize=10.sp,color=DashTeal,fontWeight=FontWeight.SemiBold)}
                     }
                     FamilyGlyph("chevron",Modifier.size(14.dp).padding(top=3.dp),DashMuted)
                 }

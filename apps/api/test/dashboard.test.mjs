@@ -23,8 +23,8 @@ test('family scenario reconciles daily apps, event durations, assisted time, wee
     assert.equal(member.weeklyTino.at(-1), member.tinoMinutes);
     assert.equal(member.weeklyDays.at(-1).screenMinutes, member.screenMinutes);
     assert.equal(ageOn(member.birthDate, now), member.age);
-    assert.equal(member.completedToday, member.activities.filter(e => e.kind === 'task').length);
-    assert.equal(member.autonomyRate, Math.round(member.autonomyChecks / member.completedFlows * 100));
+    assert.equal(member.requestsToday, member.activities.filter(e => e.helpRequested).length);
+    assert.equal(member.autonomyRate, undefined); assert.equal(member.autonomyChecks,undefined); assert.equal(member.completedFlows,undefined);
     for (let i = 1; i < member.activities.length; i++) {
       const later = member.activities[i - 1], earlier = member.activities[i];
       assert.ok(Date.parse(earlier.at) <= Date.parse(later.at) - later.durationMinutes * 60_000, 'screen events do not overlap');
@@ -123,4 +123,17 @@ test('demo dashboards are role-bound, actions are group-isolated, and demo insti
   assert.equal((await req('/family/messages', device.token)).body.messages.length, 1);
   assert.equal((await req('/family/link', device.token, undefined, 'DELETE')).status, 200);
   assert.equal((await req('/family/messages', device.token)).body.messages.length, 0);
+});
+
+
+test('family task activity records requests for help rather than inferred external outcomes',()=>{
+ const family=demoFamily(now);
+ for(const member of family.members){
+  assert.ok(member.helpRequests>0);
+  for(const event of member.activities.filter(e=>e.kind==='task')){
+   assert.equal(event.helpRequested,true);assert.equal(event.resultSource,'help_requested');assert.equal(event.independent,undefined);
+   assert.match(event.title,/^Ayuda para /);assert.doesNotMatch(event.title+' '+event.detail,/Creó|Envió|completó|por su cuenta|independiente/i);
+  }
+  assert.doesNotMatch(member.lastHelpRequest,/creó|envió|por su cuenta|sin ayuda/i);
+ }
 });

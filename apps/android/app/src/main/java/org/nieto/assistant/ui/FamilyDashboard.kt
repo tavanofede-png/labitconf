@@ -116,11 +116,11 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                                     FamilyStat("Última actividad",relativeFamilyTime(member.optString("lastActiveAt"),now),if(allowed.optBoolean("progress")) member.optString("lastActivity","Sin actividad compartida") else "Su actividad es privada","clock",Modifier.weight(1f))
                                     FamilyStat("Pantalla hoy",if(allowed.optBoolean("usage")) familyMinutes(member.optInt("screenMinutes")) else "Privado",if(allowed.optBoolean("progress")) "${member.optInt("tinoMinutes")} min con acompañamiento" else "Progreso privado","screen",Modifier.weight(1f))
                                 }
-                                FamilyLearning(member,allowed.optBoolean("progress"))
+                                FamilyHelpRequestPreview(member,allowed.optBoolean("progress"))
                                 FamilyRecentSites(member,allowed,detail={detail=it},activity={tab=1})
                                 FamilyResponsivePair({FamilyLocationPreview(member,allowed,now){tab=2}},{FamilySafetyPreview(alerts,allowed){tab=3}})
                                 FamilyWeeklyChart(member,allowed.optBoolean("usage"),allowed.optBoolean("progress"))
-                                if(allowed.optBoolean("progress")) FamilyAutonomy(member)
+                                if(allowed.optBoolean("progress")) FamilyHelpSummary(member)
                             }
                             1 -> FamilyActivityPanel(member,allowed,now,alerts,{detail=it},{tab=3})
                             2 -> FamilyLocationPanel(member,allowed,now,s.busy,s.demoAccount){vm.familyAction(id,"location_request")}
@@ -168,7 +168,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
         Text("${familyClock(event.optString("at"))} · ${event.optString("app")} · ${event.optInt("durationMinutes")} min",fontSize=14.sp,color=DashMuted)
         event.optString("domain").takeIf{it.isNotBlank()}?.let{Text(it,color=DashTeal,fontSize=17.sp,fontWeight=FontWeight.SemiBold)}
         Text(event.optString("detail"),fontSize=16.sp,lineHeight=24.sp)
-        Text(if(event.optBoolean("independent")) "Lo completó por su cuenta." else if(event.optBoolean("assisted")) "Con acompañamiento de TINO." else "Actividad sin acompañamiento.",color=DashTeal,fontSize=14.sp)
+        Text(if(event.optBoolean("helpRequested")) "Solicitó ayuda de TINO" else "Registro de uso compartido",color=DashTeal,fontSize=14.sp)
         Text("El resumen no incluye mensajes, correos ni contenido de conversaciones.",fontSize=12.sp,lineHeight=18.sp,color=DashMuted)
     }},confirmButton={TextButton(onClick={detail=null}){Text("Listo",color=DashTeal)}}) }
 
