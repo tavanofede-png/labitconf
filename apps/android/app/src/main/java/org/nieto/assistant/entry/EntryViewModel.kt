@@ -27,7 +27,8 @@ data class EntryState(
     val error: String? = null, val message: String? = null, val challengeId: String = "",
     val expiresAt: String = "", val resendAt: Long = 0, val code: String = "", val delivery: String = "email",
     val dashboard: JSONObject? = null, val context: JSONObject? = null, val invitationCode: String = "",
-    val demoAccount: Boolean = false, val dashboardTerritory: String = "AR", val dashboardMonths: Int = 6, val dashboardMonth: String = ""
+    val demoAccount: Boolean = false, val dashboardTerritory: String = "AR", val dashboardMonths: Int = 6, val dashboardMonth: String = "",
+    val section: Int = 0
 ) { fun field(key: String) = fields[key].orEmpty() }
 
 class EntryViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
@@ -48,7 +49,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             fields = fields.keys().asSequence().associateWith { fields.getString(it) }, answers = answers.keys().asSequence().associateWith { answers.getInt(it) }.filterValues { it in 0..3 },
             preferences = prefs.keys().asSequence().associateWith { prefs.getBoolean(it) }, familyMode = data.optString("familyMode", "create"), question = data.optInt("question").coerceIn(0, questionsFor(AccountRole.valueOf(data.optString("role", "USER"))).lastIndex),
             profileStep = data.optInt("profileStep"), usernameEdited = data.optBoolean("usernameEdited"), emailVerified = app.settings.read("accountSession").isNotBlank(),
-            login = data.optBoolean("login"), firstTime = data.optBoolean("firstTime", true))
+            section = data.optInt("section").coerceIn(0, 3), login = data.optBoolean("login"), firstTime = data.optBoolean("firstTime", true))
     }.getOrDefault(EntryState())
     private fun change(block: (EntryState) -> EntryState) {
         mutable.value = block(mutable.value)
@@ -57,7 +58,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         val safePage = if (s.page == EntryPage.CODE) if (s.login) EntryPage.LOGIN else EntryPage.PROFILE else s.page
         saved["entryDraft"] = JSONObject().put("page", safePage.name).put("role", s.role.name).put("fields", JSONObject(s.fields))
             .put("answers", JSONObject(s.answers)).put("preferences", JSONObject(s.preferences)).put("familyMode", s.familyMode)
-            .put("profileStep", s.profileStep).put("usernameEdited", s.usernameEdited).put("question", s.question).put("login", s.login).put("firstTime", s.firstTime).toString()
+            .put("section", s.section).put("profileStep", s.profileStep).put("usernameEdited", s.usernameEdited).put("question", s.question).put("login", s.login).put("firstTime", s.firstTime).toString()
     }
     fun move(page: EntryPage) { generation++; job?.cancel(); usernameJob?.cancel(); answerJob?.cancel(); change { it.copy(page = page, busy = false, error = null, message = null, accepted = false) } }
     fun start(role: AccountRole) { generation++; job?.cancel(); listOf("accountSession", "caregiverToken", "institutionToken", "installation").forEach { app.settings.write(it, "") }; mutable.value = EntryState(role = role); move(if (role == AccountRole.FAMILY) EntryPage.FAMILY_CHOICE else EntryPage.PROFILE) }
@@ -243,6 +244,24 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         if (!reply.optBoolean("onboardingRequired", true)) app.settings.write("onboardingComplete", reply.getString("role"))
     }
     fun guest() = work { app.api.register(); change { it.copy(role = AccountRole.USER, page = EntryPage.HOME, message = "Asistente conectado a este dispositivo. Podés crear una cuenta después.") } }
+    fun openSpace(role: AccountRole, section: Int = 0) {
+        if (state.value.busy) return
+        if (role == state.value.role) { change { it.copy(section = section, error = null, message = null) }; return }
+        work {
+            val reply = app.api.request("/accounts/space", "POST", JSONObject().put("role", role.wire), installationToken = app.settings.read("accountSession"))
+            require(reply.getString("role") == role.wire) { "No pude abrir ese espacio." }
+            listOf("caregiverToken", "institutionToken", "installation", "onboardingComplete").forEach { app.settings.write(it, "") }
+            app.settings.write("accountSession", reply.getString("sessionToken"))
+            app.resetConversation()
+            val profile = reply.optJSONObject("profile") ?: JSONObject()
+            val fields = mapOf("territoryId" to "AR-C", "organizationType" to "community") + profile.keys().asSequence().associateWith { profile.optString(it) }
+            val incomplete = reply.optBoolean("onboardingRequired", true)
+            change { EntryState(role = role, section = section, fields = fields, emailVerified = true, busy = true,
+                page = if (!incomplete) EntryPage.HOME else if (role == AccountRole.FAMILY) EntryPage.FAMILY_CHOICE else EntryPage.PROFILE) }
+            applyAccount(reply)
+            if (!incomplete) loadAccount()
+        }
+    }
     fun dashboard() = work {
         if (app.settings.read("accountSession").isNotBlank()) loadAccount()
         val s = state.value

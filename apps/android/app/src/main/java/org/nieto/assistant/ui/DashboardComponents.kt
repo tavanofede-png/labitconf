@@ -88,19 +88,11 @@ internal data class DashboardMetric(val label: String, val value: String, val de
     }
 }
 
-@Composable internal fun DashboardHeader(label: String, title: String, name: String, busy: Boolean, refresh: () -> Unit, logout: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+@Composable internal fun DashboardHeader(label: String, title: String, onMenu: () -> Unit) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(100.dp).height(44.dp))
         Column(Modifier.weight(1f)) { Text(label, color = DashTeal, fontSize = 13.sp, fontWeight = FontWeight.SemiBold); Text(title, color = DashInk, fontSize = 14.sp, maxLines = 1) }
-        Box {
-            TextButton(onClick = { menu = true }, contentPadding = PaddingValues(8.dp), modifier = Modifier.semantics { contentDescription = "Menú de $label" }) { Text("☰", color = DashInk, fontSize = 24.sp) }
-            DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem(text = { Text("Actualizar datos") }, enabled = !busy, onClick = { menu = false; refresh() })
-                DropdownMenuItem(text = { Text(name.ifBlank { "Tu cuenta" }, color = DashMuted) }, enabled = false, onClick = {})
-                HorizontalDivider(); LogoutButton(enabled = !busy) { menu = false; logout() }
-            }
-        }
+        IconButton(onClick = onMenu, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { Text("☰", color = DashInk, fontSize = 24.sp) }
     }
 }
 

@@ -30,7 +30,7 @@ import java.time.format.DateTimeFormatter
 
 internal fun timeLabel(value: String): String = runCatching { Instant.parse(value).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd/MM · HH:mm")) }.getOrDefault("")
 
-@Composable fun FamilyDashboard(s: EntryState, vm: EntryViewModel, app: NietoApp) {
+@Composable fun FamilyDashboard(s: EntryState, vm: EntryViewModel, app: NietoApp, onMenu: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var selectedId by rememberSaveable { mutableStateOf("") }
     var invitation by rememberSaveable { mutableStateOf(false) }
@@ -45,7 +45,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
     val allowed = member?.optJSONObject("permissions") ?: JSONObject()
     val alerts = data?.optJSONArray("alerts").objects().filter { it.optString("memberId") == id }
     LaunchedEffect(Unit) { vm.state.first { !it.busy }; vm.dashboard() }
-    Scaffold(containerColor = DashPaper, topBar = { DashboardHeader("Grupo familiar", data?.optJSONObject("group")?.optString("name") ?: "Tu red, más cerca", s.field("name"), s.busy, vm::dashboard, vm::logout) }) { padding ->
+    Scaffold(containerColor = DashPaper, topBar = { DashboardHeader("Grupo familiar", data?.optJSONObject("group")?.optString("name") ?: "Tu red, más cerca", onMenu) }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 1280.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Text("Tu familia,\nsiempre cerca.", color = DashInk, fontSize = 34.sp, lineHeight = 41.sp, fontWeight = FontWeight.Bold)

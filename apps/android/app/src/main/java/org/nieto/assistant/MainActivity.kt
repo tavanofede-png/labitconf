@@ -28,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -48,7 +50,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { TinoEntryRoot(app) { onLogout -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onLogout, ::stopManualVoice) } } }
+        setContent { NietoTheme { TinoEntryRoot(app, beforeWakeStart = ::stopManualVoice) { onMenu, section, onSection -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onMenu, section, onSection) } } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
     override fun onStart() { super.onStart(); app.foreground(true) }
@@ -130,27 +132,25 @@ private val Turquoise = Color(0xFF00D6C9)
         onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
 
-@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onEmail: (EmailDraft?, Boolean) -> Unit, onAccessibility: () -> Unit, onLogout: () -> Unit, beforeWakeStart: () -> Unit) {
+@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onEmail: (EmailDraft?, Boolean) -> Unit, onAccessibility: () -> Unit, onMenu: () -> Unit, section: Int, onSection: (Int) -> Unit) {
     val state by app.state.collectAsState()
-    var tab by remember { mutableIntStateOf(0) }
+    val tab = section
     var disclosure by remember { mutableStateOf(false) }
-    LaunchedEffect(state.openChatEpoch) { tab = 0 }
-    BackHandler(enabled = tab != 0) { tab = 0 }
+    BackHandler(enabled = tab != 0) { onSection(0) }
     val startFlow: (String) -> Unit = { flowId ->
-        if (flowId == GuidanceEngine.FLOW_ID) { tab = 2; app.startGuide(onReady = onWhatsApp) }
-        else { tab = 0; app.startTask(flowId) { if (flowId == "email-send") onEmail(app.state.value.emailDraft, true) else onWhatsApp() } }
+        if (flowId == GuidanceEngine.FLOW_ID) { onSection(2); app.startGuide(onReady = onWhatsApp) }
+        else { onSection(0); app.startTask(flowId) { if (flowId == "email-send") onEmail(app.state.value.emailDraft, true) else onWhatsApp() } }
     }
     val reopenTask: () -> Unit = { if (app.state.value.task?.flowId == "email-send") onEmail(null, false) else onWhatsApp() }
     if (tab == 0) {
         TinoChatScreen(app, state, listening || state.wakePhase == "command", onVoice,
             onStartGuide = startFlow, onOpenTask = reopenTask,
-            onFamily = { tab = 1; if (app.settings.token.isNotBlank()) app.refreshFamily() },
-            onGuides = { tab = 2 }, onSettings = { tab = 3 }, onLogout = onLogout, beforeWakeStart = beforeWakeStart)
+            onSettings = { onSection(3) }, onMenu = onMenu)
     } else {
         Scaffold(containerColor = WarmWhite, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(116.dp).height(48.dp))
-                TextButton(onClick = { tab = 0 }) { Text("Volver al chat", color = Ink) }
+                IconButton(onClick = onMenu, modifier = Modifier.semantics { contentDescription = "Abrir menú" }) { Text("☰", color = Ink, fontSize = 24.sp) }
             }
         }) { insets ->
             Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.TopCenter) {
@@ -158,7 +158,7 @@ private val Turquoise = Color(0xFF00D6C9)
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
                     when (tab) {
                         1 -> FamilyContent(app, state)
-                        2 -> GuideContent(app, state, onWhatsApp, onStartFlow = startFlow, onSettings = { tab = 3 })
+                        2 -> GuideContent(app, state, onWhatsApp, onStartFlow = startFlow, onSettings = { onSection(3) })
                         else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
                     }
                 }

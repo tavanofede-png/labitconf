@@ -4,6 +4,10 @@ La app real está en `apps/android`, Kotlin + Jetpack Compose, paquete `org.niet
 
 ## Implementación nativa
 
+El menú lateral es único para TINO Chat, Grupo familiar, Instituciones, Guías y Ajustes. Omite el destino que ya está abierto y muestra los interruptores «Burbuja flotante» y «Hola TINO» con su estado real, encima de «Cerrar sesión» en rojo. Ambos servicios y sus permisos pertenecen al dispositivo, por lo que los mismos controles se muestran en todos los espacios.
+
+`POST /accounts/space` cambia de espacio dentro del correo ya verificado, rota la sesión y recupera el perfil correspondiente. No acepta otro correo ni copia autorizaciones entre roles. Una cuenta real nueva completa el onboarding de ese espacio; la autorización institucional y los consentimientos familiares se siguen comprobando en el servidor. Las cuentas de demostración pueden recorrer los tres espacios sin repetir el código ni el onboarding, con sus datos simulados separados de los reales.
+
 `entry/EntryScreens.kt` y `EntryViewModel.kt` agregan bienvenida con Usuario, Grupo Familiar e Institución; perfil propio; foto opcional con selector de archivos Android; permisos reales de micrófono/notificaciones y divulgación antes de Accesibilidad; cuestionarios A–D; revisión; login por código; y conexión configurable al backend. Las pantallas se limitan a un ancho de lectura de 720dp y se adaptan a teléfonos y tablets. El asistente anterior conserva voz Android, chat, guía local de WhatsApp, familia y ajustes.
 
 El espacio familiar nativo consulta miembros y métricas consentidas, genera invitaciones, muestra solicitudes de ayuda y permite atenderlas y aprobar incorporaciones al grupo. El espacio institucional nativo consulta indicadores agregados, flujos, tiempo autorizado, seguridad y contexto OpenARG. La edición completa de programas sigue en el portal web; todavía no se trasladó al espacio Android.

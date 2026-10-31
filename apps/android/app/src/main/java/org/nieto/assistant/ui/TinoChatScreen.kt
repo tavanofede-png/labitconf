@@ -48,13 +48,8 @@ private val Paper = Color(0xFFF3F6F6)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit,
-    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onFamily: () -> Unit, onGuides: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit,
-    beforeWakeStart: () -> Unit) {
+    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onSettings: () -> Unit, onMenu: () -> Unit) {
     var message by rememberSaveable { mutableStateOf("") }
-    val drawer = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
-    val closeMenu: (() -> Unit) -> Unit = { action -> scope.launch { drawer.close(); action() } }
-    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     val list = rememberLazyListState()
     val guideSuggested = state.suggestedFlow != null
     val send = { if (message.isNotBlank() && !state.busy) { app.sendMessage(message); message = "" } }
@@ -62,34 +57,10 @@ private val Paper = Color(0xFFF3F6F6)
     LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task, state.familyInbox.isNotEmpty()) {
         list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0) + (if (state.familyInbox.isNotEmpty()) 1 else 0))
     }
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-            ModalDrawerSheet(modifier = Modifier.width(320.dp).fillMaxHeight(), drawerContainerColor = Paper,
-                drawerShape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)) {
-                Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(100.dp).height(44.dp))
-                        IconButton(onClick = { closeMenu {} }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Cerrar menú" }) { ChatIcon("close") }
-                    }
-                    Text("Tu espacio", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 12.dp))
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                        ChatMenuAction("Mi grupo familiar") { closeMenu(onFamily) }
-                        ChatMenuAction("Guías") { closeMenu(onGuides) }
-                        ChatMenuAction("Ajustes") { closeMenu(onSettings) }
-                        AssistantPermissions(app, state, beforeWakeStart)
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    LogoutButton(enabled = !state.busy) { closeMenu { app.stopSpeaking(); onLogout() } }
-                }
-            }
-        }
-    }) {
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
     Scaffold(containerColor = Paper, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(116.dp).height(48.dp))
-            IconButton(onClick = { scope.launch { drawer.open() } }, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { ChatIcon("menu") }
+            IconButton(onClick = onMenu, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { ChatIcon("menu") }
         }
     }, bottomBar = {
         Surface(color = Paper) {
@@ -155,13 +126,6 @@ private val Paper = Color(0xFFF3F6F6)
             }
         }
     }
-    }
-    }
-    }
-}
-
-@Composable private fun ChatMenuAction(label: String, enabled: Boolean = true, action: () -> Unit) {
-    TextButton(onClick = action, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 14.dp)) { Text(label, Modifier.weight(1f), color = Ink, fontSize = 18.sp) }
 }
 
 @Composable private fun ChatIcon(kind: String) {

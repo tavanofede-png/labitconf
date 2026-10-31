@@ -54,6 +54,7 @@ import org.json.JSONObject
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.R
 import org.nieto.assistant.ui.LogoutButton
+import org.nieto.assistant.ui.AppMenu
 import org.nieto.assistant.ui.FamilyDashboard
 import org.nieto.assistant.ui.InstitutionDashboard
 
@@ -63,9 +64,12 @@ private val Ink = Color(0xFF101416)
 private val Muted = Color(0xFF4C5B61)
 private val Background = Color(0xFFF3F6F6)
 
-@Composable fun TinoEntryRoot(app: NietoApp, vm: EntryViewModel = viewModel(), assistant: @Composable (onLogout: () -> Unit) -> Unit) {
+@Composable fun TinoEntryRoot(app: NietoApp, beforeWakeStart: () -> Unit, vm: EntryViewModel = viewModel(), assistant: @Composable (onMenu: () -> Unit, section: Int, onSection: (Int) -> Unit) -> Unit) {
     val s by vm.state.collectAsState()
     val device by app.state.collectAsState()
+    LaunchedEffect(device.openChatEpoch) {
+        if (device.openChatEpoch > 0 && s.page == EntryPage.HOME) vm.openSpace(AccountRole.USER)
+    }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionEpoch by remember { mutableIntStateOf(0) }
@@ -90,12 +94,16 @@ private val Background = Color(0xFFF3F6F6)
         TinoOnboardingScreen(s, vm, pickPhoto = { photo.launch(arrayOf("image/*")) })
         return
     }
-    if (s.page == EntryPage.HOME && s.role == AccountRole.USER) {
-        assistant(vm::logout)
+    if (s.page == EntryPage.HOME) {
+        AppMenu(app, s, beforeWakeStart, vm::openSpace, vm::logout) { openMenu ->
+            when (s.role) {
+                AccountRole.USER -> assistant(openMenu, s.section) { vm.openSpace(AccountRole.USER, it) }
+                AccountRole.FAMILY -> FamilyDashboard(s, vm, app, openMenu)
+                AccountRole.INSTITUTION -> InstitutionDashboard(s, vm, openMenu)
+            }
+        }
         return
     }
-    if (s.page == EntryPage.HOME && s.role == AccountRole.FAMILY) { FamilyDashboard(s, vm, app); return }
-    if (s.page == EntryPage.HOME && s.role == AccountRole.INSTITUTION) { InstitutionDashboard(s, vm); return }
     Scaffold(containerColor = Background, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(110.dp).height(46.dp))

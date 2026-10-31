@@ -23,7 +23,7 @@ import org.nieto.assistant.entry.EntryState
 import org.nieto.assistant.entry.EntryViewModel
 import org.nieto.assistant.entry.entryTerritories
 
-@Composable fun InstitutionDashboard(s: EntryState, vm: EntryViewModel) {
+@Composable fun InstitutionDashboard(s: EntryState, vm: EntryViewModel, onMenu: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var layer by rememberSaveable { mutableIntStateOf(0) }
     var sources by remember { mutableStateOf(false) }
@@ -47,7 +47,7 @@ import org.nieto.assistant.entry.entryTerritories
         }.onFailure { vm.message("No pude guardar el reporte. Probá de nuevo.") }
     }
     LaunchedEffect(Unit) { vm.state.first { !it.busy }; vm.dashboard() }
-    Scaffold(containerColor = DashPaper, topBar = { DashboardHeader("Instituciones", s.field("organization").ifBlank { "Inteligencia para acompañar" }, s.field("name"), s.busy, vm::dashboard, vm::logout) }) { padding ->
+    Scaffold(containerColor = DashPaper, topBar = { DashboardHeader("Instituciones", s.field("organization").ifBlank { "Inteligencia para acompañar" }, onMenu) }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 1400.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 Text("Entender para\nacompañar mejor.", color = DashInk, fontSize = 34.sp, lineHeight = 41.sp, fontWeight = FontWeight.Bold)

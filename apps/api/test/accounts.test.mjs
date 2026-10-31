@@ -227,3 +227,39 @@ test('Ya tengo cuenta with the demo code opens an onboarded assistant account di
   const message = await f.request('/assistant/message', { token: login.body.sessionToken, method: 'POST', body: { text: 'quiero compartir mi ubicación' } });
   assert.equal(message.status, 200); assert.equal(message.body.flowId, 'whatsapp-location');
 });
+
+test('verified accounts switch spaces only within their identity and retain independent role authorization', async t => {
+  const f = await fixture(t);
+  const source = await f.login('person@example.com'); await f.onboard(source, 'person@example.com');
+  assert.equal((await f.request('/accounts/space', { method: 'POST', body: { role: 'institution' } })).status, 401);
+  assert.equal((await f.request('/accounts/space', { token: source, method: 'POST', body: { role: 'admin' } })).status, 400);
+  assert.equal((await f.request('/accounts/space', { token: source, method: 'POST', body: { role: 'institution', email: 'institution@example.com' } })).status, 400);
+  const switched = await f.request('/accounts/space', { token: source, method: 'POST', body: { role: 'institution' } });
+  assert.equal(switched.status, 200); assert.equal(switched.body.profile.email, 'person@example.com');
+  assert.equal(switched.body.onboardingRequired, true); assert.equal(switched.body.institutionToken, undefined);
+  assert.equal(switched.body.deviceToken, undefined); assert.equal(switched.body.caregiverToken, undefined);
+  assert.equal((await f.request('/accounts/me', { token: source })).status, 401);
+  assert.notEqual((await f.request('/institution/analytics', { token: switched.body.sessionToken })).status, 200);
+  const back = await f.request('/accounts/space', { token: switched.body.sessionToken, method: 'POST', body: { role: 'user' } });
+  assert.equal(back.status, 200); assert.equal(back.body.onboardingRequired, false); assert.equal(back.body.profile.username, 'person');
+  assert.ok(back.body.deviceToken); assert.equal((await f.request('/assistant/history', { token: back.body.sessionToken })).status, 200);
+});
+
+test('demo navigation opens chat, family and institution without repeating onboarding or granting real data', async t => {
+  const f = await fixture(t, { judgesDemo: true });
+  const auth = await f.request('/auth/demo/login', { method: 'POST', body: { email: 'test@labitconf.com', password: '0000' } });
+  let token = auth.body.sessionToken;
+  let familyId;
+  for (const role of ['family', 'institution', 'user', 'family']) {
+    const result = await f.request('/accounts/space', { token, method: 'POST', body: { role } });
+    assert.equal(result.status, 200); assert.equal(result.body.role, role); assert.equal(result.body.demo, true); assert.equal(result.body.onboardingRequired, false);
+    assert.equal((await f.request('/accounts/me', { token })).status, 401);
+    token = result.body.sessionToken;
+    const endpoint = role === 'user' ? '/assistant/history' : `/demo/${role}/dashboard`;
+    const data = await f.request(endpoint, { token }); assert.equal(data.status, 200);
+    if (role === 'family') { if (familyId) assert.equal(data.body.group.id, familyId); familyId = data.body.group.id; }
+    if (role === 'institution') { assert.equal(result.body.institutionToken, undefined); assert.notEqual((await f.request('/institution/analytics', { token })).status, 200); }
+  }
+  const disabled = createAccounts({ store: new JsonStore(f.file), judgesDemo: false });
+  await assert.rejects(() => disabled.handle({ route: '/accounts/space', method: 'POST', body: { role: 'user' }, bearer: token }), e => e.status === 401);
+});

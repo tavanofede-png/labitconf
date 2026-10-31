@@ -156,6 +156,25 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
     if (!route.startsWith('/accounts/')) return null;
     const account = await principal(bearer); check(account, 401, 'account_required', 'Verificá tu correo para continuar.');
     if (method === 'GET' && route === '/accounts/me') return [200, snapshot(account, bearer)];
+    if (method === 'POST' && route === '/accounts/space') {
+      check(body && Object.keys(body).every(key => key === 'role') && roles.includes(body.role), 400, 'invalid_role', 'Elegí un espacio de TINO.');
+      // The verified email owns each space. Never accept an email/account ID from the client,
+      // copy grants between roles, or promote a demo institution into the real portal.
+      const bearerToken = token(), current = now();
+      const result = await store.update(s => {
+        init(s);
+        let target = s.accounts.find(a => Boolean(a.demo) === Boolean(account.demo) && a.email === account.email && a.role === body.role);
+        if (!target) {
+          target = { id: randomUUID(), email: account.email, role: body.role, demo: Boolean(account.demo), onboarded: false, createdAt: new Date(current).toISOString() };
+          s.accounts.push(target);
+        }
+        if (account.demo) completeDemoRole(s, target, current);
+        s.authSessions = s.authSessions.filter(session => session.expiresAt > current && session.id !== account.sessionId);
+        s.authSessions.push({ id: randomUUID(), accountId: target.id, tokenHash: digest(bearerToken), expiresAt: current + 7 * 86_400_000 });
+        return { ...snapshot(target, bearerToken), profile: { email: account.email, ...target.profile } };
+      });
+      return [200, { ...result, sessionToken: bearerToken }];
+    }
     if (method === 'DELETE' && route === '/accounts/session') { await store.update(s => { s.authSessions = (s.authSessions ?? []).filter(session => session.id !== account.sessionId); }); return [200, { ok: true }]; }
     if (method === 'POST' && route === '/accounts/onboarding') {
       check(body.role === account.role, 403, 'role_mismatch', 'El tipo de cuenta no corresponde al acceso verificado.');
