@@ -2,6 +2,12 @@
 
 La demostración funciona dentro del navegador y tiene dos presentaciones del mismo recorrido: una pantalla con marco de teléfono Android y una vista web normal. No necesita instalar el APK, conectar un teléfono, usar ADB ni arrancar un emulador del sistema operativo.
 
+## Enlaces públicos
+
+- [Celular interactivo](https://labitconf-demo.vercel.app/emulador).
+- [Vista web normal](https://labitconf-demo.vercel.app/demo).
+- [Repositorio público](https://github.com/tavanofede-png/labitconf).
+
 ## Recorridos y límites
 
 Las pantallas de WhatsApp y Gmail son simulaciones interactivas para la presentación. Permiten practicar crear un grupo, compartir una ubicación de muestra y recorrer la creación de una cuenta de correo. Los cambios ocurren dentro de la demo: **no se crea una cuenta Google, no se envían mensajes a WhatsApp y no se comparte una ubicación real**. Usar los nombres y datos ficticios propuestos; no introducir contraseñas o credenciales reales.
@@ -29,7 +35,7 @@ El [vercel.json de la raíz](../vercel.json) usa el monorepo existente:
 - Directorio público: `apps/web/dist`.
 - Framework: Vite. No se configuran Functions, Services ni una API de datos para esta demo.
 
-La integración Git de Vercel debe apuntar al repositorio y a su rama de producción elegidos por el equipo. Los commits de esa rama podrán generar nuevos despliegues. El estado de esa conexión y la URL pública se verifican durante la publicación; la presencia de `vercel.json` por sí sola no demuestra que estén conectados.
+El proyecto Vercel `labitconf-demo` (`prj_QSUtOb17dsZRyaUHDJZg4YKhS8Ff`) pertenece al equipo `federicos-projects-45a151a0` y está vinculado a `tavanofede-png/labitconf`, con producción desde `main`. La conexión fue confirmada mediante el contexto Git de Vercel, y el primer build clona el commit `6b3fa30ac6912ae65a6e3a801de926352d9b7b35`. Los siguientes pushes a `main` deben desplegar automáticamente. La protección de acceso se desactivó solo en este nuevo proyecto para permitir pruebas públicas sin cuenta de Vercel.
 
 `.vercelignore` excluye credenciales, estado privado, binarios Android y fuentes del backend de las subidas con la CLI. Se conserva `apps/api/package.json` para resolver el workspace npm. Cuando Vercel clona mediante Git, no se debe confiar en ese archivo como filtro del clon: las credenciales locales nunca deben estar versionadas y solo el directorio compilado es contenido público.
 
@@ -49,9 +55,20 @@ El verificador comprueba la configuración estática, las rutas permitidas, los 
 Después de publicar, verificar también la URL raíz del deployment:
 
 ```powershell
-node scripts/verify-vercel-build.mjs --url https://URL-DEL-DESPLIEGUE.vercel.app/
+node scripts/verify-vercel-build.mjs --url https://labitconf-demo.vercel.app/
 ```
 
 Esta comprobación solicita las vistas de la demo, los assets de la versión compilada y las rutas que deben permanecer inaccesibles. Una página de autenticación de Vercel, una versión anterior o una respuesta HTML 200 en `/api/health` provoca un fallo. La publicación solicitada debe poder abrirse sin acceder a la cuenta de Vercel.
 
 La comprobación final en navegador debe recorrer las tres tareas en ambas presentaciones, probar Atrás/Inicio/Reiniciar, cambiar entre teléfono y vista normal, revisar errores de formularios y comprobar que no haya desbordamiento horizontal en móvil. El comportamiento Android real del APK pertenece a otra validación.
+
+## Resultado de la entrega · 31 de octubre de 2026
+
+- Primer despliegue de producción: `dpl_814JazHA4ZwUY7CRxzdQbf4KogjF`, estado `READY`, desde el commit de implementación `6b3fa30`.
+- TypeScript y 23 pruebas web aprobadas: 9 del modelo de práctica, 4 de sus interfaces y 10 regresiones del portal. Las 78 pruebas de API también pasaron durante la comprobación del proyecto; sus fuentes no cambian en esta entrega.
+- Build local y build de Vercel aprobados. El verificador encontró 24 archivos públicos y cero coincidencias con las tres credenciales locales configuradas.
+- Comprobación HTTP pública sin autenticación aprobada: las cinco rutas web y sus assets entregan la versión compilada; las cinco rutas de API, datos y archivos privados comprobadas responden 404.
+- QA en Chrome local y sobre `https://labitconf-demo.vercel.app`: los tres recorridos completos en cada presentación, validaciones de formularios, cambio de vista sin perder el borrador, Atrás, Inicio y reinicio. Ubicaciones asociadas al destinatario correcto. Sin errores de página o consola, llamadas a API ni solicitudes externas durante los recorridos con voz desactivada.
+- Revisión visual a 1440×900, 1366×768 y 390×844; sin desbordamiento horizontal. El marco cabe en la pantalla de laptop y la ayuda de la vista normal no se superpone con el botón de compartir ubicación.
+
+La lectura y el dictado son funciones opcionales del navegador y dependen de su disponibilidad y permisos. No se validó audio con micrófono real en esta entrega. El dictado puede usar servicios externos propios del navegador. El asistente de la demo devuelve el paso de la práctica actual; no interpreta libremente cualquier pedido ni usa OpenAI Realtime.
