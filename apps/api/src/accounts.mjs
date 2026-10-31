@@ -29,7 +29,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
 } = {}) {
   // In local operator mode codes expire on restart. Production delivery requires an explicit server secret.
   const demoAddress = judgesDemo ? email(demoEmail) : '';
-  const demoAllowed = account => judgesDemo && account.demo === true && account.email === demoAddress && account.role === 'user';
+  const demoAllowed = account => judgesDemo && account.demo === true;
   const pepper = authSecret || randomBytes(32).toString('hex');
   const codeHash = (id, code) => createHmac('sha256', pepper).update(`${id}:${code}`).digest('hex');
   async function principal(bearer) {
@@ -38,14 +38,14 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
     const session = (state.authSessions ?? []).find(s => s.tokenHash === digest(bearer) && s.expiresAt > now());
     const account = session && (state.accounts ?? []).find(a => a.id === session.accountId);
     if (account?.demo && !demoAllowed(account)) return null;
-    return account ? { ...account, institutionApproved: account.role === 'institution' && institutionEmails.includes(account.email), sessionId: session.id } : null;
+    return account ? { ...account, institutionApproved: !account.demo && account.role === 'institution' && institutionEmails.includes(account.email), sessionId: session.id } : null;
   }
   function snapshot(account, bearer) {
     return { role: account.role, profile: account.profile ?? {}, onboardingRequired: !account.onboarded, demo: account.demo === true,
       ...(account.deviceId ? { deviceId: account.deviceId, deviceToken: bearer } : {}),
       ...(account.groupId ? { caregiverToken: bearer } : {}),
-      ...(account.role === 'institution' && institutionEmails.includes(account.email) ? { institutionToken: bearer } : {}),
-      ...(account.role === 'institution' && !institutionEmails.includes(account.email) ? { accessStatus: 'institution_approval_required' } : {}),
+      ...(!account.demo && account.role === 'institution' && institutionEmails.includes(account.email) ? { institutionToken: bearer } : {}),
+      ...(account.role === 'institution' && (account.demo || !institutionEmails.includes(account.email)) ? { accessStatus: 'institution_approval_required' } : {}),
       ...(account.pendingGroupId ? { accessStatus: 'group_approval_required' } : {}) };
   }
   async function handle({ route, method, body, bearer, remoteAddress }) {
@@ -93,16 +93,18 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       check(['login', 'signup', 'family_join'].includes(body.purpose), 400, 'invalid_purpose', 'El motivo del acceso no es válido.');
       const adminEmail = body.purpose === 'family_join' ? email(body.adminEmail) : null;
       const operator = localDemo && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remoteAddress);
-      check(sendCode || operator || (resendKey && mailFrom && authSecret?.length >= 32), 503, 'email_not_configured', 'Falta configurar el envío de códigos por correo. El equipo puede habilitar el modo de prueba local explícito.');
-      const challengeId = randomUUID(), code = String(randomInt(0, 1_000_000)).padStart(6, '0'), current = now();
+      check(judgesDemo || sendCode || operator || (resendKey && mailFrom && authSecret?.length >= 32), 503, 'email_not_configured', 'No pudimos completar el acceso. Intentá nuevamente.');
+      const challengeId = randomUUID(), code = judgesDemo ? '000000' : String(randomInt(0, 1_000_000)).padStart(6, '0'), current = now();
       await store.update(s => {
         init(s); s.authChallenges = s.authChallenges.filter(c => c.expiresAt > current && !c.used);
-        check(!s.authChallenges.some(c => c.email === address && c.role === body.role && current - c.createdAt < 60_000), 429, 'code_cooldown', 'Esperá un minuto antes de solicitar otro código.');
-        s.authChallenges = s.authChallenges.filter(c => !(c.email === address && c.role === body.role));
-        s.authChallenges.push({ id: challengeId, email: address, role: body.role, adminEmail, purpose: body.purpose, hash: codeHash(challengeId, code), createdAt: current, expiresAt: current + 300_000, attempts: 0, used: false, delivered: false });
+        check(judgesDemo || !s.authChallenges.some(c => c.email === address && c.role === body.role && current - c.createdAt < 60_000), 429, 'code_cooldown', 'Esperá un minuto antes de solicitar otro código.');
+        if (!judgesDemo) s.authChallenges = s.authChallenges.filter(c => c.demo || !(c.email === address && c.role === body.role));
+        if (judgesDemo) check(s.authChallenges.filter(c => c.demo).length < 250, 429, 'demo_busy', 'Intentá nuevamente en unos minutos.');
+        s.authChallenges.push({ id: challengeId, email: address, role: body.role, adminEmail, purpose: body.purpose, demo: judgesDemo, hash: codeHash(challengeId, code), createdAt: current, expiresAt: current + 300_000, attempts: 0, used: false, delivered: false });
       });
       try {
-        if (sendCode) await sendCode({ email: address, code });
+        if (judgesDemo) { /* Demo verification is simulated; no email is sent. */ }
+        else if (sendCode) await sendCode({ email: address, code });
         else if (operator) await onOperatorCode({ email: address, code });
         else {
           const response = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': challengeId },
@@ -111,7 +113,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
         }
         await store.update(s => { const c = s.authChallenges.find(c => c.id === challengeId); if (c) c.delivered = true; });
       } catch (error) { await store.update(s => { s.authChallenges = s.authChallenges.filter(c => c.id !== challengeId); }); throw error instanceof AccountError ? error : new AccountError(502, 'email_delivery_failed', 'No pudimos entregar el código. Probá nuevamente.'); }
-      return [200, { challengeId, expiresAt: new Date(current + 300_000).toISOString(), retryAfterSeconds: 60, delivery: operator ? 'operator' : 'email' }];
+      return [200, { challengeId, expiresAt: new Date(current + 300_000).toISOString(), retryAfterSeconds: judgesDemo ? 0 : 60, delivery: judgesDemo ? 'demo' : operator ? 'operator' : 'email' }];
     }
     if (method === 'POST' && route === '/auth/code/verify') {
       check(typeof body.challengeId === 'string' && /^\d{6}$/.test(body.code), 400, 'invalid_code', 'Ingresá el código de seis dígitos.');
@@ -119,11 +121,12 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       const result = await store.update(s => {
         init(s); const c = s.authChallenges.find(c => c.id === body.challengeId);
         if (!c || !c.delivered || c.used || c.expiresAt <= current || c.attempts >= 5) return null;
+        if (c.demo && !judgesDemo) return null;
         c.attempts++;
         if (!equal(c.hash, codeHash(c.id, body.code))) return null;
         c.used = true;
-        let account = s.accounts.find(a => !a.demo && a.email === c.email && a.role === c.role);
-        if (!account) { account = { id: randomUUID(), email: c.email, role: c.role, onboarded: false, createdAt: new Date(current).toISOString() }; s.accounts.push(account); }
+        let account = s.accounts.find(a => Boolean(a.demo) === Boolean(c.demo) && a.email === c.email && a.role === c.role);
+        if (!account) { account = { id: randomUUID(), email: c.email, role: c.role, demo: Boolean(c.demo), onboarded: false, createdAt: new Date(current).toISOString() }; s.accounts.push(account); }
         if (c.purpose === 'family_join') account.requestedAdminEmail = c.adminEmail;
         s.authSessions = s.authSessions.filter(session => session.expiresAt > current);
         s.authSessions.push({ id: randomUUID(), accountId: account.id, tokenHash: digest(bearerToken), expiresAt: current + 7 * 86_400_000 });
@@ -158,7 +161,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
         let invitation = {};
         if (a.role === 'user') {
           let device = s.users.find(u => u.id === a.deviceId);
-          if (!device) { device = { id: randomUUID(), accountId: a.id, name: profile.name, territoryId: profile.territoryId, tokenHash: digest(token()), createdAt: new Date(now()).toISOString() }; s.users.push(device); a.deviceId = device.id; }
+          if (!device) { device = { id: randomUUID(), accountId: a.id, name: profile.name, territoryId: profile.territoryId, demo: a.demo === true, tokenHash: digest(token()), createdAt: new Date(now()).toISOString() }; s.users.push(device); a.deviceId = device.id; }
           device.name = profile.name; device.territoryId = profile.territoryId;
         }
         if (a.role === 'family' && !a.groupId && body.familyMode === 'join') {

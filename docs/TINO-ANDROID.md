@@ -33,9 +33,11 @@ Activar `TINO_JUDGES_DEMO=1` en el backend (`TINO_DEMO_EMAIL=test@labitconf.com`
 
 `POST /api/auth/demo/login { email, password }` devuelve una sesión real de API para una identidad de demostración. Su cuenta y dispositivo son distintos de cualquier cuenta real con el mismo correo. La contraseña pública de prueba no otorga permisos de Android, familiares ni institucionales. Varios jueces pueden ingresar a la vez y cerrar sesión de forma independiente. Desactivar `TINO_JUDGES_DEMO` deshabilita también las sesiones demo existentes. La clave 0000 solo es válida en este endpoint de demo habilitado explícitamente.
 
+Para recorrer el alta en el mock, **Verificar mi correo** abre «Te llegó un código a tu mail» y acepta **000-000** (`000000`). En modo demo no requiere proveedor de correo; cada desafío es independiente y conserva expiración, intentos y uso único. Esas identidades se guardan como cuentas de demo separadas, y no obtienen autorización institucional real por escribir un correo autorizado. Fuera del modo demo se conserva el envío real con código aleatorio.
+
 ## Verificación actual
 
-Pasan 39 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: la última revisión del formulario se probó en el emulador, y su instalación en la Samsung sigue pendiente de recuperar el canal de depuración USB.
+Pasan 40 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
 
 Verificación física anterior: bienvenida, conexión USB al backend, registro de instalación, ingreso de una consulta por teclado y respuesta visible de la API. Todavía deben verificarse en la tablet el nuevo acceso demo, micrófono, permisos de Accesibilidad y el recorrido real sobre WhatsApp. OpenARG no tiene una clave configurada en esta Mac; no se acreditan datos públicos en vivo.
 

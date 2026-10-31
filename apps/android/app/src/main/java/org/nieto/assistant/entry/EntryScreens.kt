@@ -145,7 +145,7 @@ private val Background = Color(0xFFF3F6F6)
                         } else Primary("Enviar código", !s.busy, vm::requestCode)
                     }
                     EntryPage.CODE -> {
-                        Title("Un código.\nSin contraseña.", if (s.delivery == "operator") "Modo de prueba local: pedile al equipo el código que aparece en la terminal del servidor. No se envió un correo." else "Ingresá el código enviado a ${s.field("email")}.")
+                        Title("Te llegó un código\na tu mail.", "Ingresá el código acá para verificar ${s.field("email")}.")
                         EntryField("Código de seis dígitos", s.code, vm::code, KeyboardType.NumberPassword, enabled = !s.busy)
                         Primary("Verificar código", !s.busy && s.code.length == 6, vm::verify)
                         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }

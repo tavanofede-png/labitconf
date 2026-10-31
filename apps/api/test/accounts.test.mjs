@@ -26,7 +26,13 @@ async function fixture(t, overrides = {}) {
   };
   const onboard = async (token, email, role = 'user', extra = {}) => request('/accounts/onboarding', { token, method: 'POST', body: { role, profile: { name: email.split('@')[0], email, username: email.split('@')[0], phone: '+54 11 1234 5678', territoryId: 'AR-C', organization: 'Institución de prueba' }, preferences: {},
     answers: role === 'user' ? { purpose: 0, interaction: 1, pace: 2, priority: 3 } : role === 'family' ? { relationship: 0, support: 1, frequency: 2, guidance: 3 } : { objective: 0, evidence: 1, work: 2 }, ...extra } });
-  return { request, login, onboard, codes, file, advance: ms => { clock += ms; } };
+  const realLogin = async address => {
+    const auth = createAccounts({ store: new JsonStore(file), judgesDemo: false, localDemo: false, now: () => clock, sendCode: ({ email, code }) => codes.set(email, code) });
+    const challenge = await auth.handle({ route: '/auth/code/request', method: 'POST', body: { email: address, role: 'user', purpose: 'signup' } });
+    const result = await auth.handle({ route: '/auth/code/verify', method: 'POST', body: { challengeId: challenge[1].challengeId, code: codes.get(address) } });
+    return result[1].sessionToken;
+  };
+  return { request, login, realLogin, onboard, codes, file, advance: ms => { clock += ms; } };
 }
 
 test('codes are single-use, bounded to five attempts, throttled, expired, and never returned or stored in clear text', async t => {
@@ -174,12 +180,36 @@ test('demo password is opt-in and never authenticates the real account with the 
   const body = { email: 'test@labitconf.com', password: '0000' };
   assert.equal((await off.request('/auth/demo/login', { method: 'POST', body })).status, 404);
   const f = await fixture(t, { judgesDemo: true, demoEmail: 'test@labitconf.com' });
-  const real = await f.login('test@labitconf.com'); await f.onboard(real, 'test@labitconf.com');
+  const real = await f.realLogin('test@labitconf.com'); await f.onboard(real, 'test@labitconf.com');
   for (const role of ['institution', 'family']) assert.equal((await f.request('/auth/demo/login', { method: 'POST', body: { ...body, role } })).status, 400);
   const demo = await f.request('/auth/demo/login', { method: 'POST', body });
   const realMe = await f.request('/accounts/me', { token: real });
   assert.equal(demo.status, 200); assert.notEqual(demo.body.deviceId, realMe.body.deviceId); assert.equal(realMe.body.demo, false);
   f.advance(61_000);
-  const realAgain = await f.login('test@labitconf.com');
+  const realAgain = await f.realLogin('test@labitconf.com');
   assert.equal((await f.request('/accounts/me', { token: realAgain })).body.deviceId, realMe.body.deviceId);
+});
+
+
+test('email verification in the demo advances without mail setup and accepts exactly 000000', async t => {
+  let mailSent = 0;
+  const f = await fixture(t, { judgesDemo: true, demoEmail: 'test@labitconf.com', sendCode: () => { mailSent++; }, institutionEmails: ['institution@example.com'] });
+  const request = (email = 'newperson@example.com', role = 'user') => f.request('/auth/code/request', { method: 'POST', body: { email, role, purpose: 'signup' } });
+  const challenges = await Promise.all([request(), request()]);
+  for (const c of challenges) { assert.equal(c.status, 200); assert.equal(c.body.delivery, 'demo'); assert.equal(c.body.retryAfterSeconds, 0); }
+  const verify = (challenge, code) => f.request('/auth/code/verify', { method: 'POST', body: { challengeId: challenge.body.challengeId, code } });
+  assert.equal((await verify(challenges[0], '0000060')).status, 400);
+  assert.equal((await verify(challenges[0], '111111')).status, 400);
+  const sessions = await Promise.all(challenges.map(c => verify(c, '000000')));
+  for (const result of sessions) { assert.equal(result.status, 200); assert.equal(result.body.demo, true); assert.equal(result.body.onboardingRequired, true); }
+  assert.equal((await verify(challenges[0], '000000')).status, 400);
+  assert.equal((await f.onboard(sessions[0].body.sessionToken, 'newperson@example.com')).status, 200);
+  assert.equal((await f.request('/assistant/history', { token: sessions[0].body.sessionToken })).status, 200);
+  const institutional = await request('institution@example.com', 'institution');
+  const institutionalSession = await verify(institutional, '000000');
+  assert.equal(institutionalSession.status, 200); assert.equal(institutionalSession.body.institutionToken, undefined);
+  assert.notEqual((await f.request('/institution/analytics', { token: institutionalSession.body.sessionToken })).status, 200);
+  assert.equal(mailSent, 0);
+  const disabled = createAccounts({ store: new JsonStore(f.file), judgesDemo: false });
+  assert.equal(await disabled.principal(sessions[0].body.sessionToken), null);
 });

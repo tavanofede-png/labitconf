@@ -51,8 +51,10 @@ class NietoApi(private val settings: LocalSettings) {
             val result = runCatching { JSONObject(String(bytes, Charsets.UTF_8)) }.getOrNull()
             if (status !in 200..299) {
                 val error = result?.optJSONObject("error")
-                throw ApiFailure(status, error?.optString("code").orEmpty(), error?.optString("message")?.takeIf { it.isNotBlank() }
-                    ?: "El servidor no pudo completar la solicitud ($status).")
+                val code = error?.optString("code").orEmpty()
+                val message = if (code == "email_not_configured") "No pudimos completar el acceso. Intentá nuevamente." else error?.optString("message")?.takeIf { it.isNotBlank() }
+                    ?: "No pudimos completar la solicitud. Intentá nuevamente."
+                throw ApiFailure(status, code, message)
             }
             result ?: throw ApiFailure(status, "invalid_response", "El servidor no devolvió una respuesta válida.")
         } catch (error: java.io.IOException) {
