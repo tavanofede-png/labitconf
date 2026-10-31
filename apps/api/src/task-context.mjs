@@ -36,10 +36,23 @@ export function validateTaskContext(value) {
   }
 }
 
+/** The model may finish a task; the reason is never part of resumable memory. */
+export function validateTaskContextUpdate(value) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw invalid();
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).some(key => typeof key !== 'string' || ![...allowed, 'endReason'].includes(key) || !Object.hasOwn(descriptors[key], 'value'))) throw invalid();
+    const context = validateTaskContext(Object.fromEntries(Object.entries(descriptors).filter(([key]) => key !== 'endReason').map(([key, descriptor]) => [key, descriptor.value])));
+    const endReason = descriptors.endReason?.value;
+    if (Object.hasOwn(descriptors, 'endReason') && (!['task_completed', 'user_end'].includes(endReason) || context.goal)) throw invalid();
+    return { context, endReason: context.goal ? null : endReason ?? 'user_end' };
+  } catch { throw invalid(); }
+}
+
 export const TASK_CONTEXT_TOOL = {
   type: 'function',
   name: 'set_task_context',
-  description: 'Conserva sólo el objetivo que pidió la persona, la app destino global y el progreso observado. Actualizalo cuando cambie la tarea o avance con evidencia. Marcá expectsReply cuando tu pregunta necesita una respuesta de la persona; no lo marques para esperar un cambio de pantalla. No guardes confirmaciones sensibles de envío, pago o permisos: deben pedirse nuevamente después de renovar la sesión. No guarda contraseñas, códigos ni datos bancarios. No pulsa, abre apps ni ejecuta acciones. Para borrar la tarea, enviá las tres cadenas vacías y expectsReply=false.',
+  description: 'Conserva sólo el objetivo que pidió la persona, la app destino global y el progreso observado. Actualizalo cuando cambie la tarea o avance con evidencia. Marcá expectsReply cuando tu pregunta necesita una respuesta de la persona; no lo marques para esperar un cambio de pantalla. No guardes confirmaciones sensibles de envío, pago o permisos: deben pedirse nuevamente después de renovar la sesión. No guarda contraseñas, códigos ni datos bancarios. No pulsa, abre apps ni ejecuta acciones. Si la persona pide terminar, cancelar o dejar de hablar, vaciá las tres cadenas y usá endReason=user_end. Si hay evidencia real de que todo el objetivo está completado, vacialas y usá endReason=task_completed. Este fin cierra inmediatamente sin despedida ni otra respuesta. Confirmar un paso intermedio no completa una tarea con pasos pendientes.',
   parameters: {
     type: 'object',
     properties: {
@@ -47,6 +60,7 @@ export const TASK_CONTEXT_TOOL = {
       targetApp: { type: 'string', maxLength: 80, description: 'App de destino de la tarea, aunque otra app esté abierta.' },
       progress: { type: 'string', maxLength: 400, description: 'Avance respaldado por lo observado o confirmado, sin inventar resultados ni guardar confirmaciones sensibles de envío, pago o permisos; volvé a pedirlas tras renovar la sesión.' },
       expectsReply: { type: 'boolean', description: 'Verdadero sólo si ahora esperás una respuesta a tu pregunta de seguimiento.' },
+      endReason: { type: 'string', enum: ['task_completed', 'user_end'], description: 'Sólo con las tres cadenas vacías y expectsReply=false: fin real del objetivo o pedido de terminar. No se conserva al renovar.' },
     },
     required: ['goal', 'targetApp', 'progress'],
     additionalProperties: false,

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { TASK_CONTEXT_TOOL, validateTaskContext } from '../src/task-context.mjs';
+import { TASK_CONTEXT_TOOL, validateTaskContext, validateTaskContextUpdate } from '../src/task-context.mjs';
 
 const task = () => ({ goal: 'Crear un correo', targetApp: 'Gmail', progress: 'WhatsApp sigue abierto' });
 
@@ -18,6 +18,22 @@ test('clearing requires no remaining app, progress or expected response', () => 
   for (const extra of [{ targetApp: 'Gmail' }, { progress: 'Algo pendiente' }, { expectsReply: true }]) {
     assert.throws(() => validateTaskContext({ goal: '', targetApp: '', progress: '', ...extra }), /contexto/);
   }
+});
+
+test('only a completely cleared model task may carry a terminal reason and it never enters resumable memory', () => {
+  const cleared = { goal: '', targetApp: '', progress: '', expectsReply: false };
+  for (const endReason of ['task_completed', 'user_end']) {
+    const update = validateTaskContextUpdate({ ...cleared, endReason });
+    assert.deepEqual(update, { context: cleared, endReason });
+    assert.equal(Object.hasOwn(update.context, 'endReason'), false);
+    assert.throws(() => validateTaskContext({ ...cleared, endReason }), /contexto/);
+    assert.throws(() => validateTaskContextUpdate({ ...task(), endReason }), /contexto/);
+  }
+  assert.equal(validateTaskContextUpdate(cleared).endReason, 'user_end');
+  assert.deepEqual(validateTaskContextUpdate(task()), { context: { ...task(), expectsReply: false }, endReason: null });
+  for (const endReason of ['finished', '', false, undefined]) assert.throws(() => validateTaskContextUpdate({ ...cleared, endReason }), /contexto/);
+  assert.throws(() => validateTaskContextUpdate({ ...cleared, endReason: 'task_completed', action: 'click' }), /contexto/);
+  assert.throws(() => validateTaskContextUpdate(Object.defineProperty({ ...cleared }, 'endReason', { get() { throw new Error('PRIVATE'); } })), /contexto/);
 });
 
 test('task context rejects extra commands, invalid types, accessors and field limits', () => {
@@ -58,7 +74,7 @@ test('credentials and financial codes never enter task memory or error messages'
 test('task tool describes memory only and accepts no action parameters', () => {
   assert.equal(TASK_CONTEXT_TOOL.type, 'function');
   assert.equal(TASK_CONTEXT_TOOL.name, 'set_task_context');
-  assert.deepEqual(Object.keys(TASK_CONTEXT_TOOL.parameters.properties), ['goal', 'targetApp', 'progress', 'expectsReply']);
+  assert.deepEqual(Object.keys(TASK_CONTEXT_TOOL.parameters.properties), ['goal', 'targetApp', 'progress', 'expectsReply', 'endReason']);
   assert.deepEqual(TASK_CONTEXT_TOOL.parameters.required, ['goal', 'targetApp', 'progress']);
   assert.equal(TASK_CONTEXT_TOOL.parameters.additionalProperties, false);
   assert.match(TASK_CONTEXT_TOOL.description, /No pulsa/);

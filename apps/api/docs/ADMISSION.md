@@ -36,11 +36,19 @@ No se guarda voz, pantalla, conversación ni resumen de tarea en Blob. El resume
 
 ## Fin de conversación e inactividad
 
-«Terminar conversación» cierra la conexión y elimina el resumen, conservando la detección local de «Hola Tino». También se elimina después de **30 segundos sin interacción**. La siguiente activación inicia una consulta nueva sin `resume.context`; la autorización de consumo continuo no extiende la memoria de una conversación terminada.
+«Terminar conversación» cierra la conexión y elimina el resumen, conservando la detección local de «Hola Tino». También se elimina después de **30 segundos sin interacción**. Toques, escritura, scroll y navegación real reinician ese plazo durante una conversación activa mediante `user.activity`; las observaciones pasivas no. La siguiente activación después de terminar inicia una consulta nueva sin `resume.context`; la autorización de consumo continuo no extiende la memoria de una conversación terminada.
 
 El servidor aplica ese plazo sin refrescarlo por snapshots, limpieza de pantalla, pings, configuración o mensajes inválidos. Espera que termine una captura, generación o reproducción activa y cuenta desde esa actividad real. Si se pierde la confirmación de reproducción, su espera también está acotada. Al vencer, envía el contexto vacío y `conversation.ended` con `reason:"idle"`, libera la lease y cierra normalmente sin solicitar renovación. Un `close` explícito usa `reason:"user_end"`.
 
 `expectsReply` es informativo: no inicia una captura automática ni una nueva llamada al proveedor. La persona activa cada consulta con «Hola Tino» o una acción explícita. Cambiar de aplicación no pide una respuesta ni conserva una sesión sin interacción.
+
+`user.activity` solo contiene `type` y un `kind` cerrado (`tap`, `scroll`, `text`, `navigation`), sin valores ni contenido de pantalla. Se agrupan ráfagas y se limita su frecuencia. El evento no crea conversaciones, no invoca al proveedor, no cambia la admisión y no revive un contexto vencido.
+
+Cuando el modelo reconoce un pedido de dejar de hablar o evidencia real de que terminó el objetivo completo, vacía la tarea y señala `endReason:user_end` o `task_completed`. El servidor publica el contexto vacío y `conversation.ended`, cancela salida pendiente y cierra sin pedir una respuesta adicional ni despedida. Un paso intermedio no implica completar la tarea. La razón terminal no se conserva en el resumen ni concede permisos o acciones.
+
+En modo continuo autorizado, una acción real más una pantalla distinta estable dos segundos permite una comprobación interna de finalización en la misma conexión OpenAI. Usa una respuesta fuera de la conversación, solo texto aislado, herramienta obligatoria y hasta 200 tokens; no produce voz ni salida para la persona. Hay una evaluación activa como máximo, separación mínima de dos segundos y timeout de diez segundos, sin polling ni reintentos automáticos. No prolonga la memoria ni el idle. Esa inferencia consume saldo del proveedor, dentro de la autorización explícita de consumo continuo.
+
+La evidencia debe corresponder al objetivo completo y a controles actuales no protegidos. Una nueva acción, consulta, pantalla o tarea invalida el resultado; la cancelación usa el ID de la respuesta de evaluación y no la del turno principal. Baseline de controles y mapas de correlación acotados existen solo en RAM, sin imágenes adicionales ni persistencia. En la política conservadora sin continuidad autorizada no se abren estas inferencias autónomas.
 
 ## Política sin continuidad autorizada
 

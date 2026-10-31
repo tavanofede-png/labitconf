@@ -588,6 +588,170 @@ test('ending a conversation forgets its summary and active capture without a ren
   assert.equal(output.seen.some(event => event.type === 'response.started' || event.type === 'renewal.required'), false);
 });
 
+test('real screen actions extend only an active conversation, never create a response and cannot revive an expired task', async t => {
+  let activityClock = 100_000; let screenClock = Date.now();
+  const upstream = await fakeOpenAi(t);
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true,
+    activityNow: () => activityClock, now: () => screenClock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  const initial = conversation.lastActivityAt; activityClock += 5_000;
+  conversation.handleClient({ type: 'user.activity', kind: 'tap' }); assert.equal(conversation.lastActivityAt, initial);
+  assert.equal(conversation.turns, 0); assert.equal(output.seen.some(event => event.type === 'response.started'), false);
+  conversation.handleClient({ type: 'text', text: 'Ayudame a ajustar esta opción.' }); await output.wait(event => event.type === 'response.done');
+  const responseCount = upstream.messages.filter(event => event.type === 'response.create').length;
+  for (const kind of ['tap', 'scroll', 'text', 'navigation']) {
+    activityClock += 29_000; conversation.handleClient({ type: 'user.activity', kind });
+    const actionAt = activityClock; assert.equal(conversation.lastActivityAt, actionAt);
+    screenClock += 751; conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: `after_${kind}` }, requestGuidance: false });
+    assert.equal(conversation.lastActivityAt, actionAt); assert.equal(conversation.closed, false);
+  }
+  const previous = conversation.lastActivityAt;
+  for (const event of [{ type: 'user.activity', kind: 'ping' }, { type: 'user.activity' }, { type: 'user.activity', kind: 'text', text: 'PRIVATE_FIELD_VALUE' }]) {
+    assert.throws(() => conversation.handleClient(event), error => error.code === 'invalid_realtime_message' && !error.message.includes('PRIVATE_FIELD_VALUE'));
+  }
+  activityClock += 100; conversation.handleClient({ type: 'user.activity', kind: 'tap' }); assert.equal(conversation.lastActivityAt, previous + 100);
+  activityClock += 200; conversation.handleClient({ type: 'user.activity', kind: 'scroll' }); assert.equal(conversation.lastActivityAt, activityClock);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, responseCount);
+  assert.equal(upstream.messages.some(event => event.type === 'user.activity'), false);
+  activityClock += 30_000; conversation.handleClient({ type: 'user.activity', kind: 'navigation' });
+  assert.equal(conversation.closed, true); assert.equal(output.seen.find(event => event.type === 'conversation.ended').reason, 'idle');
+});
+
+test('a cleared model task takes priority over other tools and ends without another response, pointer or late audio', async t => {
+  for (const endReason of ['task_completed', 'user_end']) {
+    await t.test(endReason, async sub => {
+      const upstream = await fakeOpenAi(sub, (socket, event) => {
+        const id = `terminal_${endReason}`;
+        socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+        socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [
+          { type: 'function_call', name: 'point_to_control', call_id: 'point-before-end', arguments: JSON.stringify({ screenId: screen().id, controlId: screen().controls[0].id, instruction: 'Paso que no debe publicarse.' }) },
+          { type: 'function_call', name: 'set_task_context', call_id: 'end-task', arguments: JSON.stringify({ goal: '', targetApp: '', progress: '', expectsReply: false, endReason }) },
+        ] } }));
+        socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'late-end-audio', delta: Buffer.alloc(4800).toString('base64') }));
+      });
+      const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true });
+      sub.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+      conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: false });
+      const closed = once(conversation, 'closed'); conversation.handleClient({ type: 'text', text: endReason === 'user_end' ? 'Preferiría seguir sin ayuda, dejemos la conversación acá.' : 'La tarea ya está terminada.' });
+      const [details] = await closed; assert.deepEqual(details, { renewable: false, reason: endReason });
+      const countAtEnd = output.seen.length;
+      conversation.handleUpstream(Buffer.from(JSON.stringify({ type: 'response.output_text.delta', response_id: `terminal_${endReason}`, delta: 'No debe oírse ni verse.' })));
+      await new Promise(resolve => setTimeout(resolve, 10));
+      assert.equal(output.seen.length, countAtEnd); assert.equal(conversation.taskContext, null);
+      assert.equal(output.seen.find(event => event.type === 'conversation.ended').reason, endReason);
+      assert.equal(output.seen.some(event => ['guidance.step', 'audio.delta', 'text.delta', 'text.done', 'response.done'].includes(event.type)), false);
+      assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1);
+      assert.equal(upstream.messages.some(event => event.item?.type === 'function_call_output'), false);
+      assert.throws(() => conversation.handleClient({ type: 'text', text: 'Evento tardío' }), /lista/);
+    });
+  }
+});
+
+test('terminal streamed function arguments close immediately before response.done or any following output', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    const id = 'streamed-end'; socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.function_call_arguments.done', response_id: id, item_id: 'fc-end', call_id: 'call-end', name: 'set_task_context',
+      arguments: JSON.stringify({ goal: '', targetApp: '', progress: '', endReason: 'user_end' }) }));
+    socket.send(JSON.stringify({ type: 'response.output_text.delta', response_id: id, delta: 'Una despedida no solicitada.' }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  const closed = once(conversation, 'closed'); conversation.handleClient({ type: 'text', text: 'No quiero más acompañamiento por ahora.' }); await closed;
+  assert.equal(output.seen.find(event => event.type === 'conversation.ended').reason, 'user_end');
+  assert.equal(output.seen.some(event => ['audio.delta', 'text.delta', 'response.done'].includes(event.type)), false);
+});
+
+test('completing one intermediate step retains the overall goal and can request the next step', async t => {
+  let round = 0;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (++round === 1) {
+      socket.send(JSON.stringify({ type: 'response.created', response: { id: 'intermediate-step', metadata: event.response.metadata } }));
+      socket.send(JSON.stringify({ type: 'response.done', response: { id: 'intermediate-step', status: 'completed', output: [
+        { type: 'function_call', name: 'set_task_context', call_id: 'step-update', arguments: JSON.stringify({ goal: 'Completar la configuración elegida', targetApp: 'Ajustes', progress: 'La persona completó el primer paso; todavía debe revisar y confirmar la opción final.' }) },
+      ] } }));
+    } else helper.sendResponse(socket, event);
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'text', text: 'Listo, ya hice este paso.' }); await output.wait(event => event.type === 'response.done');
+  assert.equal(conversation.closed, false); assert.equal(conversation.taskContext.goal, 'Completar la configuración elegida');
+  assert.equal(output.seen.some(event => event.type === 'conversation.ended'), false);
+  const prompt = upstream.messages.find(event => event.type === 'session.update').session.instructions;
+  assert.match(prompt, /Interpretá semánticamente/); assert.match(prompt, /paso intermedio/); assert.match(prompt, /única salida/);
+});
+
+test('HTTP end requests complete silently instead of hanging or asking the model for a farewell', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    socket.send(JSON.stringify({ type: 'response.created', response: { id: 'http-end', metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id: 'http-end', status: 'completed', output: [
+      { type: 'function_call', name: 'set_task_context', call_id: 'http-end-task', arguments: JSON.stringify({ goal: '', targetApp: '', progress: '', endReason: 'user_end' }) },
+    ] } }));
+  });
+  const service = new RealtimeService({ apiKey: 'test-key', continuous: true, conversationOptions: { endpoint: upstream.endpoint } }); t.after(() => service.close());
+  const reply = await service.reply({ deviceId: 'end-http', text: 'Prefiero terminar acá.' });
+  assert.deepEqual(reply, { mode: 'conversation', instruction: '', sources: [], model: REALTIME_MODEL, ended: true, reason: 'user_end' });
+  assert.equal(service.active.size, 0); assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1);
+});
+
+test('a screen action can finish a task silently in an isolated probe without counting a user turn or extending idle', async t => {
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    assert.equal(event.response.conversation, 'none');
+    const id = 'isolated-completion'; socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_text.delta', response_id: id, delta: 'Salida interna que no debe publicarse.' }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, delta: Buffer.alloc(4800).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [
+      { type: 'function_call', name: 'report_task_completion', arguments: JSON.stringify({ completed: true, screenId: 'fixture_done', evidenceControlIds: ['status_done'] }) },
+    ] } }));
+  });
+  let screenClock = Date.now(); let activityClock = 100_000;
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true, now: () => screenClock,
+    activityNow: () => activityClock, completionProbeOptions: { debounceMs: 15 } });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'resume.context', context: { goal: 'Finalizar la operación de prueba', targetApp: 'Prueba', progress: 'Falta confirmar' } });
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'fixture_before', controls: [{ id: 'confirm', label: 'Confirmar operación de prueba', role: 'button', bounds: [0, 0, 100, 50] }] } });
+  activityClock += 1000; conversation.handleClient({ type: 'user.activity', kind: 'tap' }); const actionAt = conversation.lastActivityAt;
+  screenClock += 751;
+  const closed = once(conversation, 'closed');
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'fixture_done', controls: [{ id: 'status_done', label: 'Operación de prueba completada', role: 'label', bounds: [0, 0, 100, 50] }] } });
+  const [details] = await closed;
+  assert.deepEqual(details, { renewable: false, reason: 'task_completed' });
+  assert.equal(conversation.lastActivityAt, actionAt); assert.equal(conversation.turns, 0);
+  assert.equal(output.seen.some(event => ['text.delta', 'audio.delta', 'response.started', 'response.done'].includes(event.type)), false);
+  assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1);
+});
+
+test('a user request cancels an unacknowledged probe and late probe metadata cannot steal its response', async t => {
+  let lateProbe; let probeSocket;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (event.response.metadata.nieto_probe_id) { lateProbe = event; probeSocket = socket; return; }
+    // The old OOB creation arrives first while the real turn is pending.
+    socket.send(JSON.stringify({ type: 'response.created', response: { id: 'cancelled-probe', metadata: lateProbe.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_text.delta', response_id: 'cancelled-probe', delta: 'Probe no divulgado.' }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id: 'cancelled-probe', status: 'completed', output: [
+      { type: 'function_call', name: 'report_task_completion', arguments: JSON.stringify({ completed: true, screenId: 'changed_after_action', evidenceControlIds: ['c1'] }) },
+    ] } }));
+    helper.sendResponse(socket, event);
+  });
+  let screenClock = Date.now();
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', continuous: true,
+    now: () => screenClock, completionProbeOptions: { debounceMs: 15 } });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'resume.context', context: { goal: 'Completar una opción', targetApp: 'Ajustes', progress: 'Pendiente' } });
+  conversation.handleClient({ type: 'screen.context', screen: screen() });
+  conversation.handleClient({ type: 'user.activity', kind: 'tap' }); screenClock += 751;
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'changed_after_action', controls: [{ ...screen().controls[0], label: 'Opción cambiada' }] } });
+  await eventually(() => Boolean(lateProbe && probeSocket));
+  conversation.handleClient({ type: 'text', text: 'Tengo una nueva pregunta.' });
+  const done = await output.wait(event => event.type === 'response.done');
+  assert.equal(done.status, 'completed'); assert.equal(conversation.closed, false);
+  assert.equal(output.seen.find(event => event.type === 'text.done').text, 'Respuesta de prueba.');
+  assert.equal(output.seen.some(event => event.type === 'conversation.ended'), false);
+  await eventually(() => upstream.messages.some(event => event.type === 'response.cancel' && event.response_id === 'cancelled-probe'));
+  assert.equal(conversation.turns, 1); assert.equal(conversation.pendingResponses.length, 0);
+});
+
 test('idle expiry waits for active recording and generation, then counts from the completed response', async t => {
   let finishResponse; let activityClock = 100_000;
   const upstream = await fakeOpenAi(t, (socket, event, helper) => { finishResponse = () => helper.sendResponse(socket, event); });
