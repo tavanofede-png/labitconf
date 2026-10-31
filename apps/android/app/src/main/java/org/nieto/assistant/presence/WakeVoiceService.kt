@@ -38,7 +38,7 @@ class WakeVoiceService : Service() {
         scope.launch {
             app.state.collect { state ->
                 if (model != null && !stopped) {
-                    if (state.busy || state.speaking || state.recordingVoiceNote) {
+                    if (state.busy || state.screenCapturePending || state.voice.active || state.speaking || state.recordingVoiceNote) {
                         if (speech != null) { closeSpeech(); app.wakeState("paused"); updateNotice("En pausa mientras TINO responde.") }
                     } else if (speech == null && state.wakePhase == "paused") startRecognition(command = false)
                 }
@@ -70,7 +70,7 @@ class WakeVoiceService : Service() {
                 model = prepared
                 prepared = null
                 loading = false
-                if (app.state.value.busy || app.state.value.speaking) app.wakeState("paused") else startRecognition(false)
+                if (app.state.value.busy || app.state.value.screenCapturePending || app.state.value.voice.active || app.state.value.speaking) app.wakeState("paused") else startRecognition(false)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { if (!stopped) fail("No pude iniciar «Hola TINO». Podés volver a activarlo desde el menú.") }
             finally { prepared?.close() }
@@ -93,7 +93,7 @@ class WakeVoiceService : Service() {
     private fun startRecognition(command: Boolean) {
         if (stopped || model == null) return
         closeSpeech()
-        if (app.state.value.busy || app.state.value.speaking || app.state.value.recordingVoiceNote) { app.wakeState("paused"); return }
+        if (app.state.value.busy || app.state.value.screenCapturePending || app.state.value.voice.active || app.state.value.speaking || app.state.value.recordingVoiceNote) { app.wakeState("paused"); return }
         try {
             val current = generation
             val decoder = if (command) Recognizer(model, 16000f) else Recognizer(model, 16000f, "[\"hola tino\",\"[unk]\"]")
@@ -115,8 +115,8 @@ class WakeVoiceService : Service() {
                     else if (text.isNotBlank()) {
                         if (app.settings.read("accountSession").isBlank()) { stopSelf(); return }
                         closeSpeech(); app.wakeState("paused")
-                        // Only the explicit command after the wake phrase enters the existing chat API.
-                        app.sendMessage(text)
+                        // Use the visible-screen loop outside TINO when the person authorized it.
+                        app.handleWakeCommand(text)
                     }
                 }
                 override fun onFinalResult(hypothesis: String?) = Unit
@@ -127,7 +127,7 @@ class WakeVoiceService : Service() {
         } catch (_: Exception) { fail("El micrófono está ocupado o no está disponible. Probá de nuevo desde el menú.") }
     }
     private fun activate() {
-        if (stopped || commandPending || app.state.value.busy || app.state.value.speaking || app.state.value.recordingVoiceNote) return
+        if (stopped || commandPending || app.state.value.busy || app.state.value.screenCapturePending || app.state.value.voice.active || app.state.value.speaking || app.state.value.recordingVoiceNote) return
         closeSpeech(); commandPending = true; app.wakeState("command")
         tone = runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 65) }.getOrNull()
         tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 120)

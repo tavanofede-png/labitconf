@@ -12,6 +12,7 @@ import org.nieto.assistant.NietoApp
     var screen by remember { mutableStateOf(app.settings.remoteScreenConsent) }
     var images by remember { mutableStateOf(app.settings.screenImagesConsent) }
     DashboardCard("Asistencia con IA", "Elegís qué puede recibir el asistente. Tu grupo familiar no recibe estos datos.") {
+        Text("Con estos permisos, «Hola TINO» puede iniciar una guía visual fuera de la app: vos tocás y TINO señala el próximo botón.",color=DashMuted)
         Text("La consulta escrita y la voz se envían a OpenAI para responder. La pantalla requiere un permiso separado.",color=DashMuted)
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text("Consultas y voz con OpenAI",Modifier.weight(1f));Switch(openAi,{value->openAi=value;app.settings.openAiConsent=value;if(!value){screen=false;images=false;app.revokeOpenAiConsent()}}) }
         Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) { Text("Controles de la pantalla",Modifier.weight(1f));Switch(screen,{value->screen=value;app.settings.remoteScreenConsent=value;if(value)app.enableAssistance() else { images=false;app.settings.screenImagesConsent=false;app.stopAssistance() }},enabled=openAi) }

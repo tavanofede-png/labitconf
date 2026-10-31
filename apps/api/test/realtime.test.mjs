@@ -322,3 +322,29 @@ test('curated group and email journeys remain available without opening an AI co
  assert.equal(result.body.flowId,'email-send');assert.equal(result.body.emailDraft.to,'persona@example.com');
  assert.equal(upstream.requests.length,0);assert.equal(realtime.active.size,0);
 });
+
+test('visual assistance advances from launcher to WhatsApp using a fresh control from each screen',async t=>{
+ let round=0;
+ const upstream=await fakeOpenAi(t,(socket,event,helper)=>{
+  ++round;
+  if(round%2===0){helper.sendResponse(socket,event);return;}
+  const first=round===1;
+  const args={screenId:first?'launcher_screen':'whatsapp_screen',controlId:first?'whatsapp_icon':'new_group',instruction:first?'Tocá WhatsApp.':'Tocá Nuevo grupo.'};
+  const responseId=`visual-${round}`;
+  socket.send(JSON.stringify({type:'response.created',response:{id:responseId,metadata:event.response.metadata}}));
+  socket.send(JSON.stringify({type:'response.done',response:{id:responseId,status:'completed',output:[{type:'function_call',name:'point_to_control',call_id:`point-${round}`,arguments:JSON.stringify(args)}]}}));
+ });
+ const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text'});t.after(()=>conversation.close());
+ const output=eventsFrom(conversation);await conversation.connect();
+ conversation.handleClient({type:'screen.context',screen:{id:'launcher_screen',packageName:'org.synthetic.launcher',width:360,height:640,controls:[{id:'whatsapp_icon',label:'WhatsApp',role:'button',bounds:[20,100,120,200]}]}});
+ conversation.handleClient({type:'text',text:'Ayudame a crear un grupo de WhatsApp.'});
+ const firstDone=await output.wait(e=>e.type==='response.done');const oldItem=conversation.screenItemId;
+ // Respect the production snapshot rate limit rather than disabling it in this integration test.
+ await new Promise(resolve=>setTimeout(resolve,800));
+ conversation.handleClient({type:'screen.context',requestGuidance:true,screen:{id:'whatsapp_screen',packageName:'com.whatsapp',width:360,height:640,controls:[{id:'new_group',label:'Nuevo grupo',role:'button',bounds:[180,50,350,105]}]}});
+ await output.wait(e=>e.type==='response.done'&&e.turnId!==firstDone.turnId);
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>[e.screenId,e.controlId]),[['launcher_screen','whatsapp_icon'],['whatsapp_screen','new_group']]);
+ assert.ok(upstream.messages.some(e=>e.type==='conversation.item.delete'&&e.item_id===oldItem));
+ const acknowledgements=upstream.messages.filter(e=>e.item?.type==='function_call_output').map(e=>JSON.parse(e.item.output));
+ assert.equal(acknowledgements.length,2);assert.ok(acknowledgements.every(e=>e.pointed===true&&e.executed===false));
+});

@@ -95,7 +95,7 @@ class AssistantOverlay(private val service: NietoAccessibilityService, private v
         editor=EditText(service).apply { hint="¿Qué querés hacer?"; textSize=18f; maxLines=3; setText(draft); inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
             filters=arrayOf(android.text.InputFilter.LengthFilter(1000)); importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS }
         layout.addView(editor)
-        button("Enviar consulta escrita") { val text=editor?.text.toString().trim(); if(text.isNotBlank()) { draft=""; editor?.setText(""); afterKeyboard { app.sendMessage(text) } } }
+        button("Enviar consulta escrita") { val text=editor?.text.toString().trim(); if(text.isNotBlank()) { draft=""; editor?.setText(""); afterKeyboard { app.sendScreenMessage(text) } } }
         button("Ya lo hice · actualizar pantalla") { afterKeyboard { app.refreshScreen() } }
         button("Repetir este paso") { app.repeatAssistance() }
         button("Me perdí") { afterKeyboard { app.lostAssistance() } }
