@@ -5,6 +5,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.content.Intent
 import org.nieto.assistant.presence.FloatingBubbleService
+import org.nieto.assistant.presence.ChatAttachment
 import org.nieto.assistant.presence.WakeVoiceService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +22,8 @@ import org.nieto.assistant.data.NietoApi
 import org.nieto.assistant.flow.*
 import java.util.Locale
 
-data class ChatLine(val fromUser: Boolean, val text: String)
+data class ChatAttachmentLabel(val name: String, val mimeType: String)
+data class ChatLine(val fromUser: Boolean, val text: String, val attachments: List<ChatAttachmentLabel> = emptyList())
 data class AppState(
     val guide: GuideState = GuideState(),
     val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy TINO. Contame qué necesitás hacer con tu teléfono. Podés escribirme o hablarme.")),
@@ -179,10 +181,11 @@ class NietoApp : Application() {
         conversationId = UUID.randomUUID().toString()
         mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null, familyInbox = emptyList())
     }
-    fun sendMessage(text: String) {
-        val clean = text.trim().take(1000)
-        if (clean.isBlank() || state.value.busy) return
-        mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean)).takeLast(30), busy = true, suggestedFlow = null)
+    fun sendMessage(text: String, attachments: List<ChatAttachment> = emptyList(), onComplete: (Boolean) -> Unit = {}) {
+        val clean = text.trim().take(1000).ifBlank { if (attachments.isNotEmpty()) "Ayudame a entender los archivos que adjunté." else "" }
+        if (clean.isBlank() || state.value.busy) { onComplete(false); return }
+        if (attachments.size > ChatAttachment.MAX_COUNT || attachments.sumOf { it.byteSize } > ChatAttachment.MAX_TOTAL_BYTES) { onComplete(false); return }
+        mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean, attachments.map { ChatAttachmentLabel(it.name,it.mimeType) })).takeLast(30), busy = true, suggestedFlow = null)
         scope.launch {
             try {
                 api.register()
@@ -191,6 +194,7 @@ class NietoApp : Application() {
                 val body = JSONObject().put("text", clean).put("conversationId", conversationId).put("history", history)
                 while (body.toString().toByteArray(Charsets.UTF_8).size > 14_000 && history.length() > 0) history.remove(0)
                 (state.value.task?.takeIf { it.active }?.sessionId ?: sessionId)?.let { body.put("sessionId", it) }
+                if (attachments.isNotEmpty()) body.put("attachments", JSONArray().apply { attachments.forEach { put(it.wire()) } })
                 val reply = api.request("/assistant/message", "POST", body)
                 var answer = reply.optString("instruction", "No pude encontrar una guía para esa consulta.")
                 val sources = reply.optJSONArray("sources")
@@ -204,7 +208,8 @@ class NietoApp : Application() {
                 mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() }, emailDraft = if (reply.optBoolean("clearEmailDraft")) null else draft ?: state.value.emailDraft)
                 speak(answer)
                 if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
-            } catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta.") }
+                onComplete(true)
+            } catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta."); onComplete(false) }
             finally { mutable.value = mutable.value.copy(busy = false) }
         }
     }

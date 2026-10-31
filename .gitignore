@@ -26,3 +26,6 @@ artifacts/*.apk
 # The Android source package named data is code, not runtime data.
 !apps/android/app/src/main/java/org/nieto/assistant/data/
 !apps/android/app/src/main/java/org/nieto/assistant/data/**
+
+# Locally generated reports and previews.
+/output/

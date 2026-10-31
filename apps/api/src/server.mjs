@@ -12,6 +12,7 @@ import { institutionDashboard, compareProgram, periodFor, summarize } from './in
 import { createAccounts, AccountError } from './accounts.mjs';
 import { createAssistant, TASK_FLOWS } from './assistant.mjs';
 import { generateReply } from './model-adapter.mjs';
+import { validateAttachments, CHAT_BODY_BYTES, AttachmentError } from './chat-attachments.mjs';
 import { demoInstitution, demoFamily, DEMO_TERRITORIES } from './dashboard-demo.mjs';
 import { createDashboardContext, crossPublicContext } from './dashboard-context.mjs';
 
@@ -133,7 +134,7 @@ export function createApp({
         if (!rate || rate.resetAt <= current) { rate = { count: 0, resetAt: current + rateWindowMs }; rates.set(rateKey, rate); }
         required(++rate.count <= rateLimit, 429, 'rate_limited', 'Demasiados pedidos. Esperá un minuto.');
       }
-      const body = await bodyOf(req, ['/family/messages', '/demo/family/actions'].includes(route) ? 196_608 : maxBodyBytes);
+      const body = await bodyOf(req, route === '/assistant/message' ? CHAT_BODY_BYTES : ['/family/messages', '/demo/family/actions'].includes(route) ? 196_608 : maxBodyBytes);
       const method = req.method;
       const accountResponse = await accounts.handle({ route, method, body, bearer: token, remoteAddress: req.socket.remoteAddress });
       if (accountResponse) { respond(...accountResponse); return; }
@@ -385,7 +386,9 @@ export function createApp({
       }
       if (method === 'GET' && route === '/assistant/flows') { needUser(); respond(200, { flows: Object.values(TASK_FLOWS) }); return; }
       if (method === 'POST' && route === '/assistant/message') {
-        needUser(); keys(body, ['sessionId', 'text', 'conversationId', 'history']); const message = text(body.text, 'text', 1000);
+        needUser(); keys(body, ['sessionId', 'text', 'conversationId', 'history', 'attachments']);
+        const attachments = validateAttachments(body.attachments);
+        const message = text(body.text || (attachments.length ? 'Ayudame a entender los archivos que adjunté.' : body.text), 'text', 1000);
         if (body.sessionId) required(state.sessions.some((s) => s.id === body.sessionId && s.userId === user.id), 404, 'session_not_found', 'Sesión inexistente.');
         const conversationId = body.conversationId ?? 'default';
         required(typeof conversationId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(conversationId), 400, 'invalid_conversation', 'Conversación inválida.');
@@ -394,7 +397,7 @@ export function createApp({
         const activeSession = body.sessionId ? state.sessions.find(session => session.id === body.sessionId && session.userId === user.id && ['created','active'].includes(session.state)) : null;
         const activeFlow = TASK_FLOWS[activeSession?.flowId];
         const task = activeFlow ? { flowId: activeFlow.id, title: activeFlow.title, instruction: activeFlow.steps[Math.min(activeSession.completedSteps.length, activeFlow.steps.length - 1)].instruction } : null;
-        const result = await assistant.reply({ key: hash(token) + ':' + conversationId, text: message, history, task });
+        const result = await assistant.reply({ key: hash(token) + ':' + conversationId, text: message, history, task, attachments });
         respond(200, result); return;
       }
       const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
@@ -505,7 +508,7 @@ export function createApp({
       throw new ApiError(404, 'not_found', 'Ruta inexistente.');
     } catch (error) {
       if (res.headersSent) { res.end(); return; }
-      const known = error instanceof ApiError || error instanceof OpenArgError || error instanceof AccountError;
+      const known = error instanceof ApiError || error instanceof OpenArgError || error instanceof AccountError || error instanceof AttachmentError;
       if (error.retryAfter !== null && error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
       respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
     }

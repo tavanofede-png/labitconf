@@ -10,9 +10,11 @@ import java.io.File
 
 /** Exercises the real Android native decoder with synthetic speech, without recording a microphone. */
 class VoiceSmokeInstrumentation : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    private var suite: String? = null
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); suite=arguments?.getString("suite"); start() }
     override fun onStart() {
         val output = Bundle()
+        if (suite=="reports") { reportSmoke(output); return }
         try {
             val directory = File(targetContext.cacheDir, "voice-smoke-model")
             fun copy(path: String, destination: File) {
@@ -50,5 +52,25 @@ class VoiceSmokeInstrumentation : Instrumentation() {
             output.putString("stream", "\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n")
             finish(Activity.RESULT_CANCELED, output)
         }
+    }
+
+    private fun reportSmoke(output: Bundle) {
+        try {
+            val start=java.time.LocalDate.of(2026,5,2).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+            val end=java.time.LocalDate.of(2026,10,29).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+            val pdf=org.nieto.assistant.ui.InstitutionReport.pdf(targetContext,start,end)
+            val file=File(targetContext.filesDir,"tino-report-demo.pdf").apply { writeBytes(pdf) }
+            android.os.ParcelFileDescriptor.open(file,android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                android.graphics.pdf.PdfRenderer(descriptor).use { renderer -> check(renderer.pageCount==2) }
+            }
+            val csv=org.nieto.assistant.ui.InstitutionReport.csv(targetContext,start,end).toString(Charsets.UTF_8)
+            check(csv.contains("02/05/2026") && csv.contains("29/10/2026"))
+            val second=org.nieto.assistant.ui.InstitutionReport.csv(targetContext,start+86_400_000,end-86_400_000).toString(Charsets.UTF_8)
+            fun figures(text: String)=text.lines().filter { it.isNotBlank() }.map { row -> row.split(';').filterIndexed { i,_ -> i!=1 && i!=2 } }
+            check(figures(csv)==figures(second)) { "El fixture cambió al cambiar las fechas." }
+            File(targetContext.filesDir,"tino-report-demo.csv").writeText(csv)
+            output.putString("stream","\nPASS: PDF has 2 pages; dates match selection; CSV figures are invariant across date ranges.\n")
+            output.putInt("tests",3);finish(Activity.RESULT_OK,output)
+        } catch(error: Throwable) { output.putString("stream","\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n");finish(Activity.RESULT_CANCELED,output) }
     }
 }

@@ -19,6 +19,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.json.JSONObject
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import org.nieto.assistant.entry.EntryState
 import org.nieto.assistant.entry.EntryViewModel
 import org.nieto.assistant.entry.entryTerritories
@@ -34,17 +37,31 @@ import org.nieto.assistant.entry.entryTerritories
     val trend = data?.optJSONArray("trend").objects()
     val flows = data?.optJSONArray("flows").objects()
     val public = data?.optJSONObject("publicContext") ?: s.context
-    val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
-        if (uri != null && data != null) runCatching {
-            val csv = buildString {
-                append("origen;territorio;periodo;metrica;valor\n")
-                metrics.keys().asSequence().forEach { key -> append("${data.optString("origin")};${s.dashboardTerritory};${data.optJSONArray("months")};$key;${metrics.opt(key)}\n") }
-                flows.forEach { append("${data.optString("origin")};${s.dashboardTerritory};${data.optJSONArray("months")};${it.optString("name")};${it.optInt("count")}\n") }
-                public?.optJSONArray("indicators").objects().forEach { append("OpenARG_${public?.optString("status")};${it.optString("territoryId")};${it.optString("period")};${it.optString("label")};${it.opt("value")}\n") }
-            }
-            context.contentResolver.openOutputStream(uri)?.use { it.write(("\uFEFF" + csv).toByteArray(Charsets.UTF_8)) }
-            vm.message("Reporte guardado con el origen y período de cada dato.")
-        }.onFailure { vm.message("No pude guardar el reporte. Probá de nuevo.") }
+    var exportDialog by remember { mutableStateOf(false) }
+    var exportStart by rememberSaveable { mutableStateOf<Long?>(null) }
+    var exportEnd by rememberSaveable { mutableStateOf<Long?>(null) }
+    var exporting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val save: (android.net.Uri?, String) -> Unit = { uri, format ->
+        val from = exportStart; val to = exportEnd
+        if (uri != null && from != null && to != null) scope.launch {
+            exporting = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val bytes = if (format == "pdf") InstitutionReport.pdf(context,from,to) else InstitutionReport.csv(context,from,to)
+                    val output = context.contentResolver.openOutputStream(uri) ?: error("No pude abrir el destino.")
+                    output.use { it.write(bytes) }
+                }
+                vm.message("Reporte ${format.uppercase()} guardado: ${InstitutionReport.date(from)} al ${InstitutionReport.date(to)}.")
+            } catch (_: Exception) { vm.message("No pude guardar el reporte. Probá de nuevo.") }
+            finally { exporting = false }
+        }
+    }
+    val csvExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { save(it,"csv") }
+    val pdfExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { save(it,"pdf") }
+    if (exportDialog) InstitutionExportDialog(exportStart,exportEnd,{ exportDialog = false }) { from,to,format ->
+        exportStart = from; exportEnd = to; exportDialog = false
+        if (format == "pdf") pdfExport.launch(InstitutionReport.filename(from,to,format)) else csvExport.launch(InstitutionReport.filename(from,to,format))
     }
     LaunchedEffect(Unit) { vm.state.first { !it.busy }; vm.dashboard() }
     Scaffold(containerColor = DashPaper, topBar = { DashboardHeader("Instituciones", s.field("organization").ifBlank { "Inteligencia para acompañar" }, onMenu) }) { padding ->
@@ -121,7 +138,7 @@ import org.nieto.assistant.entry.entryTerritories
                         }
                     }
                     PublicContextCard(public, s.demoAccount, { sources = true })
-                    OutlinedButton(onClick = { export.launch("TINO-instituciones-${s.dashboardTerritory}.csv") }, enabled = !s.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Exportar reporte CSV", color = DashTeal) }
+                    OutlinedButton(onClick = { exportDialog = true }, enabled = !s.busy && !exporting, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text(if (exporting) "Guardando reporte…" else "Exportar reporte · CSV / PDF", color = DashTeal) }
                     Text("Datos agregados, nunca personas. Las fechas de nacimiento y las ubicaciones individuales no se muestran a instituciones.", color = DashMuted, fontSize = 12.sp, lineHeight = 18.sp)
                 }
             }

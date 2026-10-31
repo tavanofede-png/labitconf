@@ -1,5 +1,7 @@
 # Auditoría de funcionalidades de TINO
 
+Actualización posterior: el chat flotante y los reportes con calendario se implementaron después de esta auditoría. Ver [implementación y límites](TINO-FLOATING-CHAT-AND-REPORTS.md). El resto de los pendientes no cambia por esa implementación.
+
 Revisión del 31 de octubre de 2026, hora de Argentina. Base revisada: `5daf005` en `codex/tino-instituciones`, más el cambio de indicadores de edad de esta entrega. Se contrastó el documento **NIETO Arquitectura Técnica Completa**, incluidos sus cuadros y criterios de aceptación, con Android, API, portales web, pruebas y respuestas reales de los servicios.
 
 **Conclusión:** la arquitectura completa no está implementada. Hay una app Android navegable, un backend funcional para varias operaciones, guías limitadas y un portal demostrativo con datos públicos reales. El panel familiar y los seis meses de métricas institucionales usan datos TINO ficticios. Una pantalla navegable o un HTTP 200 no certifican un flujo entre dos teléfonos.

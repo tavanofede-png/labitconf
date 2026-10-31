@@ -109,6 +109,7 @@ private val Paper = Color(0xFFF3F6F6)
                             Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(if (line.fromUser) "Vos" else "TINO", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 Text(line.text, color = Ink, fontSize = 18.sp, lineHeight = 28.sp)
+                                line.attachments.forEach { file -> Text((if (file.mimeType == "application/pdf") "PDF · " else "Imagen · ") + file.name, color = Muted, fontSize = 14.sp) }
                             }
                         }
                     }
