@@ -12,7 +12,7 @@ La escucha local de «Hola Tino» activa una consulta. El saludo no se detecta e
 
 «Terminar conversación» cierra el transporte y borra el contexto temporal, pero mantiene la escucha local de «Hola Tino». Después de **30 segundos sin interacción** la conversación también termina y su memoria se elimina. Una activación posterior empieza desde cero. Cada acción real observada —toque, escritura, desplazamiento o navegación a otra app— reinicia el plazo de una conversación activa. Las actualizaciones pasivas de pantalla, pings y configuración no lo prolongan. No se corta una captura, generación o reproducción activa; el plazo comienza al terminar esa actividad.
 
-Los cambios de app y snapshots son observaciones silenciosas. `screen.context` con `requestGuidance:false` no genera una respuesta para la persona; tampoco `screen.clear`. Una acción real seguida por una pantalla nueva puede activar la evaluación interna silenciosa descrita abajo. Durante una captura se conservan PCM, bytes y temporizador: al confirmar el turno se utiliza el contexto vigente. El backend no emite avisos hablados espontáneos sobre pantallas sensibles. La protección de datos no equivale a bloquear toda una app.
+Los cambios de app y snapshots son observaciones silenciosas. `screen.context` con `requestGuidance:false` y `screen.clear` actualizan o retiran la observación e invalidan targets antiguos, sin generar una respuesta para la persona ni cancelar captura, generación o reproducción en curso. Una notificación o un scroll no interrumpen una respuesta general que la persona pidió. Solo un nuevo input, una interrupción o fin explícito, o un pedido explícito de nueva guía pueden sustituirla. Una acción real seguida por una pantalla nueva puede activar la evaluación interna silenciosa descrita abajo. Durante una captura se conservan PCM, bytes y temporizador: al confirmar el turno se utiliza el contexto vigente. El backend no emite avisos hablados espontáneos sobre pantallas sensibles. La protección de datos no equivale a bloquear toda una app.
 
 El cliente requiere permisos y aceptación para asistencia remota. El [contrato de pantalla](SCREEN_ASSISTANCE_CONTRACT.md) define saneamiento y captura. Familia e instituciones no reciben contenido de pantalla o conversación.
 
@@ -33,8 +33,8 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
 | `audio.append` con `audio` base64 | PCM16 little-endian, 24.000 Hz, mono; máximo 12.000 bytes por bloque. |
 | `audio.commit` | Confirma entre 100 ms y 45 segundos de captura y solicita respuesta. |
 | `text` con `text` | Consulta de hasta 1.000 caracteres, en la modalidad elegida. |
-| `screen.context` | Reemplaza la observación. Con `requestGuidance:false` solo actualiza. Durante captura no genera respuesta, incluso si llega `true`. |
-| `screen.clear` | Retira snapshot y targets anteriores, conservando una captura en curso. |
+| `screen.context` | Reemplaza la observación. Con `requestGuidance:false` conserva captura, generación y reproducción. Con `true` puede sustituir una respuesta por la nueva guía explícita; durante captura no interrumpe ni genera respuesta. |
+| `screen.clear` | Retira snapshot y targets anteriores, conservando captura, generación y reproducción en curso. |
 | `user.activity` con `kind:"tap"`, `"scroll"`, `"text"` o `"navigation"` | Informa una acción real y reinicia los 30 segundos de una conversación activa; no lleva el texto escrito. Puede incluir `baseline` reducido de la pantalla real anterior al reconectar observación. No pide respuesta, abre conexión ni revive una conversación vencida. |
 | `resume.context` con `context` | Restaura el resumen al rotar una conexión durante una consulta activa, antes de su primer turno; no pide una respuesta. Nunca se usa después de terminar o de 30 segundos de inactividad. |
 | `cancel` con `playback` opcional | Cancela el turno y limpia captura y reproducción pendientes. |
