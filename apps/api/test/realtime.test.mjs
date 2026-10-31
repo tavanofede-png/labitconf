@@ -21,7 +21,7 @@ function eventsFrom(target, name = 'event') {
 }
 
 async function fakeOpenAi(t, responder) {
-  const messages = []; const requests = []; const sockets = new Set(); let number = 0;
+  const messages = []; const requests = []; const connections = []; const sockets = new Set(); let number = 0;
   const server = new WebSocketServer({ host: '127.0.0.1', port: 0 }); await once(server, 'listening');
   const sendResponse = (socket, event, extra = {}) => {
     const id = `response-${++number}`;
@@ -31,16 +31,17 @@ async function fakeOpenAi(t, responder) {
     socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [], ...extra } }));
   };
   server.on('connection', (socket, req) => {
+    const connection = { messages: [] }; connections.push(connection);
     requests.push(req); sockets.add(socket); socket.once('close', () => sockets.delete(socket));
     socket.on('message', raw => {
-      const event = JSON.parse(raw.toString()); messages.push(event);
+      const event = JSON.parse(raw.toString()); messages.push(event); connection.messages.push(event);
       if (event.type === 'session.update') socket.send(JSON.stringify({ type: 'session.updated', session: event.session }));
       else if (event.type === 'response.create') { if (responder) responder(socket, event, { sendResponse, messages }); else sendResponse(socket, event); }
     });
     socket.send(JSON.stringify({ type: 'session.created', session: { id: 'fake-session' } }));
   });
   t.after(async () => { for (const socket of sockets) socket.terminate(); await new Promise(resolve => server.close(resolve)); });
-  return { endpoint: `ws://127.0.0.1:${server.address().port}`, requests, messages, sockets };
+  return { endpoint: `ws://127.0.0.1:${server.address().port}`, requests, messages, connections, sockets };
 }
 
 async function apiFixture(t, realtime) {
@@ -301,8 +302,8 @@ test('voice connection limits and idle expiry release reserved resources', async
   const first = realtime.reserve('device-one'); t.after(() => realtime.close());
   assert.throws(() => realtime.reserve('device-one'), error => error.code === 'realtime_already_active');
   assert.throws(() => realtime.reserve('device-two'), error => error.code === 'realtime_busy');
-  const failure = once(first, 'failure'); await first.connect();
-  const [error] = await failure; assert.equal(error.code, 'realtime_idle'); assert.equal(realtime.active.size, 0);
+  const closed = once(first, 'closed'); await first.connect();
+  const [details] = await closed; assert.equal(details.reason, 'idle'); assert.equal(details.renewable, false); assert.equal(realtime.active.size, 0);
   const second = realtime.reserve('device-two'); second.close(); assert.equal(realtime.active.size, 0);
 });
 
@@ -535,13 +536,88 @@ test('task context survives app changes and transport renewal as untrusted data 
   assert.throws(() => second.handleClient({ type: 'resume.context', context: summary }), /conexión nueva/);
 });
 
-test('continuous idle expiry is a renewable normal close instead of a fatal conversation error', async t => {
+test('continuous idle expiry ends the conversation normally and never requests task renewal', async t => {
   const upstream = await fakeOpenAi(t); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint,
     continuous: true, idleTimeoutMs: 35, maxSessionMs: 1000, renewAfterMs: 800 });
   t.after(() => conversation.close()); const output = eventsFrom(conversation); const closed = once(conversation, 'closed');
-  await conversation.connect(); await closed;
-  assert.equal(output.seen.find(event => event.type === 'renewal.required').reason, 'idle');
+  await conversation.connect(); const [details] = await closed;
+  assert.deepEqual(details, { renewable: false, reason: 'idle' });
+  assert.equal(output.seen.find(event => event.type === 'conversation.ended').reason, 'idle');
+  assert.deepEqual(output.seen.find(event => event.type === 'task.context').context, { goal: '', targetApp: '', progress: '', expectsReply: false });
+  assert.equal(output.seen.some(event => event.type === 'renewal.required'), false);
   assert.equal(output.seen.some(event => event.type === 'error'), false);
+});
+
+test('thirty seconds without interaction forgets a task despite passive screen updates and starts fresh next time', async t => {
+  const upstream = await fakeOpenAi(t); let activityClock = 100_000; let screenClock = Date.now();
+  const realtime = new RealtimeService({ apiKey: 'test-key', continuous: true,
+    conversationOptions: { endpoint: upstream.endpoint, mode: 'text', now: () => screenClock, activityNow: () => activityClock } });
+  t.after(() => realtime.close()); const first = realtime.reserve('device-one', 'text'); const output = eventsFrom(first);
+  await first.connect(); const initialActivity = first.lastActivityAt;
+  assert.equal(output.seen.find(event => event.type === 'ready').session.idleTimeoutMs, 30_000);
+  first.handleClient({ type: 'resume.context', context: { goal: 'Cambiar brillo', targetApp: 'Ajustes', progress: 'Inicio visible' } });
+  for (const seconds of [5, 15, 29]) {
+    activityClock = initialActivity + seconds * 1000; screenClock += 751;
+    first.handleClient({ type: 'screen.context', screen: { ...screen(), id: `quiet_${seconds}` }, requestGuidance: false });
+    first.handleClient({ type: 'screen.clear' }); first.handleClient({ type: 'output.mode', mode: 'text' });
+    assert.throws(() => first.handleClient({ type: 'ping' }), /no está habilitado/);
+    first.scheduleIdle(); assert.equal(first.closed, false); assert.equal(first.lastActivityAt, initialActivity);
+  }
+  activityClock = initialActivity + 30_000; first.scheduleIdle();
+  assert.equal(first.closed, true); assert.equal(first.taskContext, null); assert.equal(first.taskContextItemId, null);
+  assert.equal(first.screen, null); assert.equal(first.turnState.size, 0); assert.equal(realtime.active.size, 0);
+  assert.equal(output.seen.find(event => event.type === 'conversation.ended').reason, 'idle');
+  assert.equal(output.seen.some(event => event.type === 'renewal.required'), false);
+  assert.deepEqual(output.seen.at(-2).context, { goal: '', targetApp: '', progress: '', expectsReply: false });
+  const fresh = realtime.reserve('device-one', 'text'); const nextOutput = eventsFrom(fresh); await fresh.connect();
+  fresh.handleClient({ type: 'text', text: 'Hola, consulta nueva.' }); await nextOutput.wait(event => event.type === 'response.done');
+  assert.equal(fresh.taskContext, null);
+  assert.equal(upstream.connections.at(-1).messages.some(event => event.item?.content?.some(item => item.text?.includes('TASK_CONTEXT'))), false);
+});
+
+test('ending a conversation forgets its summary and active capture without a renewable close', async t => {
+  const upstream = await fakeOpenAi(t); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'resume.context', context: { goal: 'Revisar una opción', targetApp: 'Ajustes', progress: 'Sin completar' } });
+  conversation.handleClient({ type: 'audio.start' }); conversation.handleClient({ type: 'audio.append', audio: Buffer.alloc(4800).toString('base64') });
+  const closed = once(conversation, 'closed'); conversation.handleClient({ type: 'close' });
+  assert.deepEqual((await closed)[0], { renewable: false, reason: 'user_end' });
+  assert.equal(conversation.taskContext, null); assert.equal(conversation.recording, false); assert.equal(conversation.inputBytes, 0);
+  assert.equal(output.seen.find(event => event.type === 'conversation.ended').reason, 'user_end');
+  assert.deepEqual(output.seen.filter(event => event.type === 'task.context').at(-1).context, { goal: '', targetApp: '', progress: '', expectsReply: false });
+  assert.equal(output.seen.some(event => event.type === 'response.started' || event.type === 'renewal.required'), false);
+});
+
+test('idle expiry waits for active recording and generation, then counts from the completed response', async t => {
+  let finishResponse; let activityClock = 100_000;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => { finishResponse = () => helper.sendResponse(socket, event); });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true, mode: 'audio', activityNow: () => activityClock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'audio.start' }); conversation.handleClient({ type: 'audio.append', audio: Buffer.alloc(4800).toString('base64') });
+  activityClock += 31_000; conversation.scheduleIdle(); assert.equal(conversation.closed, false); assert.equal(conversation.recording, true);
+  conversation.handleClient({ type: 'audio.commit' }); await eventually(() => Boolean(finishResponse));
+  activityClock += 31_000; conversation.scheduleIdle(); assert.equal(conversation.closed, false); assert.ok(conversation.activeTurn);
+  finishResponse(); await output.wait(event => event.type === 'response.done');
+  const completedAt = activityClock;
+  activityClock = completedAt + 29_999; conversation.scheduleIdle(); assert.equal(conversation.closed, false);
+  activityClock = completedAt + 30_000; conversation.scheduleIdle(); assert.equal(conversation.closed, true);
+});
+
+test('idle expiry waits for real playback completion and passive observations do not extend it', async t => {
+  let activityClock = 100_000;
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    socket.send(JSON.stringify({ type: 'response.created', response: { id: 'idle-audio-response', metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: 'idle-audio-response', item_id: 'idle-audio-item', content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
+    socket.send(JSON.stringify({ type: 'response.done', response: { id: 'idle-audio-response', status: 'completed', output: [] } }));
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, continuous: true, activityNow: () => activityClock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'text', text: 'Ayudame con esta opción.' }); const done = await output.wait(event => event.type === 'response.done');
+  activityClock += 31_000; conversation.scheduleIdle(); assert.equal(conversation.closed, false); assert.equal(conversation.playbackTurn, done.turnId);
+  conversation.handleClient({ type: 'playback.complete', turnId: done.turnId });
+  const playbackCompletedAt = activityClock;
+  activityClock += 29_999; conversation.handleClient({ type: 'output.mode', mode: 'text' }); conversation.scheduleIdle(); assert.equal(conversation.closed, false);
+  activityClock = playbackCompletedAt + 30_000; conversation.scheduleIdle(); assert.equal(conversation.closed, true);
 });
 
 test('app changes and protected-screen clearing preserve an ongoing capture and remain silent until the spoken turn commits', async t => {

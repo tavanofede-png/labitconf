@@ -6,7 +6,9 @@ La persona hace cada toque. `point_to_control` solo señala IDs vigentes de una 
 
 ## Activación y silencio
 
-La escucha local de «Hola Tino» activa una consulta. El saludo no se detecta enviando audio permanentemente a OpenAI. Una pregunta del agente puede habilitar una única ventana breve de respuesta; el silencio no inicia un ciclo de escucha y respuestas.
+La escucha local de «Hola Tino» activa una consulta. El saludo no se detecta enviando audio permanentemente a OpenAI. Después de responder, TINO vuelve a esperar la activación explícita: una pregunta del agente no abre el micrófono automáticamente ni captura conversaciones de otras personas. `expectsReply` es informativo.
+
+«Terminar conversación» cierra el transporte y borra el contexto temporal, pero mantiene la escucha local de «Hola Tino». Después de **30 segundos sin interacción** la conversación también termina y su memoria se elimina. Una activación posterior empieza desde cero. Los cambios de pantalla, pings y configuración no prolongan ese plazo. No se corta una captura, generación o reproducción activa; el plazo comienza al terminar esa actividad.
 
 Los cambios de app y snapshots son observaciones silenciosas. `screen.context` con `requestGuidance:false` no genera una respuesta; tampoco `screen.clear`. Durante una captura se conservan PCM, bytes y temporizador: al confirmar el turno se utiliza el contexto vigente. El backend no emite avisos hablados espontáneos sobre pantallas sensibles. La protección de datos no equivale a bloquear toda una app.
 
@@ -18,7 +20,7 @@ WebSocket `wss://<backend>/api/assistant/realtime`; `ws://` solo para pruebas lo
 
 Con `CONTINUOUS_ASSISTANCE=1`, autorizado en el servidor, no hay cortes de TINO por veinte mensajes, sesenta pantallas ni cuota diaria. Permanecen los límites de saldo y servicio del proveedor y los límites técnicos individuales.
 
-En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renovación a los **225.000 ms**. Android considera un margen conservador de 210 segundos antes de empezar otro turno: captura de hasta 45 segundos, generación de hasta 60, reproducción encolada de hasta 90 y 15 de margen de red. El cierre por renovación o inactividad continua es normal y renovable: no cancela la tarea. La escucha local puede continuar sin transporte abierto.
+En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renovación a los **225.000 ms**. Android considera un margen conservador de 210 segundos antes de empezar otro turno: captura de hasta 45 segundos, generación de hasta 60, reproducción encolada de hasta 90 y 15 de margen de red. Solo una rotación técnica durante una consulta activa puede conservar su resumen en RAM. El cierre por inactividad o por «Terminar conversación» es normal y no renovable: borra la tarea. La escucha local continúa sin transporte abierto.
 
 ## Mensajes del cliente
 
@@ -31,10 +33,10 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
 | `text` con `text` | Consulta de hasta 1.000 caracteres, en la modalidad elegida. |
 | `screen.context` | Reemplaza la observación. Con `requestGuidance:false` solo actualiza. Durante captura no genera respuesta, incluso si llega `true`. |
 | `screen.clear` | Retira snapshot y targets anteriores, conservando una captura en curso. |
-| `resume.context` con `context` | Restaura el resumen al abrir una conexión, antes de su primer turno; no pide una respuesta. |
+| `resume.context` con `context` | Restaura el resumen al rotar una conexión durante una consulta activa, antes de su primer turno; no pide una respuesta. Nunca se usa después de terminar o de 30 segundos de inactividad. |
 | `cancel` con `playback` opcional | Cancela el turno y limpia captura y reproducción pendientes. |
 | `playback.complete` con `turnId` | Confirma que el audio se terminó de reproducir realmente. |
-| `close` | Cierra transporte y recursos. |
+| `close` | Termina la conversación, borra el resumen y cierra transporte y recursos; conserva el detector local de «Hola Tino». |
 
 `playback` contiene `{turnId,itemId,contentIndex,audioEndMs}`. La posición procede de lo reproducido, no de bytes recibidos. El servidor valida el checkpoint, trunca lo oído y elimina audio posterior no escuchado. Una posición inválida no afecta otro turno; eventos tardíos no se etiquetan como la respuesta nueva.
 
@@ -49,11 +51,12 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
   "outputMode": "audio",
   "audio": {"encoding": "pcm16", "sampleRate": 24000, "channels": 1},
   "maxInputSeconds": 45,
-  "session": {"maxSessionMs": 270000, "renewAfterMs": 225000, "renewable": true}
+  "session": {"maxSessionMs": 270000, "renewAfterMs": 225000, "idleTimeoutMs": 30000, "renewable": true}
 }
 ```
 
-- `renewal.required`: incluye `reason` y `session`. Es una indicación técnica de renovación, no voz ni error de tarea.
+- `renewal.required`: incluye `reason:"transport_rotation"` y `session`. Es una indicación técnica de renovación durante una consulta activa, no voz ni error de tarea. No se emite para inactividad.
+- `conversation.ended`: incluye `reason:"idle"` o `"user_end"`; exige descartar el resumen y no reconectar ni retomar esa conversación automáticamente. Lo precede un `task.context` vacío y sigue un cierre normal.
 - `task.context`: comunica `context` actualizado por el modelo.
 - `response.started`: identifica `turnId` y `outputMode`.
 - `audio.delta`: incluye `turnId`, `itemId`, `contentIndex` y audio PCM base64.
@@ -63,7 +66,7 @@ En Vercel cada transporte cloud dura como máximo **270.000 ms** y anuncia renov
 - `cancelled`: descarta la salida parcial cancelada.
 - `error`: código, mensaje redactado y `fatal`, sin claves, headers, objetos de proveedor ni transcripción de entrada.
 
-`expectsReply` corresponde únicamente al turno recién terminado y comienza en `false`. Si es `true`, Android puede abrir una sola ventana de seguimiento de ocho segundos después de vaciar el audio. El silencio la cancela sin confirmar un turno vacío. Retomar un resumen fuerza `expectsReply:false`: no repite una invitación anterior a hablar.
+`expectsReply` corresponde únicamente al turno recién terminado y comienza en `false`. Es información sobre la respuesta del modelo: no autoriza una captura, no reactiva el micrófono ni renueva el plazo de inactividad. La siguiente consulta requiere «Hola Tino» o una acción explícita de la persona. Retomar un resumen fuerza `expectsReply:false`.
 
 ## Resumen en RAM
 
@@ -80,7 +83,9 @@ La herramienta `set_task_context` actualiza:
 
 Límites: `goal` 600 caracteres, `targetApp` 80, `progress` 400 y JSON UTF-8 de hasta 4096 bytes. No admite propiedades de comando, credenciales, OTP, PIN ni datos bancarios reconocibles. Para vaciar el objetivo se envían las tres cadenas vacías. Las confirmaciones sensibles para enviar, pagar o dar permisos se vuelven a solicitar cuando corresponda después de renovar.
 
-Android conserva ese objeto solamente en RAM entre transportes y lo envía como `resume.context`. El servidor lo etiqueta como datos no confiables: no es historial, instrucción de sistema ni autorización. Una petición actual tiene prioridad. Detener asistencia, revocar acceso, cambiar servidor/token o cerrar sesión elimina el resumen del cliente; la conexión anterior elimina su copia al cerrar. No se guarda en Blob, archivos, preferencias, métricas ni logs.
+Android conserva ese objeto solamente en RAM durante la consulta activa y su rotación técnica, y solo entonces lo envía como `resume.context`. El servidor lo etiqueta como datos no confiables: no es historial, instrucción de sistema ni autorización. Una petición actual tiene prioridad. «Terminar conversación», 30 segundos sin interacción, revocar acceso, cambiar servidor/token o cerrar sesión eliminan el resumen del cliente; la conexión anterior elimina su copia al cerrar. Después de terminar o de inactividad nunca se envía `resume.context`. No se guarda en Blob, archivos, preferencias, métricas ni logs.
+
+La caducidad del servidor también usa 30 segundos por defecto y no se refresca con snapshots, limpieza de pantalla, configuración ni mensajes inválidos. Mientras hay captura, generación o reproducción pendiente, espera que esa actividad termine. La reproducción tiene además una espera acotada por la duración máxima del audio y un margen de red si se pierde su confirmación: ningún paquete de finalización ausente conserva memoria indefinidamente.
 
 El servidor conserva estados recientes acotados para cancelar y descartar eventos tardíos. Eliminar un corte por mensajes no implica conservar mapas o audio sin límite.
 

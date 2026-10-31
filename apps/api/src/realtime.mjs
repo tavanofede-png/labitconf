@@ -41,8 +41,8 @@ function pcmBytes(audio) {
 export class RealtimeConversation extends EventEmitter {
   constructor({ apiKey, deviceId = 'verification', mode = 'audio', endpoint = 'wss://api.openai.com/v1/realtime',
     socketFactory = (url, options) => new WebSocket(url, options), connectTimeoutMs = 15_000,
-    responseTimeoutMs = 60_000, idleTimeoutMs = 120_000, maxSessionMs = 10 * 60_000, maxTurns = 20,
-    continuous = false, renewAfterMs, now = Date.now,
+    responseTimeoutMs = 60_000, idleTimeoutMs = 30_000, maxSessionMs = 10 * 60_000, maxTurns = 20,
+    continuous = false, renewAfterMs, now = Date.now, activityNow = Date.now,
   } = {}) {
     super();
     const url = new URL(endpoint);
@@ -50,8 +50,9 @@ export class RealtimeConversation extends EventEmitter {
     const localTest = url.protocol === 'ws:' && ['127.0.0.1', 'localhost'].includes(url.hostname);
     if ((!openAi && !localTest) || url.username || url.password || url.hash) throw new Error('Endpoint Realtime no permitido.');
     this.apiKey = apiKey; this.deviceId = deviceId; this.mode = mode; this.endpoint = endpoint; this.socketFactory = socketFactory;
-    this.connectTimeoutMs = connectTimeoutMs; this.responseTimeoutMs = responseTimeoutMs; this.idleTimeoutMs = idleTimeoutMs; this.maxSessionMs = Math.min(maxSessionMs, 600_000);
+    this.connectTimeoutMs = connectTimeoutMs; this.responseTimeoutMs = responseTimeoutMs; this.idleTimeoutMs = Math.max(1, Math.min(idleTimeoutMs, 30_000)); this.maxSessionMs = Math.min(maxSessionMs, 600_000);
     this.continuous = continuous === true; this.maxTurns = this.continuous ? Infinity : Math.min(maxTurns, 20); this.now = now;
+    this.activityNow = activityNow; this.lastActivityAt = activityNow();
     this.renewAfterMs = Math.max(1, Math.min(Number.isFinite(renewAfterMs) ? renewAfterMs : this.maxSessionMs >= 90_000 ? this.maxSessionMs - 45_000 : Math.floor(this.maxSessionMs * 0.8), this.maxSessionMs - 1));
     this.socket = null; this.ready = false; this.closed = false; this.recording = false; this.inputBytes = 0; this.turns = 0;
     this.activeTurn = null; this.turnState = new Map(); this.responses = new Map(); this.pendingResponses = [];
@@ -63,14 +64,38 @@ export class RealtimeConversation extends EventEmitter {
   get configured() { return Boolean(this.apiKey?.trim()); }
   publish(event) { if (!this.closed) this.emit('event', event); }
   touch() {
+    this.lastActivityAt = this.activityNow(); this.scheduleIdle();
+  }
+  scheduleIdle() {
     clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => {
-      if (this.continuous) { this.requestRenewal('idle'); this.close('renewal'); }
-      else this.fail(new RealtimeError('realtime_idle', 'La conversación se cerró por inactividad. Tocá Hablar para volver a conectar.', 408));
-    }, this.idleTimeoutMs);
+    // Only actual input/output extends a conversation. Observations, config,
+    // keepalives and invalid packets must never retain its task in RAM.
+    if (this.closed || this.recording || this.activeTurn || this.playbackTurn) return;
+    const remaining = this.idleTimeoutMs - (this.activityNow() - this.lastActivityAt);
+    if (remaining <= 0) { this.endConversation('idle'); return; }
+    this.idleTimer = setTimeout(() => this.scheduleIdle(), remaining);
     this.idleTimer.unref?.();
   }
-  sessionMetadata() { return { maxSessionMs: this.maxSessionMs, renewAfterMs: this.renewAfterMs, renewable: this.continuous }; }
+  endConversation(reason) {
+    if (this.closed) return;
+    this.taskContext = null;
+    this.publish({ type: 'task.context', context: { goal: '', targetApp: '', progress: '', expectsReply: false } });
+    this.publish({ type: 'conversation.ended', reason });
+    this.close(reason);
+  }
+  sessionMetadata() { return { maxSessionMs: this.maxSessionMs, renewAfterMs: this.renewAfterMs, idleTimeoutMs: this.idleTimeoutMs, renewable: this.continuous }; }
+  awaitPlayback(turnId, turn) {
+    clearTimeout(this.playbackTimer);
+    if (this.playbackTurn !== turnId) return;
+    // A lost completion packet cannot keep memory alive indefinitely. Allow
+    // the entire bounded output to play, then apply the ordinary idle window.
+    const duration = Math.ceil(turn.outputBytes * 1000 / (AUDIO_RATE * 2));
+    this.playbackTimer = setTimeout(() => {
+      if (this.playbackTurn !== turnId) return;
+      this.playbackTurn = null; this.touch();
+    }, Math.min(duration, 90_000) + 5_000);
+    this.playbackTimer.unref?.();
+  }
   requestRenewal(reason = 'transport_rotation') {
     if (!this.continuous || this.closed || this.renewalRequested) return;
     this.renewalRequested = true; this.publish({ type: 'renewal.required', reason, session: this.sessionMetadata() });
@@ -156,15 +181,17 @@ export class RealtimeConversation extends EventEmitter {
         const size = Buffer.from(event.delta ?? '', 'base64').length; turn.outputBytes += size;
         if (turn.outputBytes > MAX_OUTPUT_BYTES) throw new RealtimeError('realtime_output_limit', 'La respuesta de voz superó el límite de duración.', 502);
         this.playbackTurn = turnId;
+        this.touch();
         this.publish({ type: 'audio.delta', turnId, itemId: event.item_id, contentIndex: event.content_index ?? 0, audio: event.delta });
       } else if (['response.output_audio_transcript.delta', 'response.output_text.delta'].includes(event.type)) {
         if (typeof event.delta !== 'string') return;
         turn.text += event.delta;
+        this.touch();
         if (turn.text.length > MAX_OUTPUT_TEXT) throw new RealtimeError('realtime_output_limit', 'La respuesta superó el límite de tamaño.', 502);
         this.publish({ type: 'text.delta', turnId, delta: event.delta });
       } else if (['response.output_audio_transcript.done', 'response.output_text.done'].includes(event.type)) {
         const text = event.transcript ?? event.text ?? turn.text;
-        if (typeof text === 'string' && text.length <= MAX_OUTPUT_TEXT) { turn.text = text; this.publish({ type: 'text.done', turnId, text }); }
+        if (typeof text === 'string' && text.length <= MAX_OUTPUT_TEXT) { turn.text = text; this.touch(); this.publish({ type: 'text.done', turnId, text }); }
       } else if (event.type === 'response.done') {
         const response = event.response;
         const calls = (response.output ?? []).filter(item => item.type === 'function_call');
@@ -191,7 +218,7 @@ export class RealtimeConversation extends EventEmitter {
         const status = response.status === 'completed' ? 'completed' : response.status === 'cancelled' ? 'cancelled' : 'failed';
         this.publish({ type: 'response.done', turnId, status, expectsReply: turn.expectsReply === true });
         this.emit('result', { turnId, status, text: turn.text });
-        this.activeTurn = null; this.touch();
+        this.activeTurn = null; this.awaitPlayback(turnId, turn); this.touch();
       }
     } catch (error) { this.fail(error instanceof RealtimeError ? error : providerError(502)); }
   }
@@ -215,13 +242,13 @@ export class RealtimeConversation extends EventEmitter {
   }
   beginResponse() {
     const turnId = this.newTurn(); this.publish({ type: 'response.started', turnId, outputMode: this.mode });
+    this.touch();
     this.requestResponse(turnId); clearTimeout(this.responseTimer);
     this.responseTimer = setTimeout(() => this.fail(new RealtimeError('openai_timeout', 'La respuesta de OpenAI tardó demasiado. Volvé a intentar.', 504)), this.responseTimeoutMs);
     this.responseTimer.unref?.(); return turnId;
   }
   handleClient(event) {
     if (!this.ready || this.closed) throw invalid('Esperá a que la conexión de TINO esté lista.');
-    this.touch();
     if (!exactKeys(event, ['type', 'audio', 'text', 'screen', 'requestGuidance', 'mode', 'playback', 'turnId', 'context'])) throw invalid('El mensaje contiene campos no permitidos.');
     if (event.type === 'resume.context') {
       if (!exactKeys(event, ['type', 'context']) || this.turns || this.recording || this.activeTurn) throw invalid('Retomá el contexto al abrir una conexión nueva.');
@@ -235,7 +262,7 @@ export class RealtimeConversation extends EventEmitter {
     }
     if (event.type === 'playback.complete') {
       if (!exactKeys(event, ['type', 'turnId']) || typeof event.turnId !== 'string' || event.turnId !== this.playbackTurn || this.activeTurn === event.turnId) throw invalid('El audio de esta respuesta todavía no terminó.');
-      this.playbackTurn = null; return;
+      clearTimeout(this.playbackTimer); this.playbackTurn = null; this.touch(); return;
     }
     if (event.type === 'output.mode') {
       if (!exactKeys(event, ['type', 'mode']) || !['text', 'audio'].includes(event.mode) || this.activeTurn || this.recording) throw invalid('Elegí voz o texto antes de iniciar una consulta.');
@@ -244,6 +271,7 @@ export class RealtimeConversation extends EventEmitter {
     if (event.type === 'screen.clear') {
       if (!exactKeys(event, ['type'])) throw invalid('La limpieza de pantalla no admite parámetros.');
       if (this.activeTurn || this.playbackTurn) this.cancel(!this.recording, undefined, this.recording);
+      if (this.closed) return;
       this.clearScreen(); return;
     }
     if (event.type === 'screen.context') {
@@ -252,6 +280,7 @@ export class RealtimeConversation extends EventEmitter {
       if (this.now() - this.lastSnapshotAt < 750) throw invalid('Esperá un momento antes de actualizar la pantalla.');
       if (!this.continuous && (this.snapshotCount >= 60 || this.imageBytes + (screen.image?.bytes ?? 0) > 8_000_000)) throw new RealtimeError('screen_session_limit', 'La asistencia llegó a su límite de pantallas. Cerrala e iniciá otra.', 429);
       if (this.activeTurn || this.playbackTurn) this.cancel(!this.recording, undefined, this.recording);
+      if (this.closed) return;
       this.clearScreen(); this.lastSnapshotAt = this.now(); this.snapshotCount++; this.imageBytes += screen.image?.bytes ?? 0;
       const { image, ...snapshot } = screen; this.screen = snapshot;
       this.screenItemId = `scr_${randomUUID().replaceAll('-', '').slice(0, 24)}`;
@@ -261,12 +290,12 @@ export class RealtimeConversation extends EventEmitter {
       ] } });
       if (event.requestGuidance && !this.recording) this.beginResponse(); return;
     }
-    if (event.type === 'close') { if (!exactKeys(event, ['type'])) throw invalid('El cierre no admite parámetros.'); this.close(); return; }
+    if (event.type === 'close') { if (!exactKeys(event, ['type'])) throw invalid('El cierre no admite parámetros.'); this.endConversation('user_end'); return; }
     if (event.type === 'cancel') { if (!exactKeys(event, ['type', 'playback'])) throw invalid('La cancelación contiene campos no permitidos.'); this.cancel(true, event.playback); return; }
     if (event.type === 'audio.start') {
       if (!exactKeys(event, ['type'])) throw invalid('El inicio de captura no admite parámetros.');
       if (this.mode !== 'audio') throw invalid('Elegí respuesta por voz antes de iniciar el micrófono.');
-      this.cancel(false); this.recording = true; this.inputBytes = 0;
+      this.touch(); this.cancel(false); this.recording = true; this.inputBytes = 0; this.scheduleIdle();
       this.captureTimer = setTimeout(() => { this.cancel(false); this.publish({ type: 'error', code: 'audio_limit', message: 'La captura llegó al máximo de 45 segundos. Tocá Hablar para intentar nuevamente.', fatal: false }); }, MAX_INPUT_SECONDS * 1000 + 2000);
       this.captureTimer.unref?.(); return;
     }
@@ -274,17 +303,17 @@ export class RealtimeConversation extends EventEmitter {
       if (!exactKeys(event, ['type', 'audio']) || !this.recording) throw invalid('Primero iniciá una captura de voz.');
       const bytes = pcmBytes(event.audio);
       if (this.inputBytes + bytes > MAX_INPUT_BYTES) { this.cancel(false); throw invalid('La captura supera el máximo de 45 segundos.'); }
-      this.inputBytes += bytes; this.send({ type: 'input_audio_buffer.append', audio: event.audio }); return;
+      this.inputBytes += bytes; this.touch(); this.send({ type: 'input_audio_buffer.append', audio: event.audio }); return;
     }
     if (event.type === 'audio.commit') {
       if (!exactKeys(event, ['type']) || !this.recording) throw invalid('No hay una captura de voz activa.');
       clearTimeout(this.captureTimer); this.recording = false;
-      if (this.inputBytes < MIN_INPUT_BYTES) { this.inputBytes = 0; this.send({ type: 'input_audio_buffer.clear' }); throw invalid('La captura fue demasiado corta. Hablá al menos un momento y volvé a intentar.'); }
+      if (this.inputBytes < MIN_INPUT_BYTES) { this.inputBytes = 0; this.send({ type: 'input_audio_buffer.clear' }); this.scheduleIdle(); throw invalid('La captura fue demasiado corta. Hablá al menos un momento y volvé a intentar.'); }
       this.inputBytes = 0; this.send({ type: 'input_audio_buffer.commit' }); this.beginResponse(); return;
     }
     if (event.type === 'text') {
       if (!exactKeys(event, ['type', 'text']) || typeof event.text !== 'string' || !event.text.trim() || event.text.length > 1000) throw invalid('La consulta debe tener entre 1 y 1000 caracteres.');
-      this.cancel(false);
+      this.touch(); this.cancel(false);
       this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: event.text.trim() }] } });
       this.beginResponse(); return;
     }
@@ -316,6 +345,7 @@ export class RealtimeConversation extends EventEmitter {
     }
     if (!preserveRecording) this.send({ type: 'input_audio_buffer.clear' });
     if (notify) this.publish({ type: 'cancelled' });
+    clearTimeout(this.playbackTimer); this.scheduleIdle();
   }
   fail(error) {
     if (this.closed) return;
@@ -325,10 +355,11 @@ export class RealtimeConversation extends EventEmitter {
   }
   close(reason = 'closed') {
     if (this.closed) return; this.closed = true;
-    for (const timer of [this.connectTimer, this.sessionTimer, this.renewalTimer, this.idleTimer, this.responseTimer, this.captureTimer]) clearTimeout(timer);
+    for (const timer of [this.connectTimer, this.sessionTimer, this.renewalTimer, this.idleTimer, this.responseTimer, this.captureTimer, this.playbackTimer]) clearTimeout(timer);
     this.connectReject?.(new RealtimeError('realtime_closed', 'La conversación se cerró.', 499)); this.connectReject = null;
     if (this.socket) { this.socket.on('error', () => {}); this.socket.terminate?.(); }
     this.turnState.clear(); this.responses.clear(); this.pendingResponses.length = 0; this.activeTurn = null;
+    this.recording = false; this.inputBytes = 0; this.playbackTurn = null;
     this.screen = null; this.screenItemId = null;
     this.taskContext = null; this.taskContextItemId = null;
     this.emit('closed', { renewable: this.continuous && reason === 'renewal', reason });
