@@ -52,7 +52,7 @@ Estas reservas son conservadoras: **no representan uso real ni un límite exacto
 - Se revisaron **154 archivos de fuentes/build web** y **133 entradas descomprimidas del APK**: no contienen los valores de las tres credenciales configuradas. El `.env` local, los datos de la demo y las claves no se incorporan al commit ni a la release.
 - Las pruebas automáticas usan proveedores simulados y datos temporales. Las comprobaciones reales anteriores fueron ensayos adicionales del operador con entradas sintéticas. No se modificaron las identidades ni las sesiones de la demo habitual.
 
-Se agregó [CI para web/API y Android](../.github/workflows/check.yml), sin claves de proveedores y con acciones fijadas a referencias exactas. La comprobación local es independiente del resultado de la ejecución alojada en GitHub.
+Se agregó [CI para web/API y Android](../.github/workflows/check.yml), sin claves de proveedores y con acciones fijadas a referencias exactas. La [ejecución en GitHub](https://github.com/tavanofede-png/labitconf/actions/runs/41188323779) no llegó a iniciar los jobs: GitHub informó que la cuenta está bloqueada por un problema de facturación. No es un fallo de los tests ejecutados localmente, pero deja pendiente comprobar el workflow en el runner alojado. Para ejecutarlo allí hace falta resolver el bloqueo de la cuenta y reintentar; no se modificó la facturación.
 
 ## Distribución y uso
 
