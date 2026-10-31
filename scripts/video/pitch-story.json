@@ -1,0 +1,252 @@
+{
+  "title": "TINO · Un paso a la vez",
+  "duration": 60,
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "demoUrl": "https://tino-web.vercel.app",
+  "disclosure": "Demo web · voces recreadas con IA",
+  "voices": [
+    {
+      "id": "problem",
+      "role": "narrator",
+      "voice": "ash",
+      "start": 0.35,
+      "end": 9.45,
+      "text": "Marta tiene setenta y dos años. Quiere crear un grupo de WhatsApp con sus nietos. Pero no sabe por dónde empezar y teme tocar algo mal."
+    },
+    {
+      "id": "solution",
+      "role": "narrator",
+      "voice": "ash",
+      "start": 10.3,
+      "end": 19.35,
+      "text": "Creamos TINO: un acompañante con inteligencia artificial que la guía dentro de las aplicaciones reales, paso a paso, hasta que pueda hacerlo sola."
+    },
+    {
+      "id": "marta",
+      "role": "marta",
+      "voice": "marin",
+      "start": 20.05,
+      "end": 24.35,
+      "text": "Hola, TINO. Quiero crear un grupo de WhatsApp con mis nietos."
+    },
+    {
+      "id": "tino-open",
+      "role": "tino",
+      "voice": "cedar",
+      "start": 24.7,
+      "end": 27.8,
+      "text": "Abrí WhatsApp y tocá el signo más de arriba."
+    },
+    {
+      "id": "tino-select",
+      "role": "tino",
+      "voice": "cedar",
+      "start": 28.05,
+      "end": 30.65,
+      "text": "Elegí a tus nietos de la lista."
+    },
+    {
+      "id": "tino-next",
+      "role": "tino",
+      "voice": "cedar",
+      "start": 30.95,
+      "end": 33.25,
+      "text": "Buenísimo. Confirmá con la flecha verde."
+    },
+    {
+      "id": "tino-name",
+      "role": "tino",
+      "voice": "cedar",
+      "start": 33.6,
+      "end": 36.6,
+      "text": "Ahora, poné un nombre al grupo."
+    },
+    {
+      "id": "tino-create",
+      "role": "tino",
+      "voice": "cedar",
+      "start": 37.0,
+      "end": 39.2,
+      "text": "Revisalo y tocá Crear."
+    },
+    {
+      "id": "tino-done",
+      "role": "tino",
+      "voice": "cedar",
+      "start": 39.65,
+      "end": 42.2,
+      "text": "¡Listo, Marta! Lo hiciste vos."
+    },
+    {
+      "id": "agency",
+      "role": "narrator",
+      "voice": "ash",
+      "start": 42.3,
+      "end": 44.9,
+      "text": "TINO guía. Marta decide y confirma."
+    },
+    {
+      "id": "validation",
+      "role": "narrator",
+      "voice": "ash",
+      "start": 45.15,
+      "end": 54.35,
+      "text": "Construimos un prototipo funcional en Android. Validamos que la inteligencia artificial puede entender una pantalla real, identificar sus controles y guiar a la persona, paso a paso."
+    },
+    {
+      "id": "close",
+      "role": "narrator",
+      "voice": "ash",
+      "start": 55.05,
+      "end": 59.45,
+      "text": "Próximo paso: un piloto. Incluir es acompañar hasta hacerlo solos."
+    }
+  ],
+  "demoShots": [
+    {
+      "id": "listening",
+      "start": 20.0,
+      "end": 24.7,
+      "title": "Marta solo dice…",
+      "comment": "La ayuda empieza con su voz.",
+      "focus": [
+        195,
+        34,
+        370,
+        70
+      ]
+    },
+    {
+      "id": "launcher",
+      "start": 24.7,
+      "end": 25.9,
+      "title": "Abrir WhatsApp",
+      "comment": "TINO funciona en segundo plano.",
+      "focus": [
+        195,
+        620,
+        370,
+        180
+      ]
+    },
+    {
+      "id": "plus",
+      "start": 25.9,
+      "end": 27.1,
+      "title": "Un toque para empezar",
+      "comment": "El recuadro verde muestra dónde tocar.",
+      "focus": [
+        195,
+        90,
+        370,
+        150
+      ]
+    },
+    {
+      "id": "new-group",
+      "start": 27.1,
+      "end": 28.1,
+      "title": "Crear un grupo",
+      "comment": "Una instrucción. Una acción.",
+      "focus": [
+        195,
+        185,
+        370,
+        280
+      ]
+    },
+    {
+      "id": "contacts",
+      "start": 28.1,
+      "end": 29.15,
+      "title": "Buscar a sus nietos",
+      "comment": "Marta conserva el control.",
+      "focus": [
+        195,
+        185,
+        370,
+        280
+      ]
+    },
+    {
+      "id": "select-lucia",
+      "start": 29.15,
+      "end": 30.1,
+      "title": "Elegir a Lucía",
+      "comment": "Contactos de la práctica.",
+      "focus": [
+        195,
+        325,
+        370,
+        280
+      ]
+    },
+    {
+      "id": "select-martin",
+      "start": 30.1,
+      "end": 30.95,
+      "title": "Y también a Martín",
+      "comment": "TINO espera la acción de Marta.",
+      "focus": [
+        195,
+        340,
+        370,
+        300
+      ]
+    },
+    {
+      "id": "next",
+      "start": 30.95,
+      "end": 33.6,
+      "title": "Confirmar participantes",
+      "comment": "Marta confirma con la flecha verde.",
+      "focus": [
+        195,
+        135,
+        370,
+        220
+      ]
+    },
+    {
+      "id": "name",
+      "start": 33.6,
+      "end": 37.0,
+      "title": "Ponerle un nombre",
+      "comment": "Ella escribe: «Nietos de Marta».",
+      "focus": [
+        195,
+        180,
+        370,
+        240
+      ]
+    },
+    {
+      "id": "create",
+      "start": 37.0,
+      "end": 39.65,
+      "title": "El último toque es suyo",
+      "comment": "TINO nunca confirma por ella.",
+      "focus": [
+        195,
+        135,
+        370,
+        230
+      ]
+    },
+    {
+      "id": "done",
+      "start": 39.65,
+      "end": 45.0,
+      "title": "«Lo hice yo»",
+      "comment": "Un grupo creado. Un poco más de autonomía.",
+      "focus": [
+        195,
+        150,
+        370,
+        220
+      ]
+    }
+  ]
+}

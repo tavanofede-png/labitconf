@@ -1,0 +1,67 @@
+1
+00:00:00,350 --> 00:00:05,036
+Marta tiene setenta y dos años. Quiere crear un grupo de WhatsApp con
+
+2
+00:00:05,036 --> 00:00:09,450
+sus nietos. Pero no sabe por dónde empezar y teme tocar algo mal.
+
+3
+00:00:10,300 --> 00:00:14,574
+Creamos TINO: un acompañante con inteligencia artificial que la guía
+
+4
+00:00:14,574 --> 00:00:19,036
+dentro de las aplicaciones reales, paso a paso, hasta que pueda hacerlo
+
+5
+00:00:19,036 --> 00:00:19,350
+sola.
+
+6
+00:00:20,050 --> 00:00:24,350
+Hola, TINO. Quiero crear un grupo de WhatsApp con mis nietos.
+
+7
+00:00:24,700 --> 00:00:27,800
+Abrí WhatsApp y tocá el signo más de arriba.
+
+8
+00:00:28,050 --> 00:00:30,650
+Elegí a tus nietos de la lista.
+
+9
+00:00:30,950 --> 00:00:33,250
+Buenísimo. Confirmá con la flecha verde.
+
+10
+00:00:33,600 --> 00:00:36,600
+Ahora, poné un nombre al grupo.
+
+11
+00:00:37,000 --> 00:00:39,200
+Revisalo y tocá Crear.
+
+12
+00:00:39,650 --> 00:00:42,200
+¡Listo, Marta! Lo hiciste vos.
+
+13
+00:00:42,300 --> 00:00:44,900
+TINO guía. Marta decide y confirma.
+
+14
+00:00:45,150 --> 00:00:48,370
+Construimos un prototipo funcional en Android. Validamos que la
+
+15
+00:00:48,370 --> 00:00:51,897
+inteligencia artificial puede entender una pantalla real, identificar
+
+16
+00:00:51,897 --> 00:00:54,350
+sus controles y guiar a la persona, paso a paso.
+
+17
+00:00:55,050 --> 00:00:59,450
+Próximo paso: un piloto. Incluir es acompañar hasta hacerlo solos.
