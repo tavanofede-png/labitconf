@@ -87,16 +87,65 @@ export function demoInstitution({ now = Date.now(), territoryId = 'AR', months =
       impact: 'La evolución es simulada y descriptiva; no prueba impacto causal.' } };
 }
 
-export function demoFamily(now = Date.now()) {
-  const names = [['marta', 'Marta', 'Mamá', 67], ['ricardo', 'Ricardo', 'Papá', 61], ['lucia', 'Lucía', 'Hermana', 32]];
-  return { origin: 'tino_simulated', label: 'Familia de demostración', group: { id: 'demo-family', name: 'Nuestra familia' },
-    members: names.map(([id, name, relationship, age], i) => ({ id, name, relationship, age, territoryId: ['AR-C', 'AR-B', 'AR-X'][i],
-      permissions: { progress: true, help: true, usage: true, safety: true, location: i === 0 },
-      screenMinutes: 34 + i * 9, tinoMinutes: 12 + i * 3, completedFlows: 18 + i * 4, autonomyChecks: 10 + i * 3,
-      autonomyRate: 56 + i * 4, weeklyScreen: [28, 36, 24, 41, 30, 38, 34].map(n => n + i * 6),
-      weeklyTino: [13, 15, 10, 14, 11, 13, 12].map(n => n + i * 2),
-      learned: ['Crear un grupo de WhatsApp', 'Enviar un correo', 'Revisar un enlace'][i],
-      activities: [{ title: 'Completó una tarea con TINO', detail: 'Enviar un correo', at: new Date(now - 32 * 60_000).toISOString() }, { title: 'Practicó por su cuenta', detail: 'Compartir una foto', at: new Date(now - 3 * 3600_000).toISOString() }],
-      location: i === 0 ? { label: 'Ciudad de Buenos Aires', point: [-58.4459, -34.6144], sharedAt: new Date(now - 12 * 60_000).toISOString(), expiresAt: new Date(now + 18 * 60_000).toISOString(), approximate: true } : null })),
-    alerts: [{ id: 'demo-link-1', memberId: 'marta', type: 'suspicious_link', title: 'Un enlace para revisar juntos', message: 'Marta pidió ayuda para revisar un enlace.', createdAt: new Date(now - 3600_000).toISOString(), resolvedAt: null }], joinRequests: [] };
+/** Fictional, internally reconciled household. No phone history or real location is read. */
+export function demoFamily(now = Date.now(), startedAt = now) {
+  const iso = minutes => new Date(startedAt - minutes * 60_000).toISOString();
+  const profiles = [
+    { id: 'marta', name: 'Marta', relationship: 'Mamá', age: 67, birthDate: '1959-05-22', territoryId: 'AR-C', device: 'Samsung Galaxy A15', online: true,
+      weeklyScreen: [38, 51, 42, 55, 40, 48, 46], weeklyTino: [16, 20, 14, 22, 12, 16, 18], completedFlows: 30, autonomyChecks: 21,
+      learned: 'Crear un grupo de WhatsApp', milestone: 'Hoy creó un grupo por su cuenta.', weeklyGoal: 5, weeklyCompleted: 4,
+      location: { label: 'En casa', area: 'Caballito, Ciudad de Buenos Aires', point: [-58.439, -34.618], sharedAt: iso(12), updatedAt: iso(2), expiresAt: iso(-18), approximate: true, radiusMeters: 120 },
+      events: [
+        ['marta-link', 2, 'safety', 'Revisó un enlace con TINO', 'Navegador', 0, true, 'premios-envio.example', 'No continuó al formulario.', false],
+        ['marta-group', 9, 'task', 'Creó un grupo de WhatsApp', 'WhatsApp', 8, false, '', 'Completó los pasos por su cuenta.', true],
+        ['marta-recipe', 24, 'website', 'Buscó una receta de cocina', 'Navegador', 10, true, 'paulinacocina.net', 'TINO la acompañó a encontrar una receta.', false],
+        ['marta-call', 36, 'app', 'Hizo una videollamada', 'WhatsApp', 10, true, '', 'Recibió 4 minutos de acompañamiento.', false],
+        ['marta-news', 51, 'website', 'Leyó las noticias', 'Navegador', 6, false, 'lanacion.com.ar', 'Navegó por su cuenta.', false],
+        ['marta-video', 64, 'app', 'Miró un video de jardinería', 'YouTube', 8, false, '', 'Usó la aplicación de forma independiente.', false],
+        ['marta-mail', 74, 'task', 'Practicó cómo enviar un correo', 'TINO', 4, true, '', 'Terminó una práctica guiada.', false]
+      ] },
+    { id: 'ricardo', name: 'Ricardo', relationship: 'Papá', age: 61, birthDate: '1965-02-10', territoryId: 'AR-B', device: 'Motorola Moto G54', online: false,
+      weeklyScreen: [64, 72, 58, 80, 61, 74, 68], weeklyTino: [18, 22, 14, 25, 17, 20, 18], completedFlows: 24, autonomyChecks: 15,
+      learned: 'Enviar un correo con un adjunto', milestone: 'Envió una foto por correo sin ayuda.', weeklyGoal: 4, weeklyCompleted: 3, location: null,
+      events: [
+        ['ricardo-mail', 18, 'task', 'Envió un correo con una foto', 'Gmail', 12, false, '', 'Lo resolvió por su cuenta.', true],
+        ['ricardo-group', 35, 'task', 'Practicó crear un grupo', 'WhatsApp', 12, true, '', 'Siguió una guía de 12 minutos.', false],
+        ['ricardo-news', 52, 'website', 'Consultó noticias deportivas', 'Navegador', 12, false, 'tycsports.com', 'Navegó por su cuenta.', false],
+        ['ricardo-video', 75, 'app', 'Miró un video de cocina', 'YouTube', 16, false, '', 'Usó la aplicación por su cuenta.', false],
+        ['ricardo-weather', 96, 'website', 'Buscó el pronóstico', 'Navegador', 6, true, 'smn.gob.ar', 'TINO lo acompañó durante la búsqueda.', false],
+        ['ricardo-call', 115, 'app', 'Hizo una llamada familiar', 'WhatsApp', 10, false, '', 'Llamó desde la aplicación.', false]
+      ] },
+    { id: 'lucia', name: 'Lucía', relationship: 'Hermana', age: 32, birthDate: '1994-08-21', territoryId: 'AR-X', device: 'Samsung Galaxy S23', online: true,
+      weeklyScreen: [96, 124, 108, 131, 98, 116, 112], weeklyTino: [8, 10, 5, 9, 4, 7, 6], completedFlows: 18, autonomyChecks: 16,
+      learned: 'Revisar un enlace antes de abrirlo', milestone: 'Reconoció las señales de un enlace dudoso.', weeklyGoal: 3, weeklyCompleted: 3, location: null,
+      events: [
+        ['lucia-mail', 6, 'task', 'Organizó sus correos', 'Gmail', 30, false, '', 'Completó la tarea de forma independiente.', true],
+        ['lucia-guide', 48, 'task', 'Practicó revisar un enlace', 'Navegador', 6, true, '', 'Revisó las señales con TINO.', false],
+        ['lucia-browser', 72, 'app', 'Usó el navegador', 'Navegador', 16, false, '', 'El detalle de los sitios es privado.', false],
+        ['lucia-social', 104, 'app', 'Usó Instagram', 'Instagram', 25, false, '', 'Actividad general de la aplicación.', false],
+        ['lucia-whatsapp', 146, 'app', 'Usó WhatsApp', 'WhatsApp', 35, false, '', 'Actividad general de la aplicación.', false]
+      ] }
+  ];
+  const members = profiles.map(({ events, ...p }) => {
+    const activities = events.map(([id, minutesAgo, kind, title, app, durationMinutes, assisted, domain, detail, independent]) =>
+      ({ id, kind, title, app, durationMinutes, assisted, assistedMinutes: assisted ? (id === 'marta-call' ? 4 : durationMinutes) : 0, domain, detail, independent, at: iso(minutesAgo), ...(kind === 'safety' ? { alertId: 'demo-link-1' } : {}) }));
+    const appUsage = [...new Set(activities.map(e => e.app))].map(name => ({ name, minutes: activities.filter(e => e.app === name).reduce((n, e) => n + e.durationMinutes, 0) })).filter(a => a.minutes).sort((a, b) => b.minutes - a.minutes);
+    const screenMinutes = appUsage.reduce((n, a) => n + a.minutes, 0);
+    const weeklyScreen = p.weeklyScreen.map((n, i) => i === 6 ? screenMinutes : n);
+    const tinoMinutes = activities.reduce((n, e) => n + e.assistedMinutes, 0);
+    const weeklyTino = p.weeklyTino.map((n, i) => i === 6 ? tinoMinutes : n);
+    const latest = activities[0];
+    return { ...p, permissions: { progress: true, help: true, usage: true, safety: true, websites: p.id !== 'lucia', location: Boolean(p.location) },
+      screenMinutes, tinoMinutes, weeklyScreen, weeklyTino, appUsage, activities,
+      lastActiveAt: latest.at, lastActivity: latest.title, completedToday: activities.filter(e => e.kind === 'task').length,
+      independentToday: activities.filter(e => e.independent).length, autonomyRate: Math.round(p.autonomyChecks / p.completedFlows * 100),
+      websites: activities.filter(e => e.kind === 'website'),
+      weeklyDays: weeklyScreen.map((screenMinutes, i) => ({ date: new Date(now - (6 - i) * 86_400_000).toISOString(), screenMinutes, tinoMinutes: weeklyTino[i] })) };
+  });
+  return { origin: 'tino_simulated', label: 'Familia de demostración', snapshotAt: new Date(now).toISOString(),
+    group: { id: 'demo-family', name: 'Familia Ríos' }, members,
+    alerts: [{ id: 'demo-link-1', memberId: 'marta', eventId: 'marta-link', type: 'suspicious_link', title: 'Un enlace para revisar juntos',
+      message: 'Un enlace prometía un premio y pedía datos personales. Marta lo revisó con TINO y no continuó al formulario.',
+      domain: 'premios-envio.example', signals: ['Dominio no reconocido', 'Solicitud de datos personales', 'Promesa de un premio'],
+      recommendation: 'Contactá a Marta y revisen juntos el origen del mensaje. No hace falta abrir el enlace.', createdAt: iso(2), resolvedAt: null }], joinRequests: [] };
 }

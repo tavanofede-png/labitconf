@@ -276,10 +276,11 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         if (state.value.busy) return
         change { it.copy(dashboardTerritory = territory, dashboardMonths = months, dashboardMonth = month) }; dashboard()
     }
-    fun familyAction(memberId: String, type: String, audioBase64: String? = null, id: String = java.util.UUID.randomUUID().toString()) = work {
+    fun familyAction(memberId: String, type: String, audioBase64: String? = null, id: String = java.util.UUID.randomUUID().toString(), alertId: String? = null) = work {
         val demo = state.value.demoAccount
         val body = JSONObject().put("id", id).put("memberId", memberId).put("type", type)
         audioBase64?.let { body.put("audioBase64", it) }
+        if (demo && alertId != null) body.put("alertId", alertId)
         if (type == "resolve" && !demo) {
             app.api.request("/family/alerts/$memberId/resolve", "POST", JSONObject(), installationToken = app.settings.read("caregiverToken"))
         } else app.api.request(if (demo) "/demo/family/actions" else "/family/messages", "POST", body, installationToken = app.settings.read(if (demo) "accountSession" else "caregiverToken"))

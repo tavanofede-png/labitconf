@@ -1,10 +1,10 @@
 package org.nieto.assistant.ui
 
 import android.content.Intent
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -13,22 +13,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.first
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.entry.EntryState
 import org.nieto.assistant.entry.EntryViewModel
-import org.nieto.assistant.entry.entryTerritories
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
-internal fun timeLabel(value: String): String = runCatching { Instant.parse(value).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("dd/MM · HH:mm")) }.getOrDefault("")
+internal fun timeLabel(value: String): String = runCatching { Instant.parse(value).atZone(FamilyZone).format(DateTimeFormatter.ofPattern("dd/MM · HH:mm")) }.getOrDefault("")
 
 @Composable fun FamilyDashboard(s: EntryState, vm: EntryViewModel, app: NietoApp, onMenu: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -36,116 +36,105 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
     var invitation by rememberSaveable { mutableStateOf(false) }
     var permissions by remember { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
-    val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    val data = s.dashboard
-    val members = data?.optJSONArray("members").objects()
-    val member = members.find { it.optString("id") == selectedId } ?: members.firstOrNull()
-    val id = member?.optString("id").orEmpty()
-    val allowed = member?.optJSONObject("permissions") ?: JSONObject()
-    val alerts = data?.optJSONArray("alerts").objects().filter { it.optString("memberId") == id }
-    LaunchedEffect(Unit) { vm.state.first { !it.busy }; vm.dashboard() }
-    Scaffold(containerColor = DashPaper, topBar = { DashboardHeader("Grupo familiar", data?.optJSONObject("group")?.optString("name") ?: "Tu red, más cerca", onMenu) }) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-            Column(Modifier.widthIn(max = 1280.dp).fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                Text("Tu familia,\nsiempre cerca.", color = DashInk, fontSize = 34.sp, lineHeight = 41.sp, fontWeight = FontWeight.Bold)
-                Text("Acompañá a su ritmo. Cada persona decide qué compartir.", color = DashMuted, fontSize = 16.sp, lineHeight = 24.sp)
-                if (s.demoAccount) DataPill("Familia demo · actividad y ubicación simuladas", true)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.Top) {
-                    members.forEach { person -> Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DashboardAvatar(person.optString("name"), person.optString("id") == id) { selectedId = person.optString("id") }
-                        Text(person.optString("name"), color = if (person.optString("id") == id) DashTeal else DashMuted, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    } }
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        OutlinedButton(onClick = { invitation = true; vm.invitation() }, enabled = !s.busy, modifier = Modifier.size(58.dp), contentPadding = PaddingValues(0.dp), shape = androidx.compose.foundation.shape.CircleShape) { Text("+", fontSize = 28.sp, color = DashTeal) }
-                        Text("Invitar", color = DashMuted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+    var detail by remember { mutableStateOf<JSONObject?>(null) }
+    val context=LocalContext.current
+    val clipboard=LocalClipboardManager.current
+    val data=s.dashboard
+    val members=data?.optJSONArray("members").objects()
+    val member=members.find{it.optString("id")==selectedId}?:members.firstOrNull()
+    val id=member?.optString("id").orEmpty()
+    val allowed=member?.optJSONObject("permissions")?:JSONObject()
+    val alerts=data?.optJSONArray("alerts").objects().filter{it.optString("memberId")==id}
+    val activeAlerts=alerts.count{it.isNull("resolvedAt")}
+    val now=data?.optString("snapshotAt")?.takeIf{it.isNotBlank()}?:Instant.now().toString()
+    val invite={ invitation=true;vm.invitation() }
+    val resolve: (JSONObject)->Unit = { alert -> vm.familyAction(if(s.demoAccount) id else alert.getString("id"),"resolve",alertId=alert.optString("id")) }
+    LaunchedEffect(Unit){vm.state.first{!it.busy};vm.dashboard()}
+    CompositionLocalProvider(LocalTextStyle provides MaterialTheme.typography.bodyMedium.copy(fontSize=14.sp,lineHeight=20.sp)) {
+    Scaffold(containerColor=DashPaper,topBar={DashboardHeader("Grupo familiar",data?.optJSONObject("group")?.optString("name")?:"Tu círculo de confianza",onMenu)}) { padding ->
+        BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
+            val wide=maxWidth>=720.dp
+            Row(Modifier.fillMaxSize()) {
+                if(wide && member!=null) {
+                    Surface(Modifier.width(218.dp).fillMaxHeight(),color=Color.White) {
+                        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            FamilyMemberPicker(members,id,compact=true,choose={selectedId=it},invite=invite)
+                            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                                FamilyPortrait(member,Modifier.size(44.dp))
+                                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                                    Text(member.optString("name"),fontSize=19.sp,lineHeight=23.sp,color=DashInk,fontWeight=FontWeight.Bold)
+                                    Text(member.optString("relationship","Integrante") + if(member.has("age")) " · ${member.optInt("age")} años" else "",color=DashMuted,fontSize=11.sp,lineHeight=16.sp)
+                                    Text(member.optString("device","Dispositivo vinculado"),color=DashMuted,fontSize=9.sp,lineHeight=14.sp)
+                                }
+                            }
+                            FamilyStatus(member.optBoolean("online"),relativeFamilyTime(member.optString("lastActiveAt"),now))
+                            FamilyActionButtons(s.busy,allowed.optBoolean("help"),true,{vm.familyAction(id,"ping")},{recording=true})
+                            HorizontalDivider(color=FamilyLine)
+                            FamilyNavigation(tab,activeAlerts,true){tab=it}
+                            FamilyPrivacyFooter(member.optString("name"),compact=true){permissions=true}
+                        }
                     }
+                    VerticalDivider(color=FamilyLine)
                 }
-                if (s.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = DashCyan)
-                s.error?.let { DashboardCard("No pudimos completar la acción") { Text(it, color = DashRed); TextButton(onClick = vm::dashboard, enabled = !s.busy) { Text("Volver a intentar") } } }
-                s.message?.let { Text(it, color = DashTeal, fontSize = 14.sp) }
-                DashboardTabs(listOf("Resumen", "Actividad", "Ubicación", "Alertas${if (alerts.any { it.isNull("resolvedAt") }) " •" else ""}"), tab) { tab = it }
-                if (member == null) DashboardCard("Sumá a tu primera persona") {
-                    Text("Creá una invitación. Cuando esa persona la acepte, elegirá qué compartir con el grupo.", color = DashMuted, lineHeight = 23.sp)
-                    Button(onClick = { invitation = true; vm.invitation() }, enabled = !s.busy, colors = ButtonDefaults.buttonColors(containerColor = DashCyan, contentColor = DashInk)) { Text("Crear invitación") }
-                } else {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text(member.optString("name"), fontSize = 24.sp, fontWeight = FontWeight.Bold, color = DashInk); Text(if (allowed.optBoolean("progress")) "Comparte su progreso" else "Mantiene su progreso privado", color = DashMuted, fontSize = 13.sp) }
-                        TextButton(onClick = { permissions = true }) { Text("Permisos", color = DashTeal) }
+                Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal=if(wide) 26.dp else 20.dp,vertical=18.dp),verticalArrangement=Arrangement.spacedBy(18.dp)) {
+                    if(!wide && member!=null) {
+                        FamilyMemberPicker(members,id,false,{selectedId=it},invite)
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                                Text(member.optString("name")+member.optString("relationship").takeIf{it.isNotBlank()}?.let{" · $it"}.orEmpty(),fontSize=22.sp,color=DashInk,fontWeight=FontWeight.Bold)
+                                Text(if(member.has("age")) "${member.optInt("age")} años · ${member.optString("device","Dispositivo vinculado")}" else "Comparte lo que elige, a su ritmo.",fontSize=11.sp,color=DashMuted)
+                            }
+                            FamilyStatus(member.optBoolean("online"),relativeFamilyTime(member.optString("lastActiveAt"),now))
+                        }
+                        FamilyActionButtons(s.busy,allowed.optBoolean("help"),false,{vm.familyAction(id,"ping")},{recording=true})
+                        FamilyNavigation(tab,activeAlerts,false){tab=it}
                     }
-                    when (tab) {
-                        0 -> {
-                            AdaptivePair({
-                                DashboardCard("Pantalla hoy", if (allowed.optBoolean("usage")) "Uso compartido voluntariamente" else "Esta persona no autorizó compartir su tiempo de pantalla") {
-                                    Text(if (allowed.optBoolean("usage")) member.amount("screenMinutes", " min") else "Privado", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = DashInk)
-                                    if (allowed.optBoolean("usage")) MiniBarChart(member.optJSONArray("weeklyScreen").numbers(), labels = listOf("−6", "−5", "−4", "−3", "−2", "Ayer", "Hoy"), description = "Tiempo de pantalla de los últimos siete días")
-                                }
-                                DashboardCard("Aprendió con TINO") {
-                                    Text(if (allowed.optBoolean("progress")) member.optString("learned").takeUnless { it.isBlank() || it == "null" } ?: "Sus prácticas aparecerán acá." else "Su progreso es privado.", fontSize = 20.sp, lineHeight = 28.sp, color = DashTeal, fontWeight = FontWeight.SemiBold)
-                                    if (allowed.optBoolean("progress")) Text("${member.amount("completedFlows")} tareas completadas · ${member.amount("autonomyChecks")} prácticas sin ayuda", color = DashMuted, fontSize = 14.sp, lineHeight = 21.sp)
-                                }
-                            }, {
-                                DashboardCard("Un rato con TINO", "Acompañamiento durante el día") {
-                                    Text(if (allowed.optBoolean("progress")) member.amount("tinoMinutes", " min") else "Privado", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = DashTeal)
-                                    if (allowed.optBoolean("progress")) MiniBarChart(member.optJSONArray("weeklyTino").numbers(), labels = listOf("−6", "−5", "−4", "−3", "−2", "Ayer", "Hoy"), description = "Minutos de acompañamiento TINO de los últimos siete días")
-                                }
-                                FamilyActions(allowed.optBoolean("help"), s.busy, { vm.familyAction(id, "ping") }, { recording = true })
-                            })
-                            if (alerts.isNotEmpty()) AlertCards(alerts, s.busy) { alert -> vm.familyAction(if (s.demoAccount) id else alert.getString("id"), "resolve") }
-                        }
-                        1 -> {
-                            DashboardCard("Actividad compartida", "Tareas y prácticas; nunca conversaciones ni contenido de otras apps.") {
-                                val activities = member.optJSONArray("activities").objects()
-                                if (!allowed.optBoolean("progress")) Text("Esta persona no comparte su actividad.", color = DashMuted)
-                                else if (activities.isEmpty()) Text("Todavía no hay actividad compartida.", color = DashMuted)
-                                else activities.forEach { item ->
-                                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                        Text("✓", color = DashGreen, fontSize = 22.sp)
-                                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(item.optString("title"), color = DashInk, fontWeight = FontWeight.SemiBold); Text(item.optString("detail"), color = DashMuted, fontSize = 15.sp); Text(timeLabel(item.optString("at")), color = DashMuted, fontSize = 12.sp) }
-                                    }; HorizontalDivider(color = DashPaper)
-                                }
+                    if(s.busy) LinearProgressIndicator(Modifier.fillMaxWidth(),color=DashCyan)
+                    s.error?.let{FamilySurface("No pudimos completar la acción"){Text(it,color=DashRed,fontSize=14.sp);TextButton(onClick=vm::dashboard,enabled=!s.busy){Text("Volver a intentar",color=DashTeal)}}}
+                    s.message?.let{Surface(color=FamilyMint,shape=RoundedCornerShape(12.dp)){Row(Modifier.padding(12.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){FamilyGlyph("check",Modifier.size(18.dp));Text(it,color=DashTeal,fontSize=13.sp,modifier=Modifier.semantics{liveRegion=LiveRegionMode.Polite})}}}
+                    if(member==null) FamilySurface(if(s.busy) "Preparando tu grupo…" else "Tu red empieza con una invitación","Cada persona elige desde su teléfono qué quiere compartir.") {
+                        if(!s.busy) Button(onClick=invite,colors=ButtonDefaults.buttonColors(containerColor=DashCyan,contentColor=DashInk)){Text("Invitar a alguien")}
+                    } else {
+                        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+                            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)) {
+                                Text(when(tab){0->"Así viene su día";1->"Actividad de ${member.optString("name")}";2->"Ubicación compartida";else->"Avisos para acompañar"},color=DashInk,fontSize=if(wide) 27.sp else 23.sp,fontWeight=FontWeight.Bold,modifier=Modifier.semantics{heading()})
+                                Text(runCatching{Instant.parse(now).atZone(FamilyZone).format(DateTimeFormatter.ofPattern("EEEE d 'de' MMMM",Locale.forLanguageTag("es-AR"))).replaceFirstChar{it.uppercase()}}.getOrDefault("Hoy"),color=DashMuted,fontSize=12.sp)
                             }
+                            if(s.demoAccount) Surface(color=FamilyCream,shape=CircleShape){Text("Datos demo",Modifier.padding(horizontal=10.dp,vertical=6.dp),fontSize=10.sp,color=FamilyAmber,fontWeight=FontWeight.SemiBold)}
                         }
-                        2 -> {
-                            val location = member.optJSONObject("location")?.takeIf { runCatching { Instant.parse(it.getString("expiresAt")).isAfter(Instant.now()) }.getOrDefault(false) }
-                            DashboardCard(if (location != null) "Ubicación compartida" else "Su ubicación es privada", "Solo aparece cuando esa persona la comparte y durante el tiempo que elige.") {
-                                if (location == null) {
-                                    Text("No hay una ubicación temporal activa.", color = DashMuted)
-                                    OutlinedButton(onClick = { vm.familyAction(id, "location_request") }, enabled = allowed.optBoolean("help") && !s.busy) { Text("Pedir que comparta ubicación", color = DashTeal) }
-                                } else {
-                                    Text(location.optString("label"), fontSize = 24.sp, color = DashTeal, fontWeight = FontWeight.Bold)
-                                    Text("Compartida ${timeLabel(location.optString("sharedAt"))} · hasta ${timeLabel(location.optString("expiresAt"))}", color = DashMuted, fontSize = 13.sp)
-                                    val point = JSONObject().put("id", member.optString("territoryId")).put("point", location.getJSONArray("point")).put("activeUsers", 1).put("unsafeLinks", 0)
-                                    ArgentinaMap(listOf(point), member.optString("territoryId"), 1) { }
-                                    if (s.demoAccount) Text("Ubicación aproximada simulada para la demo.", color = DashMuted, fontSize = 12.sp)
+                        when(tab) {
+                            0 -> {
+                                Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                                    FamilyStat("Última actividad",relativeFamilyTime(member.optString("lastActiveAt"),now),if(allowed.optBoolean("progress")) member.optString("lastActivity","Sin actividad compartida") else "Su actividad es privada","clock",Modifier.weight(1f))
+                                    FamilyStat("Pantalla hoy",if(allowed.optBoolean("usage")) familyMinutes(member.optInt("screenMinutes")) else "Privado",if(allowed.optBoolean("progress")) "${member.optInt("tinoMinutes")} min con acompañamiento" else "Progreso privado","screen",Modifier.weight(1f))
                                 }
+                                FamilyLearning(member,allowed.optBoolean("progress"))
+                                FamilyRecentSites(member,allowed,detail={detail=it},activity={tab=1})
+                                FamilyResponsivePair({FamilyLocationPreview(member,allowed,now){tab=2}},{FamilySafetyPreview(alerts,allowed){tab=3}})
+                                FamilyWeeklyChart(member,allowed.optBoolean("usage"),allowed.optBoolean("progress"))
+                                if(allowed.optBoolean("progress")) FamilyAutonomy(member)
                             }
+                            1 -> FamilyActivityPanel(member,allowed,now,alerts,{detail=it},{tab=3})
+                            2 -> FamilyLocationPanel(member,allowed,now,s.busy,s.demoAccount){vm.familyAction(id,"location_request")}
+                            else -> FamilyAlertsPanel(alerts,allowed,s.busy,now,resolve,{tab=1})
                         }
-                        else -> {
-                            DashboardCard("Avisos importantes", "Señales para acompañar, no para vigilar.") {
-                                if (alerts.isEmpty()) Text("No hay alertas compartidas para esta persona.", color = DashMuted)
-                                else AlertCards(alerts, s.busy) { alert -> vm.familyAction(if (s.demoAccount) id else alert.getString("id"), "resolve") }
-                            }
+                        val messages=data?.optJSONArray("messages").objects().filter{it.optString("memberId")==id}
+                        if(messages.isNotEmpty()) FamilySurface("Tus avisos a ${member.optString("name")}","Quedan en este resumen durante 24 horas.") {
+                            messages.forEach{message->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically){
+                                FamilyGlyph(if(message.optString("type")=="voice") "mic" else if(message.optString("type")=="location_request") "pin" else "bell",Modifier.size(19.dp))
+                                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(3.dp)){Text(when(message.optString("type")){"voice"->"Aviso de voz enviado";"location_request"->"Le pediste que comparta su ubicación";else->"Le avisaste que estás cerca"},fontSize=13.sp,color=DashInk);Text(relativeFamilyTime(message.optString("createdAt"),now),fontSize=11.sp,color=DashMuted)}
+                                if(message.optString("type")=="voice") AudioMessageButton(message.optString("audioBase64"))
+                            }}
                         }
+                        if(!wide) FamilyPrivacyFooter(member.optString("name")){permissions=true}
                     }
-                    val messages = data?.optJSONArray("messages").objects().filter { it.optString("memberId") == id }
-                    if (messages.isNotEmpty()) DashboardCard("Lo que enviaste") {
-                        messages.forEach { message ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) { Text(when (message.optString("type")) { "voice" -> "Aviso de voz"; "location_request" -> "Solicitud de ubicación"; else -> "Ping de acompañamiento" }, color = DashInk, fontWeight = FontWeight.SemiBold); Text(timeLabel(message.optString("createdAt")), fontSize = 12.sp, color = DashMuted) }
-                                if (message.optString("type") == "voice") AudioMessageButton(message.optString("audioBase64"))
-                            }
-                        }
-                    }
+                    val requests=data?.optJSONArray("joinRequests").objects()
+                    if(requests.isNotEmpty()) FamilySurface("Solicitudes para sumarse") {requests.forEach{request->Text(request.optString("name"),color=DashInk,fontSize=15.sp,fontWeight=FontWeight.Bold);OutlinedButton(onClick={vm.approveMember(request.getString("id"))},enabled=!s.busy){Text("Aprobar incorporación",color=DashTeal)}}}
+                    if(s.demoAccount) Text("Familia y actividad simuladas para explorar TINO. No corresponden a personas ni teléfonos reales.",color=DashMuted,fontSize=10.sp,lineHeight=15.sp)
                 }
-                val requests = data?.optJSONArray("joinRequests").objects()
-                if (requests.isNotEmpty()) DashboardCard("Solicitudes para sumarse") { requests.forEach { request ->
-                    Text(request.optString("name"), color = DashInk, fontWeight = FontWeight.Bold)
-                    OutlinedButton(onClick = { vm.approveMember(request.getString("id")) }, enabled = !s.busy) { Text("Aprobar incorporación", color = DashTeal) }
-                } }
-                Text("Acompañar sin invadir. Cada integrante puede dejar de compartir sus datos cuando quiera.", color = DashMuted, fontSize = 12.sp, lineHeight = 18.sp)
             }
         }
+    }
     }
     if (invitation) AlertDialog(onDismissRequest = { invitation = false }, title = { Text("Invitá a tu red") }, text = { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Compartí este código. La persona debe aceptarlo desde TINO y elegir sus permisos.", lineHeight = 23.sp)
@@ -159,26 +148,18 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
         s.error?.let { Text(it, color = DashRed) }
     } }, confirmButton = { TextButton(onClick = { invitation = false }) { Text("Listo") } })
     if (permissions && member != null) AlertDialog(onDismissRequest = { permissions = false }, title = { Text("${member.optString("name")} decide") }, text = { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        listOf("progress" to "Progreso y prácticas", "help" to "Acompañamiento y avisos", "usage" to "Tiempo de pantalla", "safety" to "Señales de seguridad", "location" to "Ubicación temporal").forEach { (key, label) ->
+        listOf("progress" to "Progreso y prácticas", "help" to "Acompañamiento y avisos", "usage" to "Tiempo de pantalla", "safety" to "Señales de seguridad", "location" to "Ubicación temporal", "websites" to "Sitios visitados").forEach { (key, label) ->
             Row { Text(label, Modifier.weight(1f)); Text(if (allowed.optBoolean(key)) "Compartido" else "Privado", color = if (allowed.optBoolean(key)) DashTeal else DashMuted, fontSize = 13.sp) }
         }
         Text("Estos permisos se eligen desde el dispositivo de esa persona. Ser parte de la familia no habilita a ver su pantalla ni sus mensajes.", color = DashMuted, fontSize = 14.sp, lineHeight = 21.sp)
     } }, confirmButton = { TextButton(onClick = { permissions = false }) { Text("Entendido") } })
     if (recording && member != null) VoiceNoteDialog(member.optString("name"), s.busy, s.error, s.message, { recording = false }) { audio, requestId -> vm.familyAction(id, "voice", audio, requestId) }
-}
+    detail?.let { event -> AlertDialog(onDismissRequest={detail=null},title={Text(event.optString("title"),fontSize=22.sp)},text={Column(verticalArrangement=Arrangement.spacedBy(14.dp)){
+        Text("${familyClock(event.optString("at"))} · ${event.optString("app")} · ${event.optInt("durationMinutes")} min",fontSize=14.sp,color=DashMuted)
+        event.optString("domain").takeIf{it.isNotBlank()}?.let{Text(it,color=DashTeal,fontSize=17.sp,fontWeight=FontWeight.SemiBold)}
+        Text(event.optString("detail"),fontSize=16.sp,lineHeight=24.sp)
+        Text(if(event.optBoolean("independent")) "Lo completó por su cuenta." else if(event.optBoolean("assisted")) "Con acompañamiento de TINO." else "Actividad sin acompañamiento.",color=DashTeal,fontSize=14.sp)
+        Text("El resumen no incluye mensajes, correos ni contenido de conversaciones.",fontSize=12.sp,lineHeight=18.sp,color=DashMuted)
+    }},confirmButton={TextButton(onClick={detail=null}){Text("Listo",color=DashTeal)}}) }
 
-@Composable private fun FamilyActions(allowed: Boolean, busy: Boolean, ping: () -> Unit, voice: () -> Unit) {
-    DashboardCard("Estoy cerca") {
-        Button(onClick = ping, enabled = allowed && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), colors = ButtonDefaults.buttonColors(containerColor = DashCyan, contentColor = DashInk)) { Text("↗  Enviar ping", fontSize = 17.sp, fontWeight = FontWeight.SemiBold) }
-        OutlinedButton(onClick = voice, enabled = allowed && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)) { Text("Aviso de voz", color = DashTeal, fontSize = 17.sp) }
-        Text(if (allowed) "Un aviso breve para que sepa que estás disponible." else "Los avisos requieren su autorización de acompañamiento.", color = DashMuted, fontSize = 12.sp, lineHeight = 18.sp)
-    }
-}
-@Composable private fun AlertCards(alerts: List<JSONObject>, busy: Boolean, resolve: (JSONObject) -> Unit) {
-    alerts.forEach { alert -> DashboardCard(if (alert.isNull("resolvedAt")) "Un aviso para revisar juntos" else "Aviso atendido") {
-        Text(alert.optString("title", alert.optString("message")), color = if (alert.isNull("resolvedAt")) DashRed else DashTeal, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        Text(alert.optString("message"), color = DashMuted, fontSize = 14.sp, lineHeight = 21.sp)
-        Text(timeLabel(alert.optString("createdAt")), color = DashMuted, fontSize = 12.sp)
-        if (alert.isNull("resolvedAt")) OutlinedButton(onClick = { resolve(alert) }, enabled = !busy) { Text("Marcar como atendido", color = DashTeal) }
-    } }
 }

@@ -12,6 +12,10 @@ El menú lateral es único para TINO Chat, Grupo familiar, Instituciones, Guías
 
 El espacio familiar nativo consulta miembros y métricas consentidas, genera invitaciones, muestra solicitudes de ayuda y permite atenderlas y aprobar incorporaciones al grupo. El espacio institucional nativo consulta indicadores agregados, flujos, tiempo autorizado, seguridad y contexto OpenARG. La edición completa de programas sigue en el portal web; todavía no se trasladó al espacio Android.
 
+El rediseño familiar toma como referencia el explorador de Grupo familiar de https://nieto-web.vercel.app/: perfil y acciones en un lateral en tablet, selector de integrantes y pestañas en teléfono, resumen compacto, sitios visitados, actividad filtrable con detalles, distribución por app, gráfico semanal seleccionable, aprendizaje, autonomía, ubicación temporal a escala de barrio y avisos revisables. `FamilyComponents.kt` y `FamilyPanels.kt` contienen las ilustraciones nativas, iconos y paneles; no dependen de fotos, mapas o recursos remotos para mostrarse.
+
+`demoFamily` construye la Familia Ríos ficticia (Marta, Ricardo y Lucía) desde eventos: los minutos por aplicación y el total de pantalla se calculan del mismo historial, y el acompañamiento parcial se cuenta sin sumarlo otra vez al tiempo de pantalla. Las semanas terminan en esos mismos valores; edades, prácticas, permisos, sitios y alertas corresponden a cada perfil. El escenario queda anclado durante el día para que actualizar no invente nuevas actividades ni extienda la ubicación. La UI identifica los datos demo y el mapa ilustrativo. Estos sitios e historiales no se recopilan de teléfonos reales; el portal real solo muestra campos autorizados que efectivamente devuelve la API.
+
 `data/LocalSettings.kt` y `NietoApi.kt` completan las clases que faltaban en el checkout. Credenciales y perfil local usan AES-GCM con Android Keystore; cambiar servidor descarta las credenciales asociadas. La API no se ejecuta en el hilo de UI. HTTP se permite solo en APK debug, para USB/emulador; release requiere HTTPS.
 
 ## Identidad y permisos en backend

@@ -6,12 +6,42 @@ import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
-import { demoInstitution, ageOn } from '../src/dashboard-demo.mjs';
+import { demoInstitution, demoFamily, ageOn } from '../src/dashboard-demo.mjs';
 import { crossPublicContext } from '../src/dashboard-context.mjs';
 import { parseCsvBlock, buildPublicSnapshot, POPULATION_TABLE, CONNECTIVITY_TABLE } from '../src/openarg-dashboard.mjs';
 import { createModelAdapter } from '../src/model-adapter.mjs';
 const now = Date.parse('2026-10-30T15:00:00Z');
 const publicData = JSON.parse(readFileSync(new URL('../src/public-data/openarg-national-verified.json', import.meta.url)));
+test('family scenario reconciles daily apps, event durations, assisted time, weekly totals and learning', () => {
+  const family = demoFamily(now);
+  for (const member of family.members) {
+    assert.equal(member.screenMinutes, member.appUsage.reduce((n, a) => n + a.minutes, 0));
+    assert.equal(member.screenMinutes, member.activities.reduce((n, a) => n + a.durationMinutes, 0));
+    assert.equal(member.tinoMinutes, member.activities.reduce((n, a) => n + a.assistedMinutes, 0));
+    assert.ok(member.tinoMinutes <= member.screenMinutes);
+    assert.equal(member.weeklyScreen.at(-1), member.screenMinutes);
+    assert.equal(member.weeklyTino.at(-1), member.tinoMinutes);
+    assert.equal(member.weeklyDays.at(-1).screenMinutes, member.screenMinutes);
+    assert.equal(ageOn(member.birthDate, now), member.age);
+    assert.equal(member.completedToday, member.activities.filter(e => e.kind === 'task').length);
+    assert.equal(member.autonomyRate, Math.round(member.autonomyChecks / member.completedFlows * 100));
+    for (let i = 1; i < member.activities.length; i++) {
+      const later = member.activities[i - 1], earlier = member.activities[i];
+      assert.ok(Date.parse(earlier.at) <= Date.parse(later.at) - later.durationMinutes * 60_000, 'screen events do not overlap');
+    }
+  }
+  const marta = family.members[0], alert = family.alerts[0];
+  assert.equal(marta.screenMinutes, 46); assert.equal(marta.tinoMinutes, 18);
+  assert.equal(marta.activities.find(e => e.id === alert.eventId).alertId, alert.id);
+  assert.equal(marta.activities.find(e => e.id === alert.eventId).at, alert.createdAt);
+  assert.ok(Date.parse(marta.location.sharedAt) < Date.parse(marta.location.updatedAt));
+  assert.ok(Date.parse(marta.location.expiresAt) > now);
+  assert.equal(family.members[2].permissions.websites, false); assert.deepEqual(family.members[2].websites, []);
+  const later = demoFamily(now + 3_600_000, now);
+  assert.equal(later.members[0].lastActiveAt, marta.lastActiveAt, 'refresh does not invent new activity');
+  assert.equal(later.alerts[0].createdAt, alert.createdAt);
+  assert.ok(Date.parse(later.members[0].location.expiresAt) < now + 3_600_000, 'location expires rather than extending on refresh');
+});
 test('six months reconcile distinct participants, workflow totals, provincial totals and bounded rates', () => {
   const data = demoInstitution({ now });
   assert.equal(data.months.length, 6); assert.equal(data.territories.length, 24); assert.equal(data.flows.length, 10);
@@ -51,8 +81,9 @@ test('OpenAI adapter requests no response storage, bounds output, preserves role
   const body = JSON.parse(request.body); assert.equal(body.store, false); assert.equal(body.max_output_tokens, 700); assert.equal(body.input[0].role, 'user');
 });
 test('demo dashboards are role-bound, actions are group-isolated, and demo institutions never access private analytics', async t => {
+  let clock = now;
   const dir = await mkdtemp(join(tmpdir(), 'tino-dashboards-'));
-  const server = createServer({ dataFile: join(dir, 'state.json'), now: () => now, institutionToken: '', openarg: new OpenArgClient({ apiKey: '' }), accountOptions: { judgesDemo: true } });
+  const server = createServer({ dataFile: join(dir, 'state.json'), now: () => clock, institutionToken: '', openarg: new OpenArgClient({ apiKey: '' }), accountOptions: { judgesDemo: true } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise(r => server.close(r)); await rm(dir, { recursive: true, force: true }); });
   const req = async (path, token, body, method = body ? 'POST' : 'GET') => { const r = await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, body: await r.json() }; };
@@ -71,6 +102,15 @@ test('demo dashboards are role-bound, actions are group-isolated, and demo insti
   assert.equal((await req('/demo/family/actions', family, { id: 'ping-demo-001', memberId: 'marta', type: 'ping' })).status, 200);
   assert.equal((await req('/demo/family/dashboard', family)).body.messages.length, 1);
   assert.equal((await req('/demo/family/dashboard', other)).body.messages.length, 0);
+  const before = (await req('/demo/family/dashboard', family)).body;
+  assert.equal((await req('/demo/family/actions', family, { id: 'resolve-wrong-member', memberId: 'ricardo', type: 'resolve', alertId: 'demo-link-1' })).status, 400);
+  assert.equal((await req('/demo/family/actions', family, { id: 'resolve-family-link', memberId: 'marta', type: 'resolve', alertId: 'demo-link-1' })).status, 200);
+  clock += 60_000;
+  const after = (await req('/demo/family/dashboard', family)).body;
+  assert.equal(after.members[0].lastActiveAt, before.members[0].lastActiveAt);
+  assert.equal(after.alerts[0].createdAt, before.alerts[0].createdAt);
+  assert.ok(Date.parse(after.alerts[0].resolvedAt) >= Date.parse(after.alerts[0].createdAt));
+  assert.equal((await req('/demo/family/dashboard', other)).body.alerts[0].resolvedAt, null);
   assert.equal((await req('/demo/family/actions', family, { id: 'voice-demo-001', memberId: 'marta', type: 'voice', audioBase64: 'not-a-recording' })).status, 400);
   const device = (await req('/devices', null, { name: 'Prueba de entrega', territoryId: 'AR-C' })).body;
   const invite = (await req('/family/invitations', family, {})).body;

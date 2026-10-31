@@ -152,21 +152,28 @@ export function createApp({
         }
         if (method === 'GET' && route === '/demo/family/dashboard') {
           required(account.role === 'family' && account.groupId, 403, 'wrong_role', 'Ingresá al grupo familiar.');
+          const scenarioAt = await store.update(s => {
+            const group = s.groups.find(g => g.id === account.groupId);
+            const date = value => new Date(value).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+            if (!group.demoScenarioAt || date(group.demoScenarioAt) !== date(current)) group.demoScenarioAt = current;
+            return group.demoScenarioAt;
+          });
           const s = await store.read(); const actions = (s.demoFamilyActions ?? []).filter(a => a.groupId === account.groupId);
-          const dashboard = demoFamily(current);
+          const dashboard = demoFamily(current, scenarioAt);
           dashboard.group.id = account.groupId;
-          dashboard.alerts = dashboard.alerts.map(a => ({ ...a, resolvedAt: actions.find(x => x.type === 'resolve' && x.memberId === a.memberId)?.createdAt ?? null }));
+          dashboard.alerts = dashboard.alerts.map(a => ({ ...a, resolvedAt: actions.find(x => x.type === 'resolve' && Date.parse(x.createdAt) >= scenarioAt && x.memberId === a.memberId && (!x.alertId || x.alertId === a.id))?.createdAt ?? null }));
           respond(200, { ...dashboard, messages: actions.filter(a => ['ping', 'voice', 'location_request'].includes(a.type) && Date.parse(a.createdAt) > current - 86_400_000).slice(-5).reverse() }); return;
         }
         if (method === 'POST' && route === '/demo/family/actions') {
           required(account.role === 'family' && account.groupId, 403, 'wrong_role', 'Ingresá al grupo familiar.');
-          keys(body, ['id', 'memberId', 'type', 'audioBase64']);
+          keys(body, ['id', 'memberId', 'type', 'audioBase64', 'alertId']);
           required(['marta', 'ricardo', 'lucia'].includes(body.memberId) && ['ping', 'voice', 'resolve', 'location_request'].includes(body.type), 400, 'invalid_action', 'Elegí una persona y una acción válida.');
           required(typeof body.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(body.id), 400, 'invalid_id', 'Identificador inválido.');
+          if (body.alertId !== undefined) required(body.type === 'resolve' && demoFamily(current).alerts.some(a => a.id === body.alertId && a.memberId === body.memberId), 400, 'invalid_alert', 'Elegí un aviso de esta persona.');
           if (body.type === 'voice') validateVoice(body.audioBase64);
           await store.update(s => {
             s.demoFamilyActions ??= []; s.demoFamilyActions = s.demoFamilyActions.filter(a => Date.parse(a.createdAt) > current - 86_400_000);
-            if (!s.demoFamilyActions.some(a => a.id === body.id && a.groupId === account.groupId)) s.demoFamilyActions.push({ id: body.id, memberId: body.memberId, type: body.type, groupId: account.groupId, createdAt: new Date(current).toISOString(), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
+            if (!s.demoFamilyActions.some(a => a.id === body.id && a.groupId === account.groupId)) s.demoFamilyActions.push({ id: body.id, memberId: body.memberId, type: body.type, groupId: account.groupId, createdAt: new Date(current).toISOString(), ...(body.alertId ? { alertId: body.alertId } : {}), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
           }); respond(200, { ok: true, simulated: true }); return;
         }
         throw new ApiError(404, 'not_found', 'Ruta inexistente.');
