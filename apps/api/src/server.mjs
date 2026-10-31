@@ -156,7 +156,7 @@ export function createApp({
           const dashboard = demoFamily(current);
           dashboard.group.id = account.groupId;
           dashboard.alerts = dashboard.alerts.map(a => ({ ...a, resolvedAt: actions.find(x => x.type === 'resolve' && x.memberId === a.memberId)?.createdAt ?? null }));
-          respond(200, { ...dashboard, messages: actions.filter(a => ['ping', 'voice', 'location_request'].includes(a.type)).slice(-20).reverse() }); return;
+          respond(200, { ...dashboard, messages: actions.filter(a => ['ping', 'voice', 'location_request'].includes(a.type) && Date.parse(a.createdAt) > current - 86_400_000).slice(-5).reverse() }); return;
         }
         if (method === 'POST' && route === '/demo/family/actions') {
           required(account.role === 'family' && account.groupId, 403, 'wrong_role', 'Ingresá al grupo familiar.');
