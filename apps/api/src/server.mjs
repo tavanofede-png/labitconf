@@ -8,6 +8,8 @@ import { JsonStore } from './store.mjs';
 import { OpenArgClient, OpenArgError } from './openarg.mjs';
 import { normalizeSearch, normalizeAnswer } from './normalize.mjs';
 import { getTerritoryIndicators } from './territory.mjs';
+import { RealtimeService, RealtimeError } from './realtime.mjs';
+import { attachRealtimeSocket } from './realtime-socket.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
@@ -81,12 +83,13 @@ async function bodyOf(req, maxBytes) {
 export function createApp({
   dataFile = process.env.DATA_FILE ? resolve(process.env.DATA_FILE) : resolve(API_ROOT, 'data/nieto.json'),
   store = new JsonStore(dataFile), openarg = new OpenArgClient({ timeoutMs: Number(process.env.OPENARG_TIMEOUT_MS) || 25_000 }),
+  realtime = new RealtimeService(),
   institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
   corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
   now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000,
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
-  const rates = new Map();
+  const rates = new Map(); const realtimeAttempts = new Map();
   const handler = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -128,7 +131,7 @@ export function createApp({
         respond(200, { status: 'ok', version: '2.0.0', openarg: { configured: status.configured, connected: Boolean(status.lastSuccessAt), endpoint: status.endpoint },
           privacy: { minimumCohort, screenStorage: false, conversationStorage: false }, institutionConfigured: Boolean(institutionToken),
           android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null },
-          assistant: { mode: 'verified_local_flows', generalConversation: false }, storage: 'local_json_single_process' }); return;
+          assistant: realtime.status(), storage: 'local_json_single_process' }); return;
       }
       if (method === 'POST' && route === '/devices') {
         keys(body, ['name', 'territoryId']);
@@ -216,12 +219,12 @@ export function createApp({
       if (method === 'POST' && route === '/assistant/message') {
         needUser(); keys(body, ['sessionId', 'text']); const message = text(body.text, 'text', 1000);
         if (body.sessionId) required(state.sessions.some((s) => s.id === body.sessionId && s.userId === user.id), 404, 'session_not_found', 'Sesión inexistente.');
-        const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-        if (/ubicacion|donde estoy|whatsapp|como llegar/.test(normalized)) {
-          respond(200, { mode: 'guided', flowId: 'whatsapp-location', instruction: 'Vamos paso a paso. Abrí WhatsApp y elegí la conversación de confianza. Nieto marcará el siguiente botón solo si reconoce tu pantalla. Vos hacés cada toque; antes de compartir tu ubicación te pedirá confirmación.', sources: [] });
-        } else {
-          respond(200, { mode: 'limited', instruction: 'En esta versión puedo acompañarte a compartir tu ubicación por WhatsApp y pedir ayuda a tu familia. Decime “quiero compartir mi ubicación” para empezar.', sources: [] });
-        } return;
+        const controller = new AbortController();
+        const onClose = () => { if (!res.writableEnded) controller.abort(); };
+        res.once('close', onClose);
+        try { respond(200, await realtime.reply({ deviceId: user.id, text: message, signal: controller.signal })); }
+        finally { res.off('close', onClose); }
+        return;
       }
       const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
       if (method === 'POST' && eventMatch) {
@@ -310,19 +313,35 @@ export function createApp({
       throw new ApiError(404, 'not_found', 'Ruta inexistente.');
     } catch (error) {
       if (res.headersSent) { res.end(); return; }
-      const known = error instanceof ApiError || error instanceof OpenArgError;
+      const known = error instanceof ApiError || error instanceof OpenArgError || error instanceof RealtimeError;
       if (error.retryAfter !== null && error.retryAfter !== undefined) res.setHeader('Retry-After', String(error.retryAfter));
       respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
     }
   };
-  handler.store = store; handler.openarg = openarg; return handler;
+  handler.store = store; handler.openarg = openarg; handler.realtime = realtime;
+  handler.authorizeRealtime = async req => {
+    const origin = req.headers.origin;
+    if (origin && !corsOrigins.includes(origin)) throw new RealtimeError('origin_not_allowed', 'Origen no permitido.', 403);
+    const current = now(); const ip = req.socket.remoteAddress;
+    if (realtimeAttempts.size > 1000) for (const [key, value] of realtimeAttempts) if (value.resetAt <= current) realtimeAttempts.delete(key);
+    let attempt = realtimeAttempts.get(ip);
+    if (!attempt || attempt.resetAt <= current) { attempt = { count: 0, resetAt: current + 60_000 }; realtimeAttempts.set(ip, attempt); }
+    if (++attempt.count > 20) throw new RealtimeError('realtime_rate_limit', 'Demasiados intentos de conexión de voz.', 429);
+    const token = /^Bearer ([A-Za-z0-9_\-.]+)$/i.exec(req.headers.authorization ?? '')?.[1] ?? '';
+    if (!token) throw new RealtimeError('unauthorized', 'Falta el acceso de este teléfono.', 401);
+    const state = await store.read();
+    const user = state.users.find(user => same(hash(token), user.tokenHash));
+    if (!user) throw new RealtimeError('unauthorized', 'El acceso de este teléfono no es válido.', 401);
+    return user.id;
+  };
+  return handler;
 }
 
-export function createServer(options) { return http.createServer(createApp(options)); }
+export function createServer(options) { const app = createApp(options); return attachRealtimeSocket(http.createServer(app), app); }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const port = Number(process.env.API_PORT ?? process.env.PORT) || 8787; const host = process.env.HOST ?? '0.0.0.0';
-  const app = createApp(); await app.store.init(); const server = http.createServer(app);
+  const app = createApp(); await app.store.init(); const server = attachRealtimeSocket(http.createServer(app), app);
   server.listen(port, host, () => console.log(`NIETO API 2.0 en http://${host}:${port} — OpenArg ${app.openarg.status().configured ? 'configurado, pendiente de consulta' : 'pendiente de OPENARG_API_KEY'}`));
-  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => process.exit(0)));
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { server.closeRealtime(); server.close(() => process.exit(0)); });
 }

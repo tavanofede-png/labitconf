@@ -26,6 +26,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Gradle terminó con código $LASTEXITCODE" }
     $apk = Join-Path $androidProject 'app\build\outputs\apk\debug\app-debug.apk'
     Write-Host "APK listo: $apk"
+    $artifactDirectory = Join-Path $repoRoot 'artifacts'
+    New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
+    if ((Get-Item -LiteralPath $artifactDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'La carpeta de artifacts no puede ser un enlace.' }
+    $distribution = Join-Path $artifactDirectory 'nieto-debug.apk'
+    $temporary = Join-Path $artifactDirectory 'nieto-debug.building.apk'
+    try {
+        Copy-Item -LiteralPath $apk -Destination $temporary -Force
+        $builtHash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash
+        if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ne $builtHash) { throw 'La copia del APK no coincide con la compilación.' }
+        Move-Item -LiteralPath $temporary -Destination $distribution -Force
+        if ((Get-FileHash -LiteralPath $distribution -Algorithm SHA256).Hash -ne $builtHash) { throw 'La distribución del APK no coincide con la compilación.' }
+        Write-Host "APK de distribución actualizado: $distribution (SHA256 $builtHash)"
+    } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
     if ($Install) {
         & (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe') install -r $apk
         if ($LASTEXITCODE -ne 0) { throw 'No se pudo instalar el APK. Revisá el teléfono conectado y la depuración USB.' }

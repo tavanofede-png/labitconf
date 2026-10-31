@@ -5,6 +5,7 @@ export interface Health {
   openarg: { configured: boolean; connected?: boolean; endpoint: string };
   privacy: { minimumCohort: number };
   android?: { apkAvailable: boolean; downloadUrl: string | null };
+  assistant?: { configured: boolean; model: string; voiceStreaming: boolean; generalConversation: boolean };
 }
 export interface Overview {
   territoryId: string;

@@ -11,7 +11,8 @@ Todas las rutas usan JSON y el prefijo `/api`. Los errores tienen `{error:{code,
 ## Asistente y telemetría
 
 - `POST /assistant/sessions` con `{flowId:"whatsapp-location"}` → `{id,flowId,createdAt}`.
-- `POST /assistant/message` con `{sessionId?,text}` → `{mode,instruction,flowId?,sources?}`. El MVP usa guías verificadas y búsqueda pública; no se presenta como conversación general si no hay un modelo configurado.
+- `POST /assistant/message` con `{sessionId?,text}` → `{mode,instruction,flowId?,sources:[],model}`. Las respuestas de texto se generan mediante OpenAI Realtime con `gpt-realtime-2.1-mini`. La guía local conserva la verificación de pasos. Falta de clave, cuota o acceso devuelve un error explícito, sin reemplazar la respuesta por un texto fijo presentado como IA. Cada solicitud HTTP recibe solo su texto actual; no tiene memoria entre solicitudes.
+- `WS /assistant/realtime` autentica con token de dispositivo NIETO y transmite audio PCM24k y texto usando el mismo modelo. La clave OpenAI solo existe en el backend. El [contrato Realtime](REALTIME_CONTRACT.md) define los mensajes, límites, cancelación y sugerencias de guía. Las conversaciones de voz viven en memoria de la conexión y se eliminan al cerrarla.
 - `POST /assistant/sessions/:id/events` con `{type,stepId?,durationSeconds?}` → `{ok:true}`. Tipos: `flow_started`, `step_shown`, `step_completed`, `step_repeated`, `user_lost`, `flow_completed`, `autonomy_completed`, `cancelled`. Solo eventos cerrados; no texto libre ni árbol de pantalla. `durationSeconds` se limita a un intervalo razonable. El servidor verifica pertenencia de sesión.
 - `GET /assistant/history` → `{sessions:[{id,flowId,state,createdAt,completedAt?,durationSeconds,completedSteps,autonomyCompleted}]}`. Solo historial propio.
 

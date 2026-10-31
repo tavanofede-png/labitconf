@@ -19,7 +19,8 @@
     "build": "npm run build --workspace @nieto/web",
     "test": "npm run test --workspace @nieto/api",
     "check": "node scripts/check.mjs",
-    "verify:openarg": "npm run verify:openarg --workspace @nieto/api"
+    "verify:openarg": "npm run verify:openarg --workspace @nieto/api",
+    "verify:realtime": "npm run verify:realtime --workspace @nieto/api"
   },
   "overrides": {
     "rollup": "4.59.0"

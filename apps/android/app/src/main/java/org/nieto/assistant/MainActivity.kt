@@ -3,12 +3,8 @@ package org.nieto.assistant
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,17 +25,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.nieto.assistant.flow.GuidanceEngine
 import org.nieto.assistant.flow.Stage
+import org.nieto.assistant.voice.VoicePhase
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as NietoApp
-    private var recognizer: SpeechRecognizer? = null
-    private var listening by mutableStateOf(false)
+    private var consentDialog: android.app.AlertDialog? = null
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) beginListening() else app.status("El micrófono quedó desactivado. Podés escribir tu consulta.")
+        if (granted && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) && app.settings.openAiConsent) app.startRealtimeVoice()
+        else app.status("El micrófono quedó apagado. Podés escribir tu consulta.")
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openAccessibility) } }
+        setContent { NietoTheme { NietoScreen(app, ::toggleVoice, ::sendText, ::openWhatsApp, ::openAccessibility) } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
     override fun onResume() {
@@ -48,43 +45,30 @@ class MainActivity : ComponentActivity() {
         app.screenConnection(enabled.split(':').any { it.contains("org.nieto.assistant/") })
     }
     private fun toggleVoice() {
-        if (listening) { recognizer?.stopListening(); listening = false; return }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-        else beginListening()
-    }
-    private fun beginListening() {
-        app.stopSpeaking()
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            app.status("Este teléfono no tiene un servicio de reconocimiento de voz. Podés escribir tu consulta."); return
+        if (app.state.value.voice.phase == VoicePhase.LISTENING) { app.finishRealtimeInput(); return }
+        if (app.state.value.voice.active) { app.cancelRealtimeVoice(); return }
+        withAiConsent {
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            else app.startRealtimeVoice()
         }
-        recognizer?.destroy()
-        recognizer = if (Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            else SpeechRecognizer.createSpeechRecognizer(this)
-        recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) { listening = true; app.status("Te escucho. Tocá Terminar cuando quieras.") }
-            override fun onBeginningOfSpeech() = Unit
-            override fun onRmsChanged(rmsdB: Float) = Unit
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
-            override fun onEndOfSpeech() { listening = false }
-            override fun onError(error: Int) {
-                listening = false
-                app.status(if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
-                    "No pude entenderte. Podés intentar otra vez o escribir." else "El reconocimiento de voz no está disponible ahora. Podés escribir.")
+    }
+    private fun sendText(text: String) { withAiConsent { app.sendMessage(text) } }
+    private fun withAiConsent(action: () -> Unit) {
+        if (app.settings.openAiConsent) { action(); return }
+        if (consentDialog?.isShowing == true) return
+        consentDialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Conversar con OpenAI")
+            .setMessage("NIETO enviará tus consultas escritas y, solo al tocar Hablar, tu voz a OpenAI a través del servidor del equipo. La respuesta usa una voz generada por IA. No se envían tu pantalla ni tus mensajes de WhatsApp.\n\nNo incluyas contraseñas ni códigos privados. Podés cancelar la voz o revocar este permiso en Ajustes. Las guías locales y Familia siguen disponibles sin aceptar.")
+            .setPositiveButton("Acepto") { _, _ ->
+                consentDialog = null
+                if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                    app.settings.openAiConsent = true
+                    action()
+                }
             }
-            override fun onResults(results: Bundle?) {
-                listening = false
-                results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let { app.sendMessage(it) }
-            }
-            override fun onPartialResults(partialResults: Bundle?) = Unit
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        })
-        runCatching { recognizer?.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-AR")
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        }) }.onFailure { listening = false; app.status("No pude iniciar el micrófono. Podés escribir.") }
+            .setNegativeButton("Ahora no") { _, _ -> consentDialog = null }
+            .setOnCancelListener { consentDialog = null }
+            .show()
     }
     private fun openWhatsApp() {
         val intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
@@ -96,8 +80,8 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         if (app.consumeVoiceRequest()) toggleVoice()
     }
-    override fun onStop() { recognizer?.cancel(); listening = false; super.onStop() }
-    override fun onDestroy() { recognizer?.destroy(); recognizer = null; super.onDestroy() }
+    override fun onStop() { consentDialog?.dismiss(); consentDialog = null; app.onAssistantBackground(); super.onStop() }
+    override fun onDestroy() { consentDialog?.dismiss(); consentDialog = null; super.onDestroy() }
 }
 
 private val Forest = Color(0xFF264C3B)
@@ -115,7 +99,7 @@ private val Ink = Color(0xFF242E28)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onAccessibility: () -> Unit) {
+@Composable private fun NietoScreen(app: NietoApp, onVoice: () -> Unit, onSend: (String) -> Unit, onWhatsApp: () -> Unit, onAccessibility: () -> Unit) {
     val state by app.state.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     var disclosure by remember { mutableStateOf(false) }
@@ -130,14 +114,14 @@ private val Ink = Color(0xFF242E28)
         } },
         bottomBar = { NavigationBar(containerColor = Color(0xFFEEEFE5)) {
             listOf("Inicio" to "◎", "Familia" to "♡", "Ajustes" to "☷").forEachIndexed { index, item ->
-                NavigationBarItem(selected = tab == index, onClick = { tab = index; if (index == 1 && app.settings.token.isNotBlank()) app.refreshFamily() },
+                NavigationBarItem(selected = tab == index, onClick = { if (tab != index) app.onAssistantBackground(); tab = index; if (index == 1 && app.settings.token.isNotBlank()) app.refreshFamily() },
                     icon = { Text(item.second, fontSize = 26.sp) }, label = { Text(item.first, fontSize = 16.sp) })
             }
         } }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
             when (tab) {
-                0 -> HomeContent(app, state, listening, onVoice, onWhatsApp, onSettings = { tab = 2 })
+                0 -> HomeContent(app, state, onVoice, onSend, onWhatsApp, onSettings = { tab = 2 })
                 1 -> FamilyContent(app, state)
                 else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
             }
@@ -157,15 +141,29 @@ private val Ink = Color(0xFF242E28)
         dismissButton = { TextButton(onClick = { disclosure = false }) { Text("Ahora no") } })
 }
 
-@Composable private fun HomeContent(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onSettings: () -> Unit) {
+@Composable private fun HomeContent(app: NietoApp, state: AppState, onVoice: () -> Unit, onSend: (String) -> Unit, onWhatsApp: () -> Unit, onSettings: () -> Unit) {
     var message by remember { mutableStateOf("") }
     Text("Un paso hoy.\nMás confianza mañana.", style = MaterialTheme.typography.headlineLarge, color = Forest, fontWeight = FontWeight.SemiBold)
     Text("Contame qué querés hacer. Lo aprendemos juntos, de a una cosa por vez.")
-    BigButton(if (listening) "Terminar de hablar" else "Hablar con NIETO", onVoice, enabled = !state.busy || listening)
-    Text("El micrófono se activa solo al tocar Hablar. Se usa el reconocimiento de Android; según tu teléfono, puede necesitar el servicio de voz de su proveedor.", fontSize = 15.sp, lineHeight = 21.sp)
+    BigButton(when (state.voice.phase) {
+        VoicePhase.LISTENING -> "Terminar de hablar"
+        VoicePhase.CONNECTING -> "Cancelar conexión de voz"
+        VoicePhase.WAITING, VoicePhase.SPEAKING -> "Cancelar respuesta de voz"
+        else -> "Hablar con NIETO"
+    }, onVoice, enabled = !state.busy || state.voice.active)
+    if (state.voice.phase == VoicePhase.LISTENING) OutlinedButton(onClick = { app.cancelRealtimeVoice() }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Cancelar y apagar el micrófono") }
+    Text(state.voice.message, fontSize = 17.sp, lineHeight = 24.sp)
+    if (state.voice.partialText.isNotBlank()) Text(state.voice.partialText, fontSize = 19.sp, lineHeight = 28.sp)
+    Text("Voz generada por IA · OpenAI Realtime 2.1 Mini. El micrófono se activa al tocar Hablar y se apaga al terminar, cancelar o salir de NIETO. Cada consulta dura hasta 45 segundos. La voz se envía mientras hablás; cancelar no puede retirar los bloques ya enviados.", fontSize = 15.sp, lineHeight = 21.sp)
     OutlinedTextField(value = message, onValueChange = { message = it.take(1000) }, modifier = Modifier.fillMaxWidth(),
         label = { Text("O escribime acá") }, placeholder = { Text("Quiero compartir mi ubicación") }, minLines = 2)
-    OutlinedButton(onClick = { app.sendMessage(message); message = "" }, enabled = message.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Enviar consulta") }
+    OutlinedButton(onClick = { onSend(message) }, enabled = message.isNotBlank() && !state.busy && !state.voice.active, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Enviar consulta") }
+    if (state.guidanceOffered) Surface(color = Color(0xFFE8EDDA), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("NIETO te propone la guía para compartir ubicación. Vos decidís si querés empezarla.")
+            BigButton("Iniciar la guía propuesta", { app.startGuide(onReady = onWhatsApp) }, enabled = !state.busy)
+        }
+    }
     state.chat.takeLast(6).forEach { line -> Surface(color = if (line.fromUser) Color(0xFFE7ECDB) else Color.White, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(if (line.fromUser) "Vos" else "NIETO", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Forest)
@@ -249,8 +247,9 @@ private val Ink = Color(0xFF242E28)
     BigButton("Guardar y conectar", { app.saveServer(url, name) }, enabled = !state.busy)
     Text("Emulador: http://10.0.2.2:8787\nPor USB con adb reverse: http://127.0.0.1:8787\nEn celular por Wi-Fi: dirección LAN del equipo.", fontSize = 15.sp, lineHeight = 23.sp)
     Text("Privacidad", style = MaterialTheme.typography.titleLarge)
-    Text("Las credenciales de instalación se cifran con Android Keystore. El chat vive en memoria y se envía al servidor para responder. El servidor recibe eventos de pasos y duración, nunca tu pantalla. No se solicita acceso a contactos, SMS, cámara ni ubicación.", fontSize = 17.sp)
-    Text("Versión 0.1.0 · ${GuidanceEngine.PROFILE_VERSION}\nPrototipo experimental. La validación de pantallas en un teléfono real es necesaria antes de ampliar compatibilidad.", fontSize = 15.sp, lineHeight = 22.sp)
+    Text("Las credenciales de instalación se cifran con Android Keystore. Con tu permiso, el chat y la voz se envían a OpenAI mediante el servidor para responder. El audio no se escribe en archivos. El servidor también recibe eventos de pasos y duración, nunca tu pantalla. No se solicita acceso a contactos, SMS, cámara ni ubicación.", fontSize = 17.sp)
+    if (app.settings.openAiConsent) OutlinedButton(onClick = { app.revokeOpenAiConsent() }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Revocar voz y chat con OpenAI") }
+    Text("Versión 0.2.0 · ${GuidanceEngine.PROFILE_VERSION}\nPrototipo experimental. La validación de voz y pantallas en un teléfono real sigue siendo necesaria.", fontSize = 15.sp, lineHeight = 22.sp)
 }
 
 @Composable private fun PermissionRow(title: String, detail: String, checked: Boolean, onChecked: (Boolean) -> Unit) {

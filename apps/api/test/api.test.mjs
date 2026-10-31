@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
 import { JsonStore } from '../src/store.mjs';
+import { RealtimeService } from '../src/realtime.mjs';
 
 async function fixture(t, options = {}) {
   const folder = await mkdtemp(join(tmpdir(), 'nieto-test-')); const dataFile = join(folder, 'state.json');
-  const server = createServer({ dataFile, institutionToken: 'institution-test', openarg: new OpenArgClient({ apiKey: '' }), ...options });
+  const server = createServer({ dataFile, institutionToken: 'institution-test', openarg: new OpenArgClient({ apiKey: '' }), realtime: new RealtimeService({ apiKey: '' }), ...options });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise((resolve) => server.close(resolve)); await rm(folder, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${server.address().port}`;

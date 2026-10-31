@@ -5,6 +5,8 @@ import android.speech.tts.TextToSpeech
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,6 +15,9 @@ import org.json.JSONObject
 import org.nieto.assistant.data.LocalSettings
 import org.nieto.assistant.data.NietoApi
 import org.nieto.assistant.flow.*
+import org.nieto.assistant.voice.RealtimeVoice
+import org.nieto.assistant.voice.VoicePhase
+import org.nieto.assistant.voice.VoiceState
 import java.util.Locale
 
 data class ChatLine(val fromUser: Boolean, val text: String)
@@ -28,6 +33,8 @@ data class AppState(
     val allowHelp: Boolean = false,
     val telemetryPending: Int = 0,
     val screenPackage: String = "",
+    val voice: VoiceState = VoiceState(),
+    val guidanceOffered: Boolean = false,
 )
 
 class NietoApp : Application() {
@@ -44,11 +51,19 @@ class NietoApp : Application() {
     private data class QueuedEvent(val sessionId: String, val body: JSONObject, val serverUrl: String, val installationToken: String)
     private val events = Channel<QueuedEvent>(Channel.UNLIMITED)
     private var voiceRequestedFromOverlay = false
+    private lateinit var realtime: RealtimeVoice
+    private var voiceStartJob: Job? = null
+    private var voiceStartRequest = 0L
+    private var messageJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         settings = LocalSettings(this)
         api = NietoApi(settings)
+        realtime = RealtimeVoice(scope,
+            onState = { voice -> mutable.value = mutable.value.copy(voice = voice) },
+            onAnswer = { answer -> mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30)) },
+            onGuidanceOffer = { mutable.value = mutable.value.copy(guidanceOffered = true) })
         engine = GuidanceEngine { event ->
             val id = sessionId
             if (id != null) {
@@ -84,11 +99,54 @@ class NietoApp : Application() {
         else status("La voz no está lista. Podés leer las instrucciones en pantalla.")
     }
     fun stopSpeaking() { tts?.stop() }
+    fun startRealtimeVoice() {
+        if (!settings.openAiConsent) { status("Aceptá el envío de voz y consultas a OpenAI antes de hablar."); return }
+        if (state.value.busy) return
+        stopSpeaking()
+        val request = ++voiceStartRequest
+        mutable.value = mutable.value.copy(busy = true, guidanceOffered = false,
+            voice = VoiceState(VoicePhase.CONNECTING, "Conectando la voz. El micrófono todavía está apagado."))
+        voiceStartJob = scope.launch {
+            try {
+                api.register()
+                if (request != voiceStartRequest) return@launch
+                mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, "Consulta por voz")).takeLast(30))
+                realtime.start(settings.baseUrl, settings.token)
+            } catch (_: CancellationException) { /* A foreground voice request was cancelled. Never start the mic later. */ }
+            catch (_: Exception) {
+                if (request == voiceStartRequest) mutable.value = mutable.value.copy(voice = VoiceState(VoicePhase.ERROR,
+                    "No pude conectar la voz. Revisá la conexión del teléfono desde Ajustes."))
+            } finally { if (request == voiceStartRequest) mutable.value = mutable.value.copy(busy = false) }
+        }
+    }
+    fun finishRealtimeInput() { realtime.finishInput() }
+    fun cancelRealtimeVoice() {
+        ++voiceStartRequest
+        voiceStartJob?.cancel(); voiceStartJob = null
+        realtime.cancel()
+        mutable.value = mutable.value.copy(busy = false)
+    }
+    fun onAssistantBackground() {
+        val assistantWasBusy = voiceStartJob?.isActive == true || messageJob?.isActive == true
+        ++voiceStartRequest
+        voiceStartJob?.cancel(); voiceStartJob = null
+        messageJob?.cancel(); messageJob = null
+        realtime.cancel()
+        if (assistantWasBusy) mutable.value = mutable.value.copy(busy = false)
+        stopSpeaking()
+    }
+    fun revokeOpenAiConsent() {
+        onAssistantBackground()
+        settings.openAiConsent = false
+        status("Consentimiento OpenAI revocado. Podés seguir usando las guías locales y Familia.")
+    }
     fun requestVoiceFromOverlay() { voiceRequestedFromOverlay = true }
     fun consumeVoiceRequest(): Boolean = voiceRequestedFromOverlay.also { voiceRequestedFromOverlay = false }
     fun screenPackage(value: String) { if (mutable.value.screenPackage != value) mutable.value = mutable.value.copy(screenPackage = value) }
     fun startGuide(practice: Boolean = false, onReady: (() -> Unit)? = null) {
         if (state.value.busy) return
+        cancelRealtimeVoice()
+        mutable.value = mutable.value.copy(guidanceOffered = false)
         mutable.value = mutable.value.copy(busy = true)
         scope.launch {
             try {
@@ -123,9 +181,16 @@ class NietoApp : Application() {
 
     fun sendMessage(text: String) {
         val clean = text.trim().take(1000)
-        if (clean.isBlank() || state.value.busy) return
+        if (!settings.openAiConsent) { status("Aceptá el envío de consultas a OpenAI antes de usar el chat."); return }
+        if (clean.isBlank() || state.value.busy || state.value.voice.active) return
+        stopSpeaking()
+        mutable.value = mutable.value.copy(guidanceOffered = false)
+        if (realtime.sendText(clean)) {
+            mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean)).takeLast(30))
+            return
+        }
         mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean)).takeLast(30), busy = true)
-        scope.launch {
+        messageJob = scope.launch {
             try {
                 api.register()
                 val body = JSONObject().put("text", clean)
@@ -141,7 +206,11 @@ class NietoApp : Application() {
                 }
                 mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30))
                 speak(answer)
-                if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
+                if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) {
+                    mutable.value = mutable.value.copy(guidanceOffered = true)
+                    status("NIETO te propone la guía de ubicación. Iniciarla sigue siendo tu decisión.")
+                }
+            } catch (_: CancellationException) { /* Do not append a response after leaving the assistant. */
             } catch (e: Exception) { status(e.message ?: "No pude enviar la consulta.") }
             finally { mutable.value = mutable.value.copy(busy = false) }
         }
@@ -157,6 +226,7 @@ class NietoApp : Application() {
     fun saveServer(url: String, name: String) {
         runCatching {
             require(state.value.guide.stage in listOf(Stage.IDLE, Stage.COMPLETE, Stage.CANCELLED)) { "Terminá la guía antes de cambiar de servidor." }
+            onAssistantBackground()
             settings.deviceName = name
             settings.baseUrl = url
             sessionId = null

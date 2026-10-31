@@ -1,6 +1,6 @@
 # NIETO Android · Labitconf
 
-Aplicación **nueva**, Kotlin + Jetpack Compose. Identificador `org.nieto.assistant`; no reemplaza otra instalación del proyecto anterior. Android 8+ (API 26), compile/target 36. Voz nativa Android, sin grabación persistente y sin escucha en segundo plano.
+Aplicación **nueva**, Kotlin + Jetpack Compose. Identificador `org.nieto.assistant`; no reemplaza otra instalación del proyecto anterior. Android 8+ (API 26), compile/target 36. Versión `0.2.0-realtime` (versionCode 2). Conversación con voz streaming de OpenAI Realtime y lectura nativa Android para las instrucciones del motor de guías. Sin grabación persistente ni escucha en segundo plano.
 
 ## Compilar e instalar
 
@@ -16,7 +16,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/android-build.ps1 -O
 
 El script usa `JAVA_HOME` y `ANDROID_HOME`; en esta máquina puede descubrir herramientas instaladas previamente. Reutiliza exclusivamente JDK/SDK/Gradle wrapper/cachés, ningún código ni credencial de la app anterior. Todo el estado de compilación nuevo queda dentro del workspace. Se requiere JDK 17+, Android platform 36 y build-tools 35.0.0.
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. Pruebas: `:app:testDebugUnitTest`; cubren transiciones reales, confirmación, bloqueo de pantalla ajena/sensible/versión desconocida, cancelación y práctica autónoma.
+APK: `app/build/outputs/apk/debug/app-debug.apk`. Después de compilar y pasar los tests, el script actualiza atómicamente `artifacts/nieto-debug.apk` y comprueba su SHA256. Pruebas: `:app:testDebugUnitTest`; cubren transiciones del motor, confirmación, bloqueo de pantalla ajena/sensible/versión desconocida, cancelación y práctica autónoma, además del formato PCM y el descarte de turnos de voz cancelados. No sustituyen verificar captura/reproducción en el teléfono.
 
 ## Conectar con la API
 
@@ -26,7 +26,19 @@ En **Ajustes → Conexión del prototipo**, ingresá la URL del servidor sin `/a
 - USB: ejecutar `adb reverse tcp:8787 tcp:8787` y configurar `http://127.0.0.1:8787`.
 - Wi-Fi: servidor accesible por su IP LAN y puerto 8787.
 
-HTTP se permite **solo en el build debug**. Release requiere HTTPS. No se incorpora ninguna clave OpenARG: se consume únicamente la API de NIETO.
+HTTP/WS se permite **solo en el build debug**. Release requiere HTTPS/WSS. No se incorpora ninguna clave OpenARG ni OpenAI: se consume únicamente la API de NIETO. El backend debe tener `OPENAI_API_KEY` configurada para la conversación.
+
+## Voz y chat con Realtime
+
+Antes de la primera consulta, NIETO solicita consentimiento separado para enviar voz y texto a OpenAI mediante el servidor del equipo. Se puede revocar desde Ajustes. Las guías locales y Familia no dependen de ese permiso.
+
+`Hablar con NIETO` abre un WebSocket hacia `/api/assistant/realtime` con la credencial NIETO del dispositivo en un header de autorización. El micrófono comienza solamente tras el permiso Android y el evento `ready` del servidor. Captura PCM16 little-endian, 24 kHz, mono, en bloques de 100 ms; el audio se envía mientras se habla. No hay SpeechRecognizer ni modelo de transcripción adicional en este recorrido.
+
+`Terminar de hablar` apaga el micrófono, termina el envío y pide una respuesta. El límite local y del servidor es 45 segundos de entrada. La respuesta de IA se reproduce incrementalmente mediante AudioTrack, con el texto de salida/transcripción de la respuesta visible. La entrada se presenta como Consulta por voz; no se inventa una transcripción de lo que dijo la persona. Las guías verificadas siguen usando TTS local.
+
+Cancelar, cambiar de pestaña, salir de NIETO o cambiar de servidor apaga la captura/reproducción y cierra el socket. La cola de audio es acotada y los mensajes de turnos anteriores se descartan. Cancelar no retira los bloques que ya llegaron al servidor o a OpenAI. El audio no se escribe en archivos y la conversación vive en memoria. Las consultas de texto usan HTTP o el mismo socket si ya hay una conversación de voz lista; las solicitudes HTTP se cancelan al abandonar el asistente.
+
+La función de IA puede **ofrecer** `whatsapp-location`; no inicia el flujo sin el botón de la persona, no toca controles y no registra resultados. El modelo no ve la pantalla. La interpretación de accesibilidad y la verificación permanecen en el motor local, con los límites descritos a continuación.
 
 ## Guía local experimental
 
@@ -49,7 +61,7 @@ La comprobación por tarjetas visibles es deliberadamente limitada: historial de
 
 Se ignoran campos editables, nodos contraseña, teclados y ventanas fuera de la app. No se hacen capturas, OCR ni análisis remoto de pantalla. El árbol nunca sale del teléfono. Los marcadores solo aparecen sobre WhatsApp. La burbuja usa `TYPE_ACCESSIBILITY_OVERLAY`, no pide permiso de superposición general. No se solicitan permisos de ubicación, cámara, contactos ni SMS.
 
-El chat se mantiene en memoria y envía su texto al endpoint de asistente para obtener respuesta. No debe incluir contraseñas ni códigos privados. El reconocimiento de voz prefiere el servicio local del teléfono; si no existe, usa el servicio nativo instalado y puede requerir red del proveedor. TTS depende del motor/idioma instalado.
+El chat se mantiene en memoria y envía su texto al endpoint de asistente/OpenAI para obtener respuesta. No debe incluir contraseñas ni códigos privados. La conversación de voz requiere internet y el backend con acceso al modelo exacto `gpt-realtime-2.1-mini`; un error de clave, cuota o modelo se informa y no se presenta como respuesta de IA. La lectura de guías por TTS depende del motor/idioma instalado.
 
 El servidor recibe solo eventos cerrados de progreso, paso y duración (máximo 4 horas). Si un evento falla no se declara sincronizado; queda indicado como pendiente en la UI. El MVP no implementa cola durable ni reintentos tras reinicio. El historial no se infiere a partir de eventos fallidos.
 

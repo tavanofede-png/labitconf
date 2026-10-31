@@ -6,7 +6,7 @@ La referencia es `NIETO Arquitectura Tecnica Completa.docx`, aportada por el usu
 
 ```text
 Android Kotlin + Compose
-  ├─ guía WhatsApp local, voz STT/TTS nativa, accesibilidad opt-in
+  ├─ guía WhatsApp local, voz Realtime y TTS de guía, accesibilidad opt-in
   ├─ árbol de interfaz procesado en el teléfono
   └─ token de dispositivo + eventos cerrados
                   │ HTTP local / HTTPS para producción
@@ -14,6 +14,7 @@ Android Kotlin + Compose
 Node.js API :8787 ─── JSON privado local
   ├─ sesiones, consentimientos, familia, alertas
   ├─ agregados institucionales con cohorte mínima
+  ├─ relay WebSocket ─── OpenAI gpt-realtime-2.1-mini
   └─ cliente MCP ─── https://mcp.openarg.org/mcp
                   ▲
                   │ proxy /api
@@ -22,7 +23,7 @@ Portal React + TypeScript + Vite :5173
   └─ acceso institucional por token del servidor
 ```
 
-El árbol de accesibilidad no sale de Android. La API recibe el texto de las consultas al asistente para responder sin guardar conversaciones; no recibe capturas ni mensajes de WhatsApp. NIETO no solicita contraseñas ni OTP. El servidor conserva eventos de una sesión guiada para calcular progreso y duración de acompañamiento; no observa el uso completo del teléfono.
+El árbol de accesibilidad no sale de Android. La API recibe la voz o el texto de las consultas al asistente y los transmite a OpenAI para responder sin guardar conversaciones; no recibe capturas ni mensajes de WhatsApp. La conversación de voz requiere activación y consentimiento explícitos. NIETO no solicita contraseñas ni OTP. El servidor conserva eventos de una sesión guiada para calcular progreso y duración de acompañamiento; no observa el uso completo del teléfono.
 
 ## Documento de arquitectura y alcance
 
@@ -31,8 +32,8 @@ El árbol de accesibilidad no sale de Android. La API recibe el texto de las con
 | Android primero | Kotlin y Compose; permisos explícitos del sistema. | Pruebas con más dispositivos, idiomas, fabricantes y usuarios. |
 | Comprensión de pantalla | Árbol accesible local y reconocimiento conservador para el perfil experimental `whatsapp-location-es@1`, WhatsApp español `2.26.*`. | Validar ese perfil en un teléfono; más guías y versiones; OCR o visión solo cuando aporte valor y con consentimiento. |
 | Acompañamiento | Explicación, resaltado local y verificación del siguiente paso. La persona hace cada acción. | Ampliar cobertura y métricas de aprendizaje validadas. |
-| Voz | Reconocimiento y síntesis nativos de Android. | Evaluar privacidad y disponibilidad offline de cada proveedor del dispositivo. |
-| IA | Motor de guía local y consulta pública OpenArg; sin conversación general simulada. | Seleccionar y evaluar un modelo si el producto lo requiere. |
+| Voz | Streaming PCM24k mediante relay autenticado a OpenAI Realtime; TTS nativo para las instrucciones verificadas. | Validar micrófono, reproducción, interrupciones y redes en el dispositivo real. |
+| IA | Conversación de voz/texto con `gpt-realtime-2.1-mini`; guía local como fuente de verdad y contexto público OpenArg en instituciones. | Evaluaciones de calidad, más guías y recuperación de los fallos descritos en la auditoría. |
 | Familia | Grupos, invitación de un solo uso con vencimiento, permisos separados para progreso y ayuda, revocación. | Identidad y recuperación de cuenta; notificaciones fuera del portal. |
 | Instituciones | Métricas reales de sesiones, selección de las 24 jurisdicciones argentinas por código ISO y supresión bajo el mínimo de cohorte. Android registra instalaciones en CABA (`AR-C`) en esta versión. | Elección de territorio desde Android; roles, auditoría operativa, aislamiento por organización y metodología de indicadores. |
 | Mapa | Contexto del territorio con cartografía pública; sin ubicación personal. | Más capas justificadas por datos verificables. |

@@ -5,7 +5,7 @@ node_modules/
 dist/
 coverage/
 *.log
-data/
+/data/
 apps/api/data/
 .gradle/
 .cache/
