@@ -44,17 +44,17 @@ private val Paper = Color(0xFFF3F6F6)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit,
-    onStartGuide: () -> Unit, onFamily: () -> Unit, onGuides: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
+    onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onFamily: () -> Unit, onGuides: () -> Unit, onSettings: () -> Unit, onLogout: () -> Unit) {
     var message by rememberSaveable { mutableStateOf("") }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val closeMenu: (() -> Unit) -> Unit = { action -> scope.launch { drawer.close(); action() } }
     BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
     val list = rememberLazyListState()
-    val guideSuggested = state.suggestedFlow == GuidanceEngine.FLOW_ID
+    val guideSuggested = state.suggestedFlow != null
     val send = { if (message.isNotBlank() && !state.busy) { app.sendMessage(message); message = "" } }
-    LaunchedEffect(state.chat.size, state.busy, guideSuggested) {
-        list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0))
+    LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task) {
+        list.animateScrollToItem(state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0))
     }
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
     ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
@@ -125,7 +125,15 @@ private val Paper = Color(0xFFF3F6F6)
                     }
                 }
                 if (state.busy) item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { CircularProgressIndicator(Modifier.size(18.dp), color = Color(0xFF007C74), strokeWidth = 2.dp); Text("TINO está escribiendo…", color = Muted, fontSize = 15.sp) } }
-                if (guideSuggested) item { Button(onClick = onStartGuide, enabled = !state.busy, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) { Text("Empezar guía de WhatsApp", Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) } }
+                if (guideSuggested) item {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (state.suggestedFlow == "email-send") state.emailDraft?.let { EmailDraftPreview(it) }
+                        Button(onClick = { state.suggestedFlow?.let(onStartGuide) }, enabled = !state.busy && state.task?.active != true, shape = CircleShape, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
+                            Text(when (state.suggestedFlow) { "whatsapp-group" -> "Crear mi grupo con TINO"; "email-send" -> "Abrir mi correo y seguir la guía"; else -> "Empezar guía de ubicación" }, Modifier.padding(horizontal = 8.dp, vertical = 8.dp))
+                        }
+                    }
+                }
+                state.task?.let { task -> item { TaskGuideCard(task, state.busy, app::advanceTask, onOpenTask, app::repeatTask, app::cancelTask, app::dismissTask, !state.accessibilityConnected || !app.settings.screenConsent, onSettings) } }
             }
         }
     }

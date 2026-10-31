@@ -25,7 +25,7 @@ class NietoAccessibilityService : AccessibilityService() {
     private val inspect = Runnable { collectScreen() }
     private var overlay: GuideOverlay? = null
     private var collector: Job? = null
-    private var lastPresentation: List<Any>? = null
+    private var lastPresentation: List<Any?>? = null
 
     override fun onServiceConnected() {
         app.screenConnection(true)
@@ -33,7 +33,7 @@ class NietoAccessibilityService : AccessibilityService() {
         collector = app.scope.launch {
             app.state.collectLatest { state ->
                 val enabled = state.overlayEnabled && app.settings.screenConsent
-                val presentation = listOf(state.guide, enabled, state.screenPackage, state.status)
+                val presentation = listOf(state.guide, enabled, state.screenPackage, state.status, state.task, state.busy)
                 if (lastPresentation != presentation) {
                     lastPresentation = presentation
                     overlay?.render(state.guide, enabled)
@@ -159,6 +159,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
     private val views = mutableListOf<View>()
     private var expanded = false
     private var lastStage = Stage.IDLE
+    private var lastTaskId: String? = null
     private val green = Color.rgb(0, 107, 100)
     private val cream = Color.rgb(243, 246, 246)
     private fun dp(value: Int) = (value * service.resources.displayMetrics.density).toInt()
@@ -166,6 +167,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
     fun render(guide: GuideState, enabled: Boolean) {
         clear()
         if (!enabled) return
+        app.state.value.task?.let { renderTask(it); return }
         if (lastStage in listOf(Stage.IDLE, Stage.CANCELLED) && guide.stage !in listOf(Stage.IDLE, Stage.CANCELLED)) expanded = true
         lastStage = guide.stage
         guide.target?.takeIf { app.state.value.screenPackage == "com.whatsapp" }?.let { target ->
@@ -228,6 +230,37 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
             gravity = if (panelAtBottom) Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL else Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = dp(if (panelAtBottom) 28 else 30)
+        })
+    }
+    private fun renderTask(task: GuidedTask) {
+        val allowed = if (task.flowId == "whatsapp-group") setOf("com.whatsapp") else setOf("com.google.android.gm", "com.samsung.android.email.provider", "com.microsoft.office.outlook")
+        if (app.state.value.screenPackage !in allowed) return
+        if (lastTaskId != task.sessionId) { lastTaskId = task.sessionId; expanded = true }
+        val bubble = ImageButton(service).apply {
+            setImageResource(R.drawable.tino_launcher_foreground); scaleType = ImageView.ScaleType.FIT_CENTER
+            background = android.graphics.drawable.GradientDrawable().apply { setColor(cream); cornerRadius = dp(20).toFloat() }
+            contentDescription = "Ayuda de TINO: ${task.title}"
+            setOnClickListener { expanded = !expanded; render(app.state.value.guide, true) }
+        }
+        add(bubble, WindowManager.LayoutParams(dp(56), dp(56), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; x = dp(8) })
+        if (!expanded) return
+        val panel = LinearLayout(service).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(12)); setBackgroundColor(cream); elevation = dp(6).toFloat() }
+        panel.addView(TextView(service).apply { text = if (task.active) "${task.title} · ${task.index + 1}/${task.steps.size}" else task.title; textSize = 18f; setTextColor(green); typeface = Typeface.DEFAULT_BOLD })
+        panel.addView(TextView(service).apply { text = if (task.active) task.current.instruction else if (task.completed) "Guía completada · confirmado por vos" else "Guía cancelada"; textSize = 19f; setPadding(0, dp(10), 0, dp(8)); setTextColor(Color.rgb(16,20,22)) })
+        fun button(label: String, action: () -> Unit) { panel.addView(Button(service).apply { text = label; isAllCaps = false; textSize = 16f; minHeight = dp(48); isEnabled = !app.state.value.busy; setOnClickListener { action() } }) }
+        if (task.active) {
+            button(if (task.current.final) task.completionLabel else "Ya lo hice") { expanded = false; app.advanceTask() }
+            button("Escuchar de nuevo") { app.repeatTask() }
+            button("Ocultar ayuda") { expanded = false; render(app.state.value.guide, true) }
+        }
+        button("Hablar con TINO") { app.requestVoiceFromOverlay(); service.startActivity(Intent(service, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+        button("Volver a TINO") { service.startActivity(Intent(service, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+        if (task.active) button("Cancelar guía") { app.cancelTask() }
+        val scroll = ScrollView(service).apply { addView(panel) }
+        val display = service.resources.displayMetrics
+        add(scroll, WindowManager.LayoutParams(display.widthPixels - dp(24), (display.heightPixels * .38).toInt(), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
+            gravity = if (task.index in setOf(2, 3, 5, 6)) Gravity.TOP or Gravity.CENTER_HORIZONTAL else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = dp(28)
         })
     }
     private fun add(view: View, params: WindowManager.LayoutParams) {

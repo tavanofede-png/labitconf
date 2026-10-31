@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import org.json.JSONArray
+import java.util.UUID
 import org.nieto.assistant.data.LocalSettings
 import org.nieto.assistant.data.NietoApi
 import org.nieto.assistant.flow.*
@@ -22,6 +24,7 @@ data class AppState(
     val status: String = "Tu ritmo. Tus decisiones.",
     val busy: Boolean = false,
     val suggestedFlow: String? = null,
+    val task: GuidedTask? = null, val emailDraft: EmailDraft? = null,
     val accessibilityConnected: Boolean = false,
     val overlayEnabled: Boolean = false,
     val familyName: String? = null,
@@ -45,6 +48,8 @@ class NietoApp : Application() {
     private data class QueuedEvent(val sessionId: String, val body: JSONObject, val serverUrl: String, val installationToken: String)
     private val events = Channel<QueuedEvent>(Channel.UNLIMITED)
     private var voiceRequestedFromOverlay = false
+    private var conversationId = UUID.randomUUID().toString()
+    private var taskStartedAt = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -90,6 +95,7 @@ class NietoApp : Application() {
     fun screenPackage(value: String) { if (mutable.value.screenPackage != value) mutable.value = mutable.value.copy(screenPackage = value) }
     fun startGuide(practice: Boolean = false, onReady: (() -> Unit)? = null) {
         if (state.value.busy) return
+        if (state.value.task?.active == true) { tellUser("Terminá o cancelá la guía actual antes de empezar otra."); return }
         mutable.value = mutable.value.copy(busy = true)
         scope.launch {
             try {
@@ -124,7 +130,10 @@ class NietoApp : Application() {
 
     fun resetConversation() {
         stopSpeaking()
-        mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null)
+        sessionId = null
+        updateGuide(engine.cancel())
+        conversationId = UUID.randomUUID().toString()
+        mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null)
     }
     fun sendMessage(text: String) {
         val clean = text.trim().take(1000)
@@ -133,8 +142,11 @@ class NietoApp : Application() {
         scope.launch {
             try {
                 api.register()
-                val body = JSONObject().put("text", clean)
-                sessionId?.let { body.put("sessionId", it) }
+                val history = JSONArray()
+                state.value.chat.dropLast(1).takeLast(12).forEach { line -> history.put(JSONObject().put("role", if (line.fromUser) "user" else "assistant").put("content", line.text.take(1000))) }
+                val body = JSONObject().put("text", clean).put("conversationId", conversationId).put("history", history)
+                while (body.toString().toByteArray(Charsets.UTF_8).size > 14_000 && history.length() > 0) history.remove(0)
+                (state.value.task?.takeIf { it.active }?.sessionId ?: sessionId)?.let { body.put("sessionId", it) }
                 val reply = api.request("/assistant/message", "POST", body)
                 var answer = reply.optString("instruction", "No pude encontrar una guía para esa consulta.")
                 val sources = reply.optJSONArray("sources")
@@ -144,7 +156,8 @@ class NietoApp : Application() {
                     val url = source.optString("url")
                     if (url.startsWith("https://")) answer += "\nFuente: $title\n$url"
                 }
-                mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() })
+                val draft = reply.optJSONObject("emailDraft")?.let { EmailDraft(it.getString("to"), it.getString("subject"), it.getString("body")) }
+                mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() }, emailDraft = if (reply.optBoolean("clearEmailDraft")) null else draft ?: state.value.emailDraft)
                 speak(answer)
                 if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
             } catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta.") }
@@ -152,6 +165,44 @@ class NietoApp : Application() {
         }
     }
 
+    fun tellUser(text: String) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, text)).takeLast(30)); speak(text) }
+    fun startTask(flowId: String, onReady: () -> Unit) = work {
+        require(flowId in setOf("whatsapp-group", "email-send"))
+        require(state.value.task?.active != true) { "Terminá o cancelá la guía actual antes de empezar otra." }
+        cancel()
+        sessionId = null
+        if (flowId != "email-send" || state.value.suggestedFlow != "email-send") mutable.value = mutable.value.copy(emailDraft = null)
+        api.register()
+        val task = GuidedTask.from(api.request("/assistant/sessions", "POST", JSONObject().put("flowId", flowId)))
+        api.request("/assistant/sessions/${task.sessionId}/events", "POST", JSONObject().put("type", "flow_started"))
+        api.request("/assistant/sessions/${task.sessionId}/events", "POST", JSONObject().put("type", "step_shown").put("stepId", task.current.id))
+        taskStartedAt = android.os.SystemClock.elapsedRealtime()
+        mutable.value = mutable.value.copy(task = task, suggestedFlow = null)
+        speak(task.current.instruction)
+        onReady()
+    }
+    fun advanceTask() = work {
+        val task = state.value.task?.takeIf { it.active } ?: return@work
+        api.request("/assistant/sessions/${task.sessionId}/events", "POST", JSONObject().put("type", "step_completed").put("stepId", task.current.id))
+        if (task.index == task.steps.lastIndex) {
+            val seconds = ((android.os.SystemClock.elapsedRealtime() - taskStartedAt) / 1000).coerceIn(0, 14400)
+            api.request("/assistant/sessions/${task.sessionId}/events", "POST", JSONObject().put("type", "flow_completed").put("durationSeconds", seconds).put("verification", "user_confirmed"))
+            mutable.value = mutable.value.copy(task = task.copy(completed = true), emailDraft = null)
+            tellUser(if (task.flowId == "email-send") "Marcaste que el correo está en Enviados. Completaste la guía." else "Marcaste que ya ves tu grupo creado. Completaste la guía.")
+        } else {
+            val next = task.copy(index = task.index + 1)
+            api.request("/assistant/sessions/${task.sessionId}/events", "POST", JSONObject().put("type", "step_shown").put("stepId", next.current.id))
+            mutable.value = mutable.value.copy(task = next)
+            speak(next.current.instruction)
+        }
+    }
+    fun repeatTask() { state.value.task?.let { speak(it.current.instruction) } }
+    fun cancelTask() = work {
+        val task = state.value.task?.takeIf { it.active } ?: return@work
+        api.request("/assistant/sessions/${task.sessionId}/events", "POST", JSONObject().put("type", "cancelled"))
+        mutable.value = mutable.value.copy(task = task.copy(cancelled = true), emailDraft = null); stopSpeaking()
+    }
+    fun dismissTask() { if (state.value.task?.active != true) mutable.value = mutable.value.copy(task = null) }
     fun connect() = work {
         api.register()
         api.request("/devices/me", "PATCH", JSONObject().put("name", settings.deviceName).put("territoryId", settings.territoryId))
@@ -201,7 +252,7 @@ class NietoApp : Application() {
         mutable.value = mutable.value.copy(busy = true)
         scope.launch {
             try { block() }
-            catch (e: Exception) { status(e.message ?: "No pude completar la acción.") }
+            catch (e: Exception) { status(e.message ?: "No pude completar la acción."); if (state.value.task != null) tellUser("No pude completar ese paso. Podés volver a intentarlo.") }
             finally { mutable.value = mutable.value.copy(busy = false) }
         }
     }

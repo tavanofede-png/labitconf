@@ -10,6 +10,8 @@ import { normalizeSearch, normalizeAnswer } from './normalize.mjs';
 import { getTerritoryIndicators } from './territory.mjs';
 import { institutionDashboard, compareProgram, periodFor, summarize } from './institution.mjs';
 import { createAccounts, AccountError } from './accounts.mjs';
+import { createAssistant, TASK_FLOWS } from './assistant.mjs';
+import { generateReply } from './model-adapter.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TYPES = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_completed', 'autonomy_completed', 'cancelled']);
@@ -85,11 +87,12 @@ export function createApp({
   store = new JsonStore(dataFile), openarg = new OpenArgClient({ timeoutMs: Number(process.env.OPENARG_TIMEOUT_MS) || 25_000 }),
   institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
   corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
-  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000, accountOptions = {},
+  now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000, accountOptions = {}, assistantOptions = { generateReply },
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
   const rates = new Map();
   const accounts = createAccounts({ store, now, ...accountOptions });
+  const assistant = createAssistant({ now, ...assistantOptions });
   const handler = async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -134,7 +137,7 @@ export function createApp({
         respond(200, { status: 'ok', version: '2.0.0', openarg: { configured: status.configured, connected: Boolean(status.lastSuccessAt), endpoint: status.endpoint },
           privacy: { minimumCohort, screenStorage: false, conversationStorage: false }, institutionConfigured: Boolean(institutionToken),
           android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null },
-          assistant: { mode: 'verified_local_flows', generalConversation: false }, storage: 'local_json_single_process' }); return;
+          assistant: { mode: assistant.modelConnected ? 'conversational' : 'local_conversation', generalConversation: assistant.modelConnected, flows: ['whatsapp-group', 'email-send', 'whatsapp-location'] }, storage: 'local_json_single_process' }); return;
       }
       if (method === 'POST' && route === '/devices') {
         keys(body, ['name', 'territoryId']);
@@ -240,7 +243,7 @@ export function createApp({
         const metrics = metricsFor(sessions);
         respond(200, { territoryId, minimumCohort, suppressed, participants: users.length,
           metrics: { completedFlows: metrics.completedFlows, autonomyChecks: metrics.autonomyChecks, accompaniedMinutes: Math.round(metrics.accompaniedSeconds / 60), helpRequests: state.alerts.filter((a) => ids.has(a.userId)).length },
-          flows: [{ flowId: 'whatsapp-location', started: sessions.length, completed: metrics.completedFlows }], updatedAt: new Date(current).toISOString() }); return;
+          flows: [...new Set(sessions.map(session => session.flowId))].map(flowId => ({ flowId, started: sessions.filter(session => session.flowId === flowId).length, completed: sessions.filter(session => session.flowId === flowId && session.state === 'completed').length })), updatedAt: new Date(current).toISOString() }); return;
       }
 
       const state = await store.read();
@@ -299,45 +302,57 @@ export function createApp({
         respond(200, { ok: true }); return;
       }
       if (method === 'POST' && route === '/assistant/sessions') {
-        needUser(); keys(body, ['flowId']); required(body.flowId === 'whatsapp-location', 400, 'unsupported_flow', 'Flujo no disponible.');
+        needUser(); keys(body, ['flowId']); required(body.flowId === 'whatsapp-location' || Object.hasOwn(TASK_FLOWS, body.flowId), 400, 'unsupported_flow', 'Flujo no disponible.');
         const session = { id: randomUUID(), flowId: body.flowId, userId: user.id, state: 'created', createdAt: new Date(current).toISOString(), durationSeconds: 0, completedSteps: [], autonomyCompleted: false, eventCounts: {} };
         await store.update((s) => { s.sessions.push(session); });
-        respond(201, { id: session.id, flowId: session.flowId, createdAt: session.createdAt }); return;
+        respond(201, { id: session.id, flowId: session.flowId, createdAt: session.createdAt, ...(TASK_FLOWS[session.flowId] ? { flow: TASK_FLOWS[session.flowId] } : {}) }); return;
       }
+      if (method === 'GET' && route === '/assistant/flows') { needUser(); respond(200, { flows: Object.values(TASK_FLOWS) }); return; }
       if (method === 'POST' && route === '/assistant/message') {
-        needUser(); keys(body, ['sessionId', 'text']); const message = text(body.text, 'text', 1000);
+        needUser(); keys(body, ['sessionId', 'text', 'conversationId', 'history']); const message = text(body.text, 'text', 1000);
         if (body.sessionId) required(state.sessions.some((s) => s.id === body.sessionId && s.userId === user.id), 404, 'session_not_found', 'Sesión inexistente.');
-        const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-        if (/ubicacion|donde estoy|whatsapp|como llegar/.test(normalized)) {
-          respond(200, { mode: 'guided', flowId: 'whatsapp-location', instruction: 'Vamos paso a paso. Abrí WhatsApp y elegí la conversación de confianza. TINO marcará el siguiente botón solo si reconoce tu pantalla. Vos hacés cada toque; antes de compartir tu ubicación te pedirá confirmación.', sources: [] });
-        } else {
-          respond(200, { mode: 'limited', instruction: 'En esta versión puedo acompañarte a compartir tu ubicación por WhatsApp y pedir ayuda a tu familia. Decime “quiero compartir mi ubicación” para empezar.', sources: [] });
-        } return;
+        const conversationId = body.conversationId ?? 'default';
+        required(typeof conversationId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(conversationId), 400, 'invalid_conversation', 'Conversación inválida.');
+        const history = body.history ?? [];
+        required(Array.isArray(history) && history.length <= 12 && history.every(line => line && ['user','assistant'].includes(line.role) && typeof line.content === 'string' && line.content.length <= 1000 && Object.keys(line).every(key => ['role','content'].includes(key))), 400, 'invalid_history', 'Historial inválido.');
+        const activeSession = body.sessionId ? state.sessions.find(session => session.id === body.sessionId && session.userId === user.id && ['created','active'].includes(session.state)) : null;
+        const activeFlow = TASK_FLOWS[activeSession?.flowId];
+        const task = activeFlow ? { flowId: activeFlow.id, title: activeFlow.title, instruction: activeFlow.steps[Math.min(activeSession.completedSteps.length, activeFlow.steps.length - 1)].instruction } : null;
+        const result = await assistant.reply({ key: hash(token) + ':' + conversationId, text: message, history, task });
+        respond(200, result); return;
       }
       const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
       if (method === 'POST' && eventMatch) {
-        needUser(); keys(body, ['type', 'stepId', 'durationSeconds']);
+        needUser(); keys(body, ['type', 'stepId', 'durationSeconds', 'verification']);
+        if (body.verification !== undefined) required(body.type === 'flow_completed' && body.verification === 'user_confirmed', 400, 'invalid_verification', 'Confirmación inválida.');
         required(TYPES.has(body.type), 400, 'invalid_event', 'Tipo de evento no permitido.');
-        if (body.stepId !== undefined) required(STEPS.has(body.stepId), 400, 'invalid_step', 'stepId no pertenece al flujo verificado.');
+        const eventSession = state.sessions.find(session => session.id === eventMatch[1] && session.userId === user.id);
+        required(eventSession, 404, 'session_not_found', 'Sesión inexistente.');
+        const taskDefinition = TASK_FLOWS[eventSession.flowId];
+        if (body.stepId !== undefined) required(taskDefinition ? taskDefinition.steps.some(step => step.id === body.stepId) : STEPS.has(body.stepId), 400, 'invalid_step', 'stepId no pertenece al flujo.');
         if (['step_shown', 'step_completed', 'step_repeated'].includes(body.type)) required(body.stepId, 400, 'missing_step', 'Este evento requiere stepId.');
         if (body.durationSeconds !== undefined) required(Number.isFinite(body.durationSeconds) && body.durationSeconds >= 0 && body.durationSeconds <= 14_400, 400, 'invalid_duration', 'Duración fuera del intervalo permitido (0–14400).');
         await store.update((s) => {
           const session = s.sessions.find((entry) => entry.id === eventMatch[1] && entry.userId === user.id);
           required(session, 404, 'session_not_found', 'Sesión inexistente.');
           required(session.state !== 'cancelled', 409, 'session_closed', 'La sesión fue cancelada.');
+          if (body.type === 'flow_completed' && TASK_FLOWS[session.flowId]) {
+            required(body.verification === 'user_confirmed', 400, 'confirmation_required', 'Confirmá el resultado antes de completar.');
+            required(TASK_FLOWS[session.flowId].steps.every(step => session.completedSteps.includes(step.id)), 409, 'flow_incomplete', 'Completá los pasos de la guía antes de confirmar el resultado.');
+          }
           if (body.type === 'autonomy_completed') required(session.state === 'completed', 409, 'flow_incomplete', 'Completá el flujo antes de registrar autonomía.');
           session.eventCounts[body.type] = (session.eventCounts[body.type] ?? 0) + 1;
           if (body.type === 'flow_started' && session.state !== 'completed') session.state = 'active';
           if (body.type === 'step_completed' && !session.completedSteps.includes(body.stepId)) session.completedSteps.push(body.stepId);
-          if (body.type === 'flow_completed') { session.state = 'completed'; session.completedAt ??= new Date(current).toISOString(); }
+          if (body.type === 'flow_completed') { session.state = 'completed'; session.completedAt ??= new Date(current).toISOString(); session.verification = body.verification ?? 'screen_observed'; }
           if (body.type === 'autonomy_completed') session.autonomyCompleted = true;
           if (body.type === 'cancelled' && session.state !== 'completed') session.state = 'cancelled';
           if (body.durationSeconds !== undefined) session.durationSeconds = Math.max(session.durationSeconds, Math.round(body.durationSeconds));
         }); respond(200, { ok: true }); return;
       }
       if (method === 'GET' && route === '/assistant/history') {
-        needUser(); respond(200, { sessions: sessionsFor(state, user.id).map(({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted }) =>
-          ({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted })).reverse() }); return;
+        needUser(); respond(200, { sessions: sessionsFor(state, user.id).map(({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted, verification }) =>
+          ({ id, flowId, state, createdAt, completedAt, durationSeconds, completedSteps, autonomyCompleted, verification })).reverse() }); return;
       }
       if (method === 'POST' && route === '/family/link') {
         needUser(); keys(body, ['invitationCode', 'permissions']); const code = text(body.invitationCode, 'invitationCode', 32).toUpperCase();

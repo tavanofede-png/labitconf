@@ -39,9 +39,21 @@ Para recorrer el alta en el mock, **Verificar mi correo** abre «Te llegó un c�
 
 En el mock, **Ya tengo cuenta → correo → 000-000** abre directamente el chat de TINO, incluso si antes se inició un alta incompleta con ese correo. El login de demo precarga el perfil; el alta nueva conserva su recorrido separado. El inicio muestra la mascota oficial arriba, el menú lateral que se desliza desde la derecha y el compositor fijo con escritura, voz y envío. El menú abre Chat, Mi grupo familiar, Guías, Ajustes y Cerrar sesión. El inicio anterior con tarjetas y navegación inferior fue reemplazado por esta conversación. Una nueva sesión limpia la conversación anterior en memoria.
 
+## Conversación y recorridos de la demo
+
+El chat autenticado recibe texto libre y conserva el contexto en memoria. `apps/api/src/assistant.mjs` separa la conversación de las acciones: «WhatsApp» por sí solo no dispara compartir ubicación. El mock puede ayudar con otras consultas sobre fotos, letra, Wi-Fi y contactos; no representa un modelo general conectado. Los borradores de correo piden destinatario, asunto y mensaje en tres turnos y muestran una revisión antes de abrir la app de correo.
+
+Las guías `whatsapp-group` y `email-send` tienen sesiones propias, progreso por paso, cancelación y finalización explícita del usuario. El botón de inicio abre WhatsApp o un borrador mediante la app de correo instalada; TINO no crea el grupo ni envía el mensaje por su cuenta. El usuario revisa y realiza la acción final en la app correspondiente. Las instrucciones pueden seguirse en el chat o en la burbuja si se habilita Accesibilidad. Esta burbuja de pasos no lee el contenido de WhatsApp ni de los correos. El resultado se registra como `user_confirmed`; no se presenta como verificación visual automática. El correo y su contenido no se guardan en el JSON de métricas.
+
+### Conexión de IA a cargo de Fede
+
+Por indicación del usuario, la API del modelo se conecta al final. El punto de conexión es `apps/api/src/model-adapter.mjs`: reemplazar `generateReply = null` por una función asíncrona `({ system, messages, flows, task }) => string`. El servidor pasa instrucciones y los últimos turnos, admitiendo solo roles `user` y `assistant` del cliente. Las claves quedan en el backend. El login, las guías y la app Android conservan sus contratos. No hace falta cambiar la interfaz ni limitar las respuestas a las acciones de demo.
+
+Contrato de chat: `POST /api/assistant/message` con Bearer de la cuenta, `text`, `conversationId` y `history` opcional (hasta 12 turnos). La respuesta contiene `instruction`, `mode`, `flowId` opcional y `emailDraft` opcional. El contexto de formularios se mantiene acotado en RAM y aislado por sesión/conversación; no se persisten mensajes. Los botones de acción solo usan flujos permitidos, no instrucciones arbitrarias del modelo.
+
 ## Verificación actual
 
-Pasan 41 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
+Pasan 46 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
 
 Verificación física anterior: bienvenida, conexión USB al backend, registro de instalación, ingreso de una consulta por teclado y respuesta visible de la API. Todavía deben verificarse en la tablet el nuevo acceso demo, micrófono, permisos de Accesibilidad y el recorrido real sobre WhatsApp. OpenARG no tiene una clave configurada en esta Mac; no se acreditan datos públicos en vivo.
 

@@ -2,7 +2,7 @@ const DAY = 86_400_000;
 const round = (n) => Math.round(n * 10) / 10;
 const sum = (items, value) => items.reduce((total, item) => total + value(item), 0);
 const unique = (items) => new Set(items.map((item) => item.userId)).size;
-export const FLOW_NAMES = { 'whatsapp-location': 'Compartir ubicación por WhatsApp' };
+export const FLOW_NAMES = { 'whatsapp-location': 'Compartir ubicación por WhatsApp', 'whatsapp-group': 'Crear un grupo de WhatsApp', 'email-send': 'Enviar un correo' };
 
 export function periodFor(days, now) {
   const end = now + 1;

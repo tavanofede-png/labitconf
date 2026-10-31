@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
+import org.nieto.assistant.flow.EmailDraft
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognitionListener
@@ -45,7 +47,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { TinoEntryRoot(app) { onLogout -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openAccessibility, onLogout) } } }
+        setContent { NietoTheme { TinoEntryRoot(app) { onLogout -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onLogout) } } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
     override fun onResume() {
@@ -96,6 +98,10 @@ class MainActivity : ComponentActivity() {
         val intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
         if (intent != null) startActivity(intent) else app.status("WhatsApp no está instalado. Podés consultar por chat o pedir ayuda a tu familia.")
     }
+    private fun openEmail(draft: EmailDraft?, compose: Boolean) {
+        val uri = if (draft == null) Uri.parse("mailto:") else Uri.parse("mailto:${Uri.encode(draft.to)}?subject=${Uri.encode(draft.subject)}&body=${Uri.encode(draft.body)}")
+        runCatching { startActivity(if (compose) Intent(Intent.ACTION_SENDTO, uri) else Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_EMAIL)) }.onFailure { app.tellUser("No encontré una app de correo disponible. Podés abrir la que uses habitualmente y seguir la guía de TINO.") }
+    }
     private fun openAccessibility() { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -116,14 +122,19 @@ private val Turquoise = Color(0xFF00D6C9)
         onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
 
-@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onAccessibility: () -> Unit, onLogout: () -> Unit) {
+@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onEmail: (EmailDraft?, Boolean) -> Unit, onAccessibility: () -> Unit, onLogout: () -> Unit) {
     val state by app.state.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     var disclosure by remember { mutableStateOf(false) }
     BackHandler(enabled = tab != 0) { tab = 0 }
+    val startFlow: (String) -> Unit = { flowId ->
+        if (flowId == GuidanceEngine.FLOW_ID) { tab = 2; app.startGuide(onReady = onWhatsApp) }
+        else { tab = 0; app.startTask(flowId) { if (flowId == "email-send") onEmail(app.state.value.emailDraft, true) else onWhatsApp() } }
+    }
+    val reopenTask: () -> Unit = { if (app.state.value.task?.flowId == "email-send") onEmail(null, false) else onWhatsApp() }
     if (tab == 0) {
         TinoChatScreen(app, state, listening, onVoice,
-            onStartGuide = { app.startGuide(onReady = onWhatsApp) },
+            onStartGuide = startFlow, onOpenTask = reopenTask,
             onFamily = { tab = 1; if (app.settings.token.isNotBlank()) app.refreshFamily() },
             onGuides = { tab = 2 }, onSettings = { tab = 3 }, onLogout = onLogout)
     } else {
@@ -138,7 +149,7 @@ private val Turquoise = Color(0xFF00D6C9)
                     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
                     when (tab) {
                         1 -> FamilyContent(app, state)
-                        2 -> GuideContent(app, state, onWhatsApp, onSettings = { tab = 3 })
+                        2 -> GuideContent(app, state, onWhatsApp, onStartFlow = startFlow, onSettings = { tab = 3 })
                         else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
                     }
                 }
@@ -148,14 +159,17 @@ private val Turquoise = Color(0xFF00D6C9)
     if (disclosure) AlertDialog(onDismissRequest = { disclosure = false }, title = { Text("Vos decidís qué puedo ver") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Durante una guía, TINO identifica controles accesibles de WhatsApp para mostrarte dónde tocar y comprobar tus pasos.")
-            Text("No toca botones ni escribe por vos. No hace capturas, no envía el árbol de pantalla y no lee campos de contraseña ni teclados. En otras apps detiene la guía.")
+            Text("No toca botones ni escribe por vos. No hace capturas, no envía el árbol de pantalla y no lee campos de contraseña ni teclados. Las otras guías muestran instrucciones en la burbuja sin leer tus mensajes ni correos.")
             Text("La burbuja aparece con este permiso. Podés ocultarla o revocar el acceso en cualquier momento. Android te pedirá habilitar TINO en Accesibilidad.")
         } }, confirmButton = { TextButton(onClick = { app.settings.screenConsent = true; app.setOverlay(true); disclosure = false; onAccessibility() }) { Text("Acepto y abrir ajustes") } },
         dismissButton = { TextButton(onClick = { disclosure = false }) { Text("Ahora no") } })
 }
 
-@Composable private fun GuideContent(app: NietoApp, state: AppState, onWhatsApp: () -> Unit, onSettings: () -> Unit) {
-    Text("Aprendamos algo", style = MaterialTheme.typography.titleLarge, color = Forest)
+@Composable private fun GuideContent(app: NietoApp, state: AppState, onWhatsApp: () -> Unit, onStartFlow: (String) -> Unit, onSettings: () -> Unit) {
+    Text("Guías", style = MaterialTheme.typography.headlineLarge, color = Ink)
+    BigButton("Crear un grupo de WhatsApp", { onStartFlow("whatsapp-group") }, enabled = !state.busy)
+    BigButton("Enviar un correo", { onStartFlow("email-send") }, enabled = !state.busy)
+    Text("Compartir ubicación", style = MaterialTheme.typography.titleLarge, color = Forest)
     Text("Compartir mi ubicación\npor WhatsApp", fontSize = 24.sp, lineHeight = 31.sp, fontWeight = FontWeight.SemiBold)
     Text("Vos elegís la conversación y hacés cada toque. Yo te acompaño y compruebo los cambios.")
     val guide = state.guide
