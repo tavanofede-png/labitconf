@@ -1,19 +1,20 @@
 package org.nieto.assistant
 
 import android.Manifest
-import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.service.voice.VoiceInteractionService
-import androidx.activity.result.contract.ActivityResultContracts
-import org.nieto.assistant.voice.TinoVoiceInteractionService
 import android.os.Build
+import android.net.Uri
+import org.nieto.assistant.flow.EmailDraft
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,151 +22,245 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.nieto.assistant.family.FamilyActivity
+import org.nieto.assistant.flow.GuidanceEngine
 import org.nieto.assistant.flow.Stage
-import org.nieto.assistant.voice.VoiceInputActivity
+import org.nieto.assistant.entry.TinoEntryRoot
+import org.nieto.assistant.ui.TinoTypography
+import org.nieto.assistant.ui.TinoChatScreen
+import org.nieto.assistant.ui.TinoHomeLogo
 
 class MainActivity : ComponentActivity() {
-    private val app get()=application as NietoApp
-    private val microphonePermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result[Manifest.permission.RECORD_AUDIO] == true) activateVoice() else app.status("Para responder a Hola Tino, necesitás autorizar el micrófono.")
+    private val app get() = application as NietoApp
+    private var dictation: org.nieto.assistant.presence.OverlayDictation? = null
+    private var listening by mutableStateOf(false)
+    private var transcribing by mutableStateOf(false)
+    private var voiceDraft by mutableStateOf("")
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginListening() else app.status("El micrófono quedó desactivado. Podés escribir tu consulta.")
     }
-    private val assistantRole = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { app.refreshAssistantRole(); app.restoreWakeListening() }
-    override fun onCreate(savedInstanceState:Bundle?) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { MainScreen(app,::openAccessibility,::openVoice,::openFamily,::chooseAssistant) } }
+        if(intent.getStringExtra("destination")=="chat")app.openChat()
+        setContent { NietoTheme { TinoEntryRoot(app, beforeWakeStart = ::stopManualVoice) { onMenu, section, onSection -> NietoScreen(app, listening, transcribing, voiceDraft, ::toggleVoice, ::cancelVoice, ::openWhatsApp, ::openEmail, ::openAccessibility, onMenu, section, onSection) } } }
+        if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
+    override fun onStart() { super.onStart(); app.foreground(true);app.surfaceVisible("main",true) }
     override fun onResume() {
-        super.onResume(); app.surfaceVisible("main",true); app.refreshAssistantRole()
-        val enabled=Settings.Secure.getString(contentResolver,Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
-        val component=ComponentName(this,org.nieto.assistant.screen.NietoAccessibilityService::class.java)
-        app.screenConnection(enabled.split(':').any { ComponentName.unflattenFromString(it)==component })
+        super.onResume()
+        app.refreshAssistantRole()
+        org.nieto.assistant.usage.DeviceUsage.schedule(this)
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        val component = ComponentName(this, org.nieto.assistant.screen.NietoAccessibilityService::class.java)
+        app.screenConnection(enabled.split(':').any { ComponentName.unflattenFromString(it) == component })
+        app.restoreWakeListening()
     }
-    override fun onStop() { app.surfaceVisible("main",false); super.onStop() }
-    override fun onDestroy() { app.surfaceVisible("main",false); super.onDestroy() }
+    private fun toggleVoice() {
+        if(app.state.value.voice.active) { if(app.state.value.voice.phase==org.nieto.assistant.voice.VoicePhase.LISTENING)app.finishRealtimeInput() else app.cancelRealtimeVoice();return }
+        if (listening) { dictation?.stop(true); return }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        else beginListening()
+    }
+    private fun cancelVoice() {
+        if (app.state.value.voice.active) app.cancelRealtimeVoice()
+        else stopManualVoice()
+    }
+    private fun stopManualVoice() { dictation?.stop(false); dictation=null;app.resumeWakeAfterRecording("main-dictation");listening=false;transcribing=false;voiceDraft="" }
+    private fun beginListening() {
+        stopManualVoice();app.stopSpeaking();voiceDraft="";transcribing=false
+        app.pauseWakeForRecording("main-dictation")
+        listening=true
+        dictation=org.nieto.assistant.presence.OverlayDictation(this,app.scope,
+            partial={ transcript -> voiceDraft=transcript },
+            finished={ transcript,error ->
+                listening=false;transcribing=false;dictation=null
+                app.resumeWakeAfterRecording("main-dictation")
+                if(transcript.isNullOrBlank()) {
+                    voiceDraft=""
+                    error?.let { app.tellUser(it) }
+                } else {
+                    voiceDraft=transcript
+                    app.sendMessage(transcript,onComplete={ voiceDraft="" })
+                }
+            }).also { it.start() }
+    }
+    private fun openWhatsApp() {
+        val intent = packageManager.getLaunchIntentForPackage("com.whatsapp")
+        if (intent != null) startActivity(intent) else app.tellUser("WhatsApp no está instalado en este dispositivo. Instalalo para seguir la guía; también podés consultar por chat o pedir ayuda a tu familia.")
+    }
+    private fun openEmail(draft: EmailDraft?, compose: Boolean) {
+        val uri = if (draft == null) Uri.parse("mailto:") else Uri.parse("mailto:${Uri.encode(draft.to)}?subject=${Uri.encode(draft.subject)}&body=${Uri.encode(draft.body)}")
+        runCatching { startActivity(if (compose) Intent(Intent.ACTION_SENDTO, uri) else Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_EMAIL)) }.onFailure { app.tellUser("No encontré una app de correo disponible. Podés abrir la que uses habitualmente y seguir la guía de TINO.") }
+    }
     private fun openAccessibility() { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-    private fun openVoice() {
-        if (!app.state.value.accessibilityConnected) { app.status("Habilitá TINO en Accesibilidad para señalar los controles."); openAccessibility(); return }
-        if (!VoiceInteractionService.isActiveService(this,ComponentName(this,TinoVoiceInteractionService::class.java))) { chooseAssistant(); return }
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            microphonePermissions.launch(if(Build.VERSION.SDK_INT>=33) arrayOf(Manifest.permission.RECORD_AUDIO,Manifest.permission.POST_NOTIFICATIONS) else arrayOf(Manifest.permission.RECORD_AUDIO))
-        } else activateVoice()
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val voice = app.consumeVoiceRequest()
+        if (intent.getStringExtra("destination") == "chat" || voice) app.openChat()
+        if (voice) toggleVoice()
     }
-    private fun activateVoice() {
-        app.startWakeListening()
-        if (app.state.value.wakeEnabled) startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
-    }
-    private fun chooseAssistant() {
-        if (Build.VERSION.SDK_INT>=29) {
-            val roles=getSystemService(RoleManager::class.java)
-            if(roles.isRoleAvailable(RoleManager.ROLE_ASSISTANT)) { assistantRole.launch(roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)); return }
-        }
-        assistantRole.launch(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
-    }
-    private fun openFamily() { startActivity(Intent(this,FamilyActivity::class.java)) }
-    private fun openWhatsApp() { packageManager.getLaunchIntentForPackage("com.whatsapp")?.let(::startActivity) ?: app.status("WhatsApp no está instalado.") }
+    override fun onStop() { stopManualVoice();app.foreground(false);app.surfaceVisible("main",false);super.onStop() }
+    override fun onDestroy() { stopManualVoice();super.onDestroy() }
 }
 
-private val Forest=Color(0xFF264C3B)
-private val Cream=Color(0xFFFAF8F2)
-@Composable private fun NietoTheme(content:@Composable ()->Unit) {
-    MaterialTheme(colorScheme=lightColorScheme(primary=Forest,onPrimary=Color.White,background=Cream,surface=Cream,onSurface=Color(0xFF242E28)),
-        typography=Typography(bodyLarge=androidx.compose.ui.text.TextStyle(fontSize=20.sp,lineHeight=29.sp),bodyMedium=androidx.compose.ui.text.TextStyle(fontSize=18.sp,lineHeight=26.sp),
-            labelLarge=androidx.compose.ui.text.TextStyle(fontSize=18.sp,fontWeight=FontWeight.SemiBold)),content=content)
+private val Forest = Color(0xFF006B64)
+private val WarmWhite = Color(0xFFF3F6F6)
+private val Ink = Color(0xFF101416)
+private val Turquoise = Color(0xFF00D6C9)
+@Composable private fun NietoTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = lightColorScheme(primary = Forest, onPrimary = Color.White, background = WarmWhite, surfaceTint = Forest, surfaceContainerHigh = WarmWhite, surfaceContainer = WarmWhite, surfaceContainerHighest = Color(0xFFE3E6E6),
+        surface = WarmWhite, onBackground = Ink, onSurface = Ink, secondaryContainer = Color(0xFFE3F9F6),
+        onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
-@Composable private fun MainScreen(app:NietoApp,onAccessibility:()->Unit,onVoice:()->Unit,onFamily:()->Unit,onAssistant:()->Unit) {
+
+@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, transcribing: Boolean, voiceDraft: String, onVoice: () -> Unit, onCancelVoice: () -> Unit, onWhatsApp: () -> Unit, onEmail: (EmailDraft?, Boolean) -> Unit, onAccessibility: () -> Unit, onMenu: () -> Unit, section: Int, onSection: (Int) -> Unit) {
     val state by app.state.collectAsState()
-    var settings by remember { mutableStateOf(false) }
-    var consent by remember { mutableStateOf(false) }
-    var images by remember { mutableStateOf(false) }
-    LaunchedEffect(settings) { if(settings) app.refreshDeviceSettings() }
-    Column(Modifier.fillMaxSize().background(Cream).statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp),verticalArrangement=Arrangement.spacedBy(18.dp)) {
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically) {
-            Text("TINO",fontSize=30.sp,fontWeight=FontWeight.Bold,color=Forest)
-            TextButton(onClick={settings=!settings}) { Text(if(settings) "Volver" else "Configuración") }
-        }
-        if(settings) SettingsContent(app,state,{consent=true},onAccessibility) else {
-            Text("Decí «Hola Tino». Estoy para ayudarte.",fontSize=34.sp,lineHeight=42.sp,fontWeight=FontWeight.SemiBold,color=Forest)
-            Text("Después de esta configuración, usá Gmail, WhatsApp o la aplicación que necesites. Decí Hola Tino y hablá después de la señal. TINO te responde por voz sin abrir una pantalla de chat.")
-            Text("Configuración inicial",fontWeight=FontWeight.Bold,fontSize=23.sp)
-            Text(if(app.settings.token.isBlank()) "1. Falta conectar esta tablet al servicio." else "1. Tablet conectada al servicio.")
-            if(app.settings.token.isBlank()) BigButton("Conectar tablet",{settings=true})
-            Text(if(state.accessibilityConnected) "2. Accesibilidad habilitada." else "2. Permití observar y señalar los controles.")
-            if(!state.accessibilityConnected) BigButton("Habilitar Accesibilidad",onAccessibility)
-            Text(if(state.assistantSelected) "3. TINO es el asistente predeterminado." else "3. Elegí TINO como asistente predeterminado.")
-            if(!state.assistantSelected) BigButton("Elegir asistente TINO",onAssistant)
-            if(state.wakeEnabled) {
-                Text(state.wakeStatus,fontWeight=FontWeight.Bold,color=Forest)
-                Text("La notificación permite terminar la conversación. Hola Tino sigue disponible para otra consulta.")
-                BigButton("Apagar TINO",{app.handleWakeControl(org.nieto.assistant.voice.WakeControlAction.FULL_OFF)})
-                Text("Apagar TINO desactiva Hola Tino. Para volver a usarlo, habilitalo aquí.",fontSize=16.sp)
-            } else BigButton("Habilitar Hola Tino",{
-                if(app.settings.openAiConsent && app.settings.remoteScreenConsent) onVoice() else consent=true
-            })
-            Text("Tras 30 segundos sin actividad, TINO olvida la conversación y espera un nuevo Hola Tino. Android muestra el uso del micrófono.",fontSize=16.sp)
-            OutlinedButton(onClick=onFamily,modifier=Modifier.fillMaxWidth()) {Text("Configuración familiar")}
-        }
-        if(state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        Text(state.status,fontSize=17.sp,color=Forest)
-        if(state.ttsNotice.isNotBlank()) Text(state.ttsNotice,fontSize=16.sp)
-        Text("TINO · "+BuildConfig.VERSION_NAME+" · Configuración del asistente",fontSize=14.sp,color=Forest)
+    val tab = section
+    var disclosure by remember { mutableStateOf(false) }
+    BackHandler(enabled = tab != 0) { onSection(0) }
+    val startFlow: (String) -> Unit = { flowId ->
+        if (flowId == GuidanceEngine.FLOW_ID) { onSection(2); app.startGuide(onReady = onWhatsApp) }
+        else { onSection(0); app.startTask(flowId) { if (flowId == "email-send") onEmail(app.state.value.emailDraft, true) else onWhatsApp() } }
     }
-    if(consent) AlertDialog(onDismissRequest={consent=false},title={Text("Permitir Hola Tino y asistencia por voz")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Text("TINO reconocerá Hola Tino en la tablet, sin enviar esa escucha a Internet. Mantendrá una notificación de micrófono y podrás detenerlo. Esta elección se conserva para que Android pueda restaurar el asistente después de reiniciar.")
-        Text("Después de llamarlo, tu consulta de voz y los controles de la pantalla autorizada se envían a OpenAI a través del servidor para responder y señalar dónde tocar. Las pantallas sensibles se ocultan. No digas contraseñas ni códigos.")
-        Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(checked=images,onCheckedChange={images=it},enabled=Build.VERSION.SDK_INT>=30); Text("Permitir también capturas con campos ocultos",fontSize=16.sp) }
-        Text("TINO no toca botones ni crea pantallas dentro de tus aplicaciones. No se guarda un historial de conversaciones ni capturas. La respuesta usa voz generada por IA.")
-    }},confirmButton={TextButton(onClick={
-        app.settings.remoteScreenConsent=true;app.settings.screenImagesConsent=images && Build.VERSION.SDK_INT>=30
-        app.settings.openAiConsent=true;app.settings.screenConsent=true
-        consent=false;onVoice()
-    }) {Text("Permitir y configurar")}},dismissButton={TextButton(onClick={consent=false}) {Text("Cancelar")}})
-}
-@Composable private fun SettingsContent(app:NietoApp,state:AppState,onConsent:()->Unit,onAccessibility:()->Unit) {
-    var url by remember {mutableStateOf(app.settings.baseUrl)}
-    var name by remember {mutableStateOf(app.settings.deviceName)}
-    var enrollmentCode by remember {mutableStateOf("")}
-    var territoriesOpen by remember {mutableStateOf(false)}
-    Text("Vos decidís.",fontSize=32.sp,color=Forest,fontWeight=FontWeight.SemiBold)
-    Text("Pantalla y voz",fontSize=24.sp,color=Forest)
-    Text(if(app.settings.remoteScreenConsent) "Permiso remoto activo. La observación ocurre sólo mientras encendés la asistencia." else "El permiso local anterior no permite enviar tu pantalla. Revisá y aceptá el nuevo consentimiento.")
-    BigButton("Revisar permisos de asistencia",onConsent)
-    BigButton("Abrir ajustes de Accesibilidad",onAccessibility)
-    if(app.settings.remoteScreenConsent) OutlinedButton(onClick={app.revokeOpenAiConsent()},modifier=Modifier.fillMaxWidth()) {Text("Revocar pantalla, voz y consultas")}
-    HorizontalDivider()
-    Text("Métricas institucionales",fontSize=24.sp,color=Forest)
-    Text("Opcional e independiente de Familia. Permite estadísticas agregadas de actividad y dificultades de los últimos 30 días. No incluye tu pantalla, consultas ni respuestas. Se desactiva por defecto.",fontSize=17.sp)
-    if(state.deviceSettingsLoaded) Row(verticalAlignment=Alignment.CenterVertically) { Checkbox(checked=state.institutionMetricsConsent,onCheckedChange={app.setInstitutionMetricsConsent(it)},enabled=!state.busy); Text("Autorizar métricas agregadas",fontSize=17.sp) }
-    else { Text("Permiso vigente sin consultar. Conectá el teléfono o actualizá para conocerlo.",fontSize=16.sp); OutlinedButton(onClick={app.refreshDeviceSettings()},enabled=!state.busy) { Text("Consultar permiso vigente") } }
-    Text("Jurisdicción declarada",fontWeight=FontWeight.SemiBold)
-    Text("Elegila vos; NIETO no usa GPS ni detecta tu ubicación. Sirve para agrupar estadísticas del territorio autorizado.",fontSize=16.sp)
-    Box {
-        OutlinedButton(onClick={territoriesOpen=true},enabled=!state.busy,modifier=Modifier.fillMaxWidth()) { Text(org.nieto.assistant.data.Territories.names[state.territoryId] ?: "Elegir jurisdicción") }
-        DropdownMenu(expanded=territoriesOpen,onDismissRequest={territoriesOpen=false},modifier=Modifier.heightIn(max=340.dp)) {
-            org.nieto.assistant.data.Territories.names.forEach { (id,title) -> DropdownMenuItem(text={Text(title)},onClick={territoriesOpen=false;app.saveTerritory(id)}) }
+    val reopenTask: () -> Unit = { if (app.state.value.task?.flowId == "email-send") onEmail(null, false) else onWhatsApp() }
+    if (tab == 0) {
+        TinoChatScreen(app, state, listening || state.wakePhase == "command" || state.voice.phase == org.nieto.assistant.voice.VoicePhase.LISTENING, transcribing, voiceDraft, onVoice, onCancelVoice,
+            onStartGuide = startFlow, onOpenTask = reopenTask,
+            onSettings = { onSection(3) }, onFamily = { onSection(1) }, onMenu = onMenu)
+    } else {
+        Scaffold(containerColor = WarmWhite, topBar = {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                TinoHomeLogo(Modifier.width(116.dp).height(48.dp))
+                Image(painterResource(R.drawable.tino_mascot), null, Modifier.size(40.dp))
+                IconButton(onClick = onMenu, modifier = Modifier.semantics { contentDescription = "Abrir menú" }) { Text("☰", color = Ink, fontSize = 24.sp) }
+            }
+        }) { insets ->
+            Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.TopCenter) {
+                Column(Modifier.widthIn(max = 800.dp).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
+                    when (tab) {
+                        1 -> org.nieto.assistant.ui.FamilyConsentScreen(app, state)
+                        2 -> GuideContent(app, state, onWhatsApp, onStartFlow = startFlow, onSettings = { onSection(3) })
+                        4 -> org.nieto.assistant.ui.HistoryScreen(app)
+                        else -> { org.nieto.assistant.ui.ScreenAssistancePermissions(app); SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility) }
+                    }
+                }
+            }
         }
     }
-    HorizontalDivider()
-    Text("Conexión del teléfono",fontSize=24.sp,color=Forest)
-    OutlinedTextField(value=name,onValueChange={name=it.take(60)},label={Text("Nombre del teléfono")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-    OutlinedTextField(value=url,onValueChange={url=it},label={Text("Servidor NIETO")},modifier=Modifier.fillMaxWidth(),singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Uri))
-    OutlinedTextField(value=enrollmentCode,onValueChange={enrollmentCode=it.filter(Char::isLetterOrDigit).uppercase(java.util.Locale.ROOT).take(12)},
-        label={Text("Código de conexión del equipo")},modifier=Modifier.fillMaxWidth(),singleLine=true)
-    Text("El equipo genera este código de un solo uso desde Conexión. Vence a los 15 minutos. Es distinto del código familiar y no es una clave de OpenAI.",fontSize=16.sp)
-    BigButton("Guardar y conectar",{app.saveServer(url,name,enrollmentCode,onConnected={enrollmentCode=""})},enabled=!state.busy)
-    if(state.deviceSettingsLoaded) Text(if(state.realtimeApproved) "Asistencia autorizada para este teléfono." else "La asistencia espera la autorización del equipo.",fontSize=16.sp)
-    if(app.settings.deviceId.isNotBlank()) Text("Identificador de este teléfono: ${app.settings.deviceId}",fontSize=14.sp)
-    Text("La conexión de producción usa HTTPS y funciona sin una computadora local encendida.",fontSize=15.sp)
-    Text("Sólo la credencial NIETO queda cifrada en este teléfono. Las claves de OpenAI y OpenARG permanecen en el servidor. Android 11+ puede aportar una captura autorizada; Android 8–10 aporta controles accesibles.",fontSize=16.sp)
+    if (disclosure) AlertDialog(onDismissRequest = { disclosure = false }, title = { Text("Vos decidís qué puedo ver") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Durante una guía, TINO identifica controles accesibles de WhatsApp para mostrarte dónde tocar y comprobar tus pasos.")
+            Text("No toca botones ni escribe por vos. No hace capturas, no envía el árbol de pantalla y no lee campos de contraseña ni teclados. Las otras guías muestran instrucciones en la burbuja sin leer tus mensajes ni correos.")
+            Text("La burbuja aparece con este permiso. Podés ocultarla o revocar el acceso en cualquier momento. Android te pedirá habilitar TINO en Accesibilidad.")
+        } }, confirmButton = { TextButton(onClick = { app.settings.screenConsent = true; app.setOverlay(true); disclosure = false; onAccessibility() }) { Text("Acepto y abrir ajustes") } },
+        dismissButton = { TextButton(onClick = { disclosure = false }) { Text("Ahora no") } })
 }
-@Composable private fun BigButton(text:String,onClick:()->Unit,enabled:Boolean=true) {
-    Button(onClick=onClick,enabled=enabled,modifier=Modifier.fillMaxWidth().heightIn(min=58.dp),shape=RoundedCornerShape(16.dp),contentPadding=PaddingValues(horizontal=20.dp,vertical=16.dp)) {Text(text,fontSize=19.sp,lineHeight=25.sp)}
+
+@Composable private fun GuideContent(app: NietoApp, state: AppState, onWhatsApp: () -> Unit, onStartFlow: (String) -> Unit, onSettings: () -> Unit) {
+    Text("Guías", style = MaterialTheme.typography.headlineLarge, color = Ink)
+    BigButton("Crear un grupo de WhatsApp", { onStartFlow("whatsapp-group") }, enabled = !state.busy)
+    BigButton("Enviar un correo", { onStartFlow("email-send") }, enabled = !state.busy)
+    Text("Compartir ubicación", style = MaterialTheme.typography.titleLarge, color = Forest)
+    Text("Compartir mi ubicación\npor WhatsApp", fontSize = 24.sp, lineHeight = 31.sp, fontWeight = FontWeight.SemiBold)
+    Text("Vos elegís la conversación y hacés cada toque. Yo te acompaño y compruebo los cambios.")
+    val guide = state.guide
+    if (guide.stage in listOf(Stage.IDLE, Stage.CANCELLED)) {
+        BigButton("Empezar esta guía", { app.startGuide(onReady = onWhatsApp) }, enabled = !state.busy)
+    } else {
+        Surface(color = Color(0xFFE8EDDA), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(if (guide.practice) "Práctica sin pistas" else "Tu próximo paso", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Forest)
+                Text(guide.notice ?: guide.instruction)
+                if (guide.stage == Stage.CONFIRM && guide.notice == null) BigButton("Sí, quiero compartir mi ubicación", { app.confirmShare(); onWhatsApp() })
+                if (guide.stage == Stage.COMPLETE) BigButton("Practicar sin pistas", { app.startGuide(practice = true, onReady = onWhatsApp) }, enabled = !state.busy)
+                else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = { app.repeat() }, Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Repetir") }
+                        OutlinedButton(onClick = { app.lost() }, Modifier.weight(1f).heightIn(min = 52.dp)) { Text("Me perdí") }
+                    }
+                    OutlinedButton(onClick = onWhatsApp, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Volver a WhatsApp") }
+                    TextButton(onClick = { app.cancel() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Terminar la guía") }
+                }
+            }
+        }
+    }
+    if (!state.accessibilityConnected || !app.settings.screenConsent) OutlinedButton(onClick = onSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Activar guía en pantalla") }
+    OutlinedButton(onClick = { app.requestHelp() }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Pedir ayuda a mi red") }
+    Text("Compatible con WhatsApp Android en español. Si TINO no reconoce una pantalla, te lo informa antes de continuar.", fontSize = 15.sp, lineHeight = 22.sp)
+}
+
+@Composable private fun FamilyContent(app: NietoApp, state: AppState) {
+    var code by remember { mutableStateOf("") }
+    var progress by remember { mutableStateOf(false) }
+    var help by remember { mutableStateOf(false) }
+    var revoke by remember { mutableStateOf(false) }
+    Text("Cerca de los tuyos.", style = MaterialTheme.typography.headlineLarge, color = Forest)
+    Text("Vos elegís quién te acompaña y qué puede saber. Tus conversaciones y tu pantalla siempre quedan fuera del grupo.")
+    if (state.familyName == null) {
+        Text("Unite a tu grupo", style = MaterialTheme.typography.titleLarge)
+        Text("Pedile a una persona de confianza el código que generó en el portal TINO Red.")
+        OutlinedTextField(value = code, onValueChange = { code = it.take(40) }, modifier = Modifier.fillMaxWidth(), label = { Text("Código de invitación") }, singleLine = true)
+        PermissionRow("Compartir mi progreso", "Tareas completadas, práctica autónoma y tiempo acompañado.", progress) { progress = it }
+        PermissionRow("Permitir solicitudes de ayuda", "Tu familia recibe una alerta cuando vos tocás Pedir ayuda.", help) { help = it }
+        BigButton("Aceptar invitación y permisos", { app.acceptFamily(code, progress, help) }, enabled = code.isNotBlank() && !state.busy)
+    } else {
+        Text("Tu grupo: ${state.familyName}", style = MaterialTheme.typography.titleLarge)
+        Text("Progreso: ${if (state.shareProgress) "compartido" else "privado"}\nSolicitudes de ayuda: ${if (state.allowHelp) "autorizadas" else "desactivadas"}")
+        BigButton("Pedir ayuda ahora", { app.requestHelp() }, enabled = state.allowHelp && !state.busy)
+        Text("Esta acción envía un aviso real al portal familiar. No realiza una llamada ni es un servicio de emergencias.", fontSize = 16.sp)
+        OutlinedButton(onClick = { revoke = true }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Revocar acceso familiar") }
+        Text("Para cambiar los permisos, revocá el acceso y aceptá una invitación nueva.", fontSize = 16.sp)
+    }
+    TextButton(onClick = { app.refreshFamily() }, enabled = !state.busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Actualizar mi grupo") }
+    if (revoke) AlertDialog(onDismissRequest = { revoke = false }, title = { Text("¿Revocar el acceso?") },
+        text = { Text("Tu grupo dejará de recibir progreso y solicitudes de ayuda de este teléfono.") },
+        confirmButton = { TextButton(onClick = { revoke = false; app.revokeFamily() }) { Text("Revocar acceso") } },
+        dismissButton = { TextButton(onClick = { revoke = false }) { Text("Volver") } })
+}
+
+@Composable private fun SettingsContent(app: NietoApp, state: AppState, onConsent: () -> Unit, onAccessibility: () -> Unit) {
+    var enrollmentCode by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf(app.settings.baseUrl) }
+    var name by remember { mutableStateOf(app.settings.deviceName) }
+    val screenConsent = app.settings.screenConsent
+    Text("A tu manera.", style = MaterialTheme.typography.headlineLarge, color = Forest)
+    Text("Guía en pantalla", style = MaterialTheme.typography.titleLarge)
+    Text(if (state.accessibilityConnected && screenConsent) "Accesibilidad autorizada. La observación ocurre solo durante una guía activa." else "Elegí si querés que TINO reconozca los controles de WhatsApp mientras te acompaña.")
+    BigButton(if (screenConsent) "Abrir ajustes de accesibilidad" else "Conocer y activar la guía", if (screenConsent) onAccessibility else onConsent)
+    PermissionRow("Mostrar burbuja TINO", "Una ayuda a mano mientras usás WhatsApp.", state.overlayEnabled) { if (app.settings.screenConsent) app.setOverlay(it) else onConsent() }
+    if (screenConsent) OutlinedButton(onClick = { app.cancel(); app.settings.screenConsent = false; app.setOverlay(false); app.status("Consentimiento revocado. Dejé de observar la pantalla. Podés deshabilitar también el servicio en los ajustes de Android.") }, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Revocar observación de pantalla") }
+    HorizontalDivider()
+    Text("Conexión del prototipo", style = MaterialTheme.typography.titleLarge)
+    Text("El equipo de la hackathon te indica la dirección. OpenARG se conecta desde el servidor; este teléfono no necesita su clave.", fontSize = 17.sp)
+    OutlinedTextField(value = name, onValueChange = { name = it.take(60) }, label = { Text("Nombre de este teléfono") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+    OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Dirección del servidor") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
+    OutlinedTextField(value=enrollmentCode,onValueChange={enrollmentCode=it.filter(Char::isLetterOrDigit).uppercase(java.util.Locale.ROOT).take(12)},label={Text("Código de conexión del equipo")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    Text("El equipo genera este código de un uso desde Conexión. Vence a los 15 minutos y es independiente del ingreso y del grupo familiar.",fontSize=15.sp)
+    BigButton("Guardar y conectar", { app.saveServer(url, name, enrollmentCode, onConnected={enrollmentCode=""}) }, enabled = !state.busy)
+    Text("Emulador: http://10.0.2.2:8787\nPor USB con adb reverse: http://127.0.0.1:8787\nEn celular por Wi-Fi: dirección LAN del equipo.", fontSize = 15.sp, lineHeight = 23.sp)
+    Text("Privacidad", style = MaterialTheme.typography.titleLarge)
+    Text("Las credenciales de instalación se cifran con Android Keystore. El chat vive en memoria y se envía al servidor para responder. La asistencia visual solo envía controles y capturas a OpenAI con tu autorización. Tu grupo familiar no recibe el chat ni las capturas. La ubicación familiar requiere un permiso independiente y la compartís por tiempo limitado.", fontSize = 17.sp)
+    Text("Versión ${BuildConfig.VERSION_NAME} · ${GuidanceEngine.PROFILE_VERSION}\nConfiguración y compatibilidad de TINO.", fontSize = 15.sp, lineHeight = 22.sp)
+}
+
+@Composable private fun PermissionRow(title: String, detail: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Checkbox(checked = checked, onCheckedChange = onChecked)
+        Column(Modifier.weight(1f)) { Text(title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold); Text(detail, fontSize = 16.sp, lineHeight = 22.sp) }
+    }
+}
+@Composable private fun BigButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
+    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 58.dp), shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp)) { Text(text, fontSize = 19.sp, lineHeight = 25.sp) }
 }

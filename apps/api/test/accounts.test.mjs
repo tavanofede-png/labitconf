@@ -26,7 +26,7 @@ async function fixture(t, overrides = {}) {
     return result.body.sessionToken;
   };
   const onboard = async (token, email, role = 'user', extra = {}) => request('/accounts/onboarding', { token, method: 'POST', body: { role, profile: { name: email.split('@')[0], email, username: email.split('@')[0], phone: '+54 11 1234 5678', territoryId: 'AR-C', organization: 'Institución de prueba' }, preferences: {},
-    answers: role === 'user' ? { purpose: 0, interaction: 1, pace: 2, priority: 3 } : role === 'family' ? { relationship: 0, support: 1, frequency: 2, guidance: 3 } : { objective: 0, evidence: 1, work: 2 }, ...extra } });
+    answers: role === 'user' ? { purpose: 0, interaction: 1, pace: 2, priority: 3 } : role === 'family' ? { relationship: 0, support: 1, frequency: 2, guidance: 3 } : { size: 0, institutionType: 1, objective: 2 }, ...extra } });
   const realLogin = async address => {
     const auth = createAccounts({ store: new JsonStore(file), judgesDemo: false, localDemo: false, now: () => clock, sendCode: ({ email, code }) => codes.set(email, code) });
     const challenge = await auth.handle({ route: '/auth/code/request', method: 'POST', body: { email: address, role: 'user', purpose: 'signup' } });

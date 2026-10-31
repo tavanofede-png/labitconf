@@ -1,24 +1,31 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
   "framework": "vite",
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
   "outputDirectory": "apps/web/dist",
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "https://tino-api-labitconf.vercel.app/api/:path*" },
-    { "source": "/demo/:path*", "destination": "/index.html" },
-    { "source": "/emulador/:path*", "destination": "/index.html" },
-    { "source": "/web/:path*", "destination": "/index.html" },
-    { "source": "/portal/:path*", "destination": "/index.html" }
-  ],
-  "headers": [
+  "functions": {
+    "api/index.mjs": {
+      "maxDuration": 300,
+      "includeFiles": "apps/api/src/public-data/**"
+    },
+    "api/jury.mjs": {
+      "maxDuration": 65,
+      "includeFiles": "apps/api/src/public-data/**"
+    }
+  },
+  "routes": [
     {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), geolocation=()" }
-      ]
+      "handle": "filesystem"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/index"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }

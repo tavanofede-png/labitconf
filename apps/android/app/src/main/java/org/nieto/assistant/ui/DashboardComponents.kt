@@ -4,6 +4,8 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +24,8 @@ import org.json.JSONObject
 import org.nieto.assistant.R
 import java.text.NumberFormat
 import java.util.Locale
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 
 internal val DashCyan = Color(0xFF00D6C9)
 internal val DashTeal = Color(0xFF006B64)
@@ -47,18 +51,72 @@ internal fun monthLabel(key: String): String = runCatching { java.time.YearMonth
 }
 
 internal data class DashboardMetric(val label: String, val value: String, val detail: String, val tint: Color = DashTeal)
+
+@Composable internal fun RankingSheetCard(selected: Int, choose: (Int) -> Unit, tabs: List<String> = listOf("Por app", "Por workflow"), title: String = "Lo más pedido", subtitle: String = "Solicitudes de acompañamiento en el período.", content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.selectableGroup(), verticalAlignment = Alignment.Bottom) {
+            tabs.forEachIndexed { index, label ->
+                val active = selected == index
+                Surface(
+                    color = if (active) Color.White else Color(0xFFE7ECEB),
+                    shape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2EAE8)),
+                    modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 128.dp).selectable(selected = active, role = Role.Tab, onClick = { choose(index) })
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(label, Modifier.padding(horizontal = 22.dp, vertical = 13.dp), color = if (active) DashTeal else DashMuted,
+                            fontSize = 14.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+                        Box(Modifier.fillMaxWidth().height(3.dp).background(if (active) DashTeal else Color.Transparent))
+                    }
+                }
+            }
+        }
+        Surface(color = Color.White, shape = RoundedCornerShape(topEnd = 24.dp, bottomStart = 24.dp, bottomEnd = 24.dp), border = BorderStroke(1.dp, Color(0xFFE2EAE8))) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(title, color = DashInk, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+                Text(subtitle, color = DashMuted, fontSize = 13.sp, lineHeight = 19.sp)
+                content()
+            }
+        }
+    }
+}
+
 @Composable internal fun MetricGrid(items: List<DashboardMetric>) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val columns = if (maxWidth >= 900.dp) 3 else if (maxWidth >= 330.dp) 2 else 1
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items.chunked(columns).forEach { row -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { item -> DashboardCard(modifier = Modifier.weight(1f)) {
-                    Text(item.label, color = DashMuted, fontSize = 13.sp, lineHeight = 18.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(item.label, color = DashMuted, fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f, fill = false))
+                        if (item.detail.isNotBlank()) MetricHelp(item.label, item.detail)
+                    }
                     Text(item.value, color = item.tint, fontWeight = FontWeight.Bold, fontSize = 30.sp, lineHeight = 36.sp)
-                    Text(item.detail, color = DashMuted, fontSize = 12.sp, lineHeight = 17.sp)
                 } }
                 repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
             } }
+        }
+    }
+}
+
+@Composable private fun MetricHelp(label: String, detail: String) {
+    var open by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Box(Modifier.hoverable(interaction)) {
+        IconButton(
+            onClick = { open = !open },
+            modifier = Modifier.size(32.dp).semantics { contentDescription = "Más información sobre $label" }
+        ) {
+            Box(Modifier.size(18.dp).border(1.dp, DashTeal, CircleShape), contentAlignment = Alignment.Center) {
+                Text("?", color = DashTeal, fontSize = 12.sp, lineHeight = 12.sp, fontWeight = FontWeight.Bold,
+                    style = androidx.compose.ui.text.TextStyle(platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false)))
+            }
+        }
+        DropdownMenu(expanded = open || hovered, onDismissRequest = { open = false },
+            modifier = Modifier.widthIn(max = 280.dp), containerColor = DashTeal,
+            properties = androidx.compose.ui.window.PopupProperties(focusable = open)) {
+            Text(detail, Modifier.padding(horizontal = 14.dp, vertical = 6.dp), color = Color.White, fontSize = 13.sp, lineHeight = 19.sp)
         }
     }
 }
@@ -88,11 +146,14 @@ internal data class DashboardMetric(val label: String, val value: String, val de
     }
 }
 
-@Composable internal fun DashboardHeader(label: String, title: String, onMenu: () -> Unit) {
+@Composable internal fun DashboardHeader(label: String, title: String, onMenu: () -> Unit, showMascot: Boolean = true) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         TinoHomeLogo(Modifier.width(100.dp).height(48.dp))
-        Image(painterResource(R.drawable.tino_mascot),null,Modifier.size(40.dp))
-        Column(Modifier.weight(1f)) { Text(label, color = DashTeal, fontSize = 13.sp, fontWeight = FontWeight.SemiBold); Text(title, color = DashInk, fontSize = 14.sp, maxLines = 1) }
+        if (showMascot) Image(painterResource(R.drawable.tino_mascot),null,Modifier.size(40.dp))
+        Column(Modifier.weight(1f)) {
+            Text(label, color = DashTeal, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            if (title.isNotBlank()) Text(title, color = DashInk, fontSize = 14.sp, maxLines = 1)
+        }
         IconButton(onClick = onMenu, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { Text("☰", color = DashInk, fontSize = 24.sp) }
     }
 }
@@ -116,12 +177,13 @@ internal data class DashboardMetric(val label: String, val value: String, val de
     }
 }
 
-@Composable internal fun RankingRows(items: List<JSONObject>, countKey: String = "count", onChoose: ((JSONObject) -> Unit)? = null) {
+@Composable internal fun RankingRows(items: List<JSONObject>, countKey: String = "count", appIcons: Boolean = false, onChoose: ((JSONObject) -> Unit)? = null) {
     val maximum = items.map { it.optDouble(countKey) }.filter { it.isFinite() && it>=0 }.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
     items.forEachIndexed { index, item ->
         Column(Modifier.fillMaxWidth().then(if (onChoose != null) Modifier.clickable { onChoose(item) } else Modifier).padding(vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Surface(color = Color(0xFFE7F8F4), shape = CircleShape) { Text("${index + 1}", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = DashTeal, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                if (appIcons) OriginalAppIcon(item.optString("package"), item.optString("name"))
+                else Surface(color = Color(0xFFE7F8F4), shape = CircleShape) { Text("${index + 1}", Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = DashTeal, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                 Text(item.optString("name", item.optString("label")), Modifier.weight(1f), color = DashInk, fontSize = 14.sp, lineHeight = 19.sp)
                 Text(item.amount(countKey), color = DashTeal, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }

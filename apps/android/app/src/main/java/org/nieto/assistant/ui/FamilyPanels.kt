@@ -148,7 +148,7 @@ private fun activeFamilyLocation(member: JSONObject, permissions: JSONObject): J
             val remaining=runCatching{((Instant.parse(location.getString("expiresAt")).epochSecond-Instant.parse(now).epochSecond)/60).coerceAtLeast(0)}.getOrDefault(0)
             val fraction=runCatching{val end=Instant.parse(location.getString("expiresAt")).epochSecond;val start=Instant.parse(location.getString("sharedAt")).epochSecond;((end-Instant.parse(now).epochSecond).toFloat()/(end-start)).coerceIn(0f,1f)}.getOrDefault(0f)
             Surface(color=FamilyMint,shape=RoundedCornerShape(14.dp)){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(9.dp)){Text("Le quedan $remaining min de ubicación compartida",fontSize=13.sp,color=DashTeal,fontWeight=FontWeight.SemiBold);LinearProgressIndicator(progress={fraction},modifier=Modifier.fillMaxWidth(),color=DashTeal,trackColor=Color.White);Text("${member.optString("name")} puede dejar de compartirla antes.",fontSize=12.sp,color=DashMuted)}}
-            if(demo) Text("Ubicación y mapa ilustrativos. No se está localizando ningún teléfono.",color=DashMuted,fontSize=11.sp,lineHeight=17.sp)
+            Text("Ubicación compartida temporalmente por la persona.",color=DashMuted,fontSize=11.sp,lineHeight=17.sp)
         }
         FamilySurface("El control sigue en sus manos") {Text("La ubicación es temporal. Al vencer el plazo deja de aparecer; no guardamos un recorrido ni mostramos un historial de lugares.",color=DashMuted,fontSize=14.sp,lineHeight=22.sp)}
     }

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -11,9 +12,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.animation.core.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.sin
 import org.nieto.assistant.AppState
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.R
@@ -46,18 +50,45 @@ private val Cyan = Color(0xFF00D6C9)
 private val Ink = Color(0xFF101416)
 private val Muted = Color(0xFF4C5B61)
 private val Paper = Color(0xFFF3F6F6)
+private val AssistantBubbleShape = GenericShape { size, _ ->
+    val radius = 24f
+    val tailWidth = 18f
+    val tailTop = size.height - 34f
+    moveTo(tailWidth + radius, 0f)
+    lineTo(size.width - radius, 0f)
+    quadraticBezierTo(size.width, 0f, size.width, radius)
+    lineTo(size.width, size.height - radius)
+    quadraticBezierTo(size.width, size.height, size.width - radius, size.height)
+    lineTo(tailWidth + radius, size.height)
+    quadraticBezierTo(tailWidth, size.height, tailWidth, size.height - radius)
+    lineTo(tailWidth, tailTop)
+    lineTo(0f, size.height - 5f)
+    lineTo(tailWidth, size.height - 12f)
+    lineTo(tailWidth, radius)
+    quadraticBezierTo(tailWidth, 0f, tailWidth + radius, 0f)
+    close()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit,
+@Composable fun TinoChatScreen(app: NietoApp, state: AppState, listening: Boolean, transcribing: Boolean, voiceDraft: String, onVoice: () -> Unit, onCancelVoice: () -> Unit,
     onStartGuide: (String) -> Unit, onOpenTask: () -> Unit, onSettings: () -> Unit, onFamily: () -> Unit, onMenu: () -> Unit) {
     var message by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
     val guideSuggested = state.suggestedFlow != null
     var consentText by remember { mutableStateOf<String?>(null) }
     var consentVoice by remember { mutableStateOf(false) }
+    var introTyping by remember(state.chat.isEmpty()) { mutableStateOf(state.chat.isEmpty()) }
     val send = { if (message.isNotBlank() && !state.busy && !state.voice.active) { if(app.settings.openAiConsent || app.settings.juryDemo){val sent=message;app.sendMessage(sent,onComplete={accepted -> if(accepted && message==sent)message=""})} else consentText=message } }
     if(consentText!=null || consentVoice) AlertDialog(onDismissRequest={consentText=null;consentVoice=false},title={Text("Hablar con TINO")},text={Text("Para responder, TINO envía tu consulta y, si elegís hablar, tu voz a OpenAI. Podés revocar este permiso en Ajustes. Tu grupo familiar no recibe la conversación.")},confirmButton={TextButton(onClick={app.settings.openAiConsent=true;val draft=consentText;val voice=consentVoice;consentText=null;consentVoice=false;if(draft!=null){app.sendMessage(draft);message=""};if(voice)onVoice()}){Text("Aceptar y continuar")}},dismissButton={TextButton(onClick={consentText=null;consentVoice=false}){Text("Volver")}})
     LaunchedEffect(state.foreground) { while (isActive && state.foreground) { app.refreshFamilyInbox(); delay(15000) } }
+    LaunchedEffect(Unit) {
+        if (state.chat.isEmpty()) {
+            introTyping = true
+            delay(2000)
+            app.showWelcomeMessage()
+            introTyping = false
+        }
+    }
     LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task, state.familyInbox.isNotEmpty()) {
         if(state.chat.size>1) list.animateScrollToItem(1 + state.chat.size + (if (state.busy) 1 else 0) + (if (guideSuggested) 1 else 0) + (if (state.task != null) 1 else 0) + (if (state.familyInbox.isNotEmpty()) 1 else 0))
     }
@@ -71,8 +102,8 @@ private val Paper = Color(0xFFF3F6F6)
             Box(Modifier.fillMaxWidth().navigationBarsPadding().imePadding(), contentAlignment = Alignment.Center) {
                 Column(Modifier.widthIn(max = 800.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (state.voice.phase != org.nieto.assistant.voice.VoicePhase.IDLE && state.voice.message.isNotBlank()) Text(state.voice.message, color = Muted, fontSize = 15.sp, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    if (listening) Text("Te escucho…", color = Muted, fontSize = 16.sp, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    Surface(shape = RoundedCornerShape(28.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFD7E2E0))) {
+                    if (listening || transcribing) VoiceRecorderPanel(listening, voiceDraft, onCancelVoice, onVoice)
+                    else Surface(shape = RoundedCornerShape(28.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFD7E2E0))) {
                         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextField(value = message, onValueChange = { message = it.take(1000) }, placeholder = { Text("Escribile a TINO…", color = Muted) },
                                 modifier = Modifier.weight(1f).heightIn(min = 52.dp).onFocusChanged { if(it.isFocused)app.selectWrittenMode() }.semantics { contentDescription = "Mensaje para TINO" }, maxLines = 4,
@@ -97,18 +128,7 @@ private val Paper = Color(0xFFF3F6F6)
                         Text("¿En qué te ayudo hoy?", color = Ink, fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     }
                 }
-                item {
-                    Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                        Text("Aprendé con TINO",color=Ink,fontSize=19.sp,fontWeight=FontWeight.SemiBold)
-                        Text("Dos prácticas guiadas, paso a paso y a tu ritmo.",color=Muted,fontSize=14.sp)
-                        org.nieto.assistant.demo.PracticeFlow.entries.forEach { flow ->
-                            OutlinedButton(onClick={app.openPractice(flow)},modifier=Modifier.fillMaxWidth().heightIn(min=56.dp),shape=RoundedCornerShape(18.dp),border=BorderStroke(1.dp,Color(0xFFB8DCD5))) {
-                                Text(flow.title,Modifier.weight(1f),fontSize=17.sp,color=Ink)
-                                Text("→",color=Color(0xFF006B64),fontSize=22.sp)
-                            }
-                        }
-                    }
-                }
+                if (introTyping && state.chat.isEmpty()) item { TypingBubble() }
                 if (state.familyInbox.isNotEmpty()) item {
                     DashboardCard("Tu grupo está cerca") {
                         state.familyInbox.forEach { incoming ->
@@ -121,17 +141,24 @@ private val Paper = Color(0xFFF3F6F6)
                     }
                 }
                 items(state.chat) { line ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (line.fromUser) Arrangement.End else Arrangement.Start) {
-                        Surface(color = if (line.fromUser) Color(0xFFD8F8F3) else Color.White, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = if (line.fromUser) 22.dp else 6.dp, bottomEnd = if (line.fromUser) 6.dp else 22.dp), modifier = Modifier.widthIn(max = 620.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
-                            Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(if (line.fromUser) "Vos" else "TINO", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (line.fromUser) Arrangement.End else Arrangement.Start,
+                        verticalAlignment = Alignment.Bottom) {
+                        if (!line.fromUser) {
+                            AssistantAvatar()
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Surface(color = if (line.fromUser) Color(0xFFD8F8F3) else Color.White,
+                            shape = if (line.fromUser) RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp) else AssistantBubbleShape,
+                            modifier = Modifier.widthIn(max = 620.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
+                            Column(Modifier.padding(start = if (line.fromUser) 20.dp else 28.dp, end = 20.dp, top = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                if (line.fromUser) Text("Vos", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                 Text(line.text, color = Ink, fontSize = 18.sp, lineHeight = 28.sp)
                                 line.attachments.forEach { file -> Text((if (file.mimeType == "application/pdf") "PDF · " else "Imagen · ") + file.name, color = Muted, fontSize = 14.sp) }
                             }
                         }
                     }
                 }
-                if (state.busy) item { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { CircularProgressIndicator(Modifier.size(18.dp), color = Color(0xFF007C74), strokeWidth = 2.dp); Text("TINO está escribiendo…", color = Muted, fontSize = 15.sp) } }
+                if (state.busy) item { TypingBubble() }
                 if (guideSuggested) item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (state.suggestedFlow == "email-send") state.emailDraft?.let { EmailDraftPreview(it) }
@@ -142,6 +169,62 @@ private val Paper = Color(0xFFF3F6F6)
                 }
                 if(state.assistanceEnabled) item { TextButton(onClick=app::continueWithoutTino) { Text("Seguir por mi cuenta",color=DashTeal) } }
                 state.task?.let { task -> item { TaskGuideCard(task, state.busy, app::advanceTask, onOpenTask, app::repeatTask, app::cancelTask, app::dismissTask, !state.accessibilityConnected || !app.settings.screenConsent, onSettings) } }
+            }
+        }
+    }
+}
+
+@Composable private fun TypingBubble() {
+    val phase by rememberInfiniteTransition(label = "TINO está escribiendo").animateFloat(
+        initialValue = 0f, targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart), label = "Puntos escribiendo"
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start, verticalAlignment = Alignment.Bottom) {
+        AssistantAvatar()
+        Spacer(Modifier.width(10.dp))
+        Surface(color = Color.White, shape = AssistantBubbleShape,
+            modifier = Modifier.widthIn(min = 88.dp, max = 110.dp).semantics { liveRegion = LiveRegionMode.Polite; contentDescription = "TINO está escribiendo" }) {
+            Row(Modifier.padding(start = 27.dp, end = 16.dp, top = 18.dp, bottom = 18.dp), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                repeat(3) { index ->
+                    val active = phase.toInt().coerceIn(0, 2) == index
+                    Box(Modifier.size(if (active) 10.dp else 8.dp).background(if (active) Cyan else Color(0xFFB8C5C3), CircleShape))
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun AssistantAvatar() {
+    Surface(Modifier.size(42.dp), shape = CircleShape, color = Cyan.copy(alpha = .10f), border = BorderStroke(1.dp, Cyan.copy(alpha = .28f))) {
+        Image(painterResource(R.drawable.tino_mascot), contentDescription = "TINO", modifier = Modifier.fillMaxSize())
+    }
+}
+
+@Composable private fun VoiceRecorderPanel(recording: Boolean, transcript: String, onCancel: () -> Unit, onFinish: () -> Unit) {
+    var seconds by remember(recording) { mutableIntStateOf(0) }
+    LaunchedEffect(recording) {
+        if (recording) while (isActive) { delay(1000); seconds++ }
+    }
+    val pulse by rememberInfiniteTransition(label = "Grabando audio").animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(720, easing = LinearEasing), RepeatMode.Restart), label = "Ondas de voz"
+    )
+    Surface(shape = RoundedCornerShape(28.dp), color = Color.White, border = BorderStroke(1.dp, if (recording) Cyan else Color(0xFFD7E2E0))) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            IconButton(onClick = onCancel, modifier = Modifier.size(44.dp).semantics { contentDescription = "Cancelar grabación" }) { ChatIcon("close") }
+            Canvas(Modifier.size(64.dp, 36.dp).semantics { contentDescription = "Audio grabándose" }) {
+                repeat(7) { index ->
+                    val height = if (recording) (9f + 19f * kotlin.math.abs(sin((pulse * 6.28f) + index * .82f))) else 6f
+                    val x = (8 + index * 8).dp.toPx()
+                    drawLine(Cyan, Offset(x, center.y - height.dp.toPx() / 2), Offset(x, center.y + height.dp.toPx() / 2), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(if (recording) "Grabando  ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}" else "Transcribiendo…", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                Text(transcript.ifBlank { if (recording) "Te estoy escuchando…" else "Convirtiendo tu audio en texto…" }, color = Muted, fontSize = 14.sp, maxLines = 2)
+            }
+            FilledIconButton(onClick = onFinish, enabled = recording, modifier = Modifier.size(48.dp).semantics { contentDescription = "Terminar grabación" }, colors = IconButtonDefaults.filledIconButtonColors(containerColor = Cyan, contentColor = Ink)) {
+                Canvas(Modifier.size(18.dp)) { drawRoundRect(Ink, cornerRadius = CornerRadius(3.dp.toPx())) }
             }
         }
     }

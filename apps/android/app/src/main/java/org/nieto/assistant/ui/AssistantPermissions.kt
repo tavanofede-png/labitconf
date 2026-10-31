@@ -38,7 +38,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.nieto.assistant.AppState
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.presence.FloatingBubbleService
-import org.nieto.assistant.presence.WakeVoiceService
+import android.app.role.RoleManager
+import kotlinx.coroutines.delay
 
 @Composable fun AssistantPermissions(app: NietoApp, state: AppState, beforeWakeStart: () -> Unit) {
     val context = LocalContext.current
@@ -46,6 +47,11 @@ import org.nieto.assistant.presence.WakeVoiceService
     var pendingBubble by rememberSaveable { mutableStateOf(false) }
     var wakeDisclosure by rememberSaveable { mutableStateOf(false) }
     var bubbleDisclosure by rememberSaveable { mutableStateOf(false) }
+    val assistantRole = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        app.refreshAssistantRole()
+        if (app.state.value.assistantSelected) app.startWakeListening()
+        else app.presenceNotice("Elegí TINO como asistente de Android para activar Hola TINO.")
+    }
     fun startBubble() {
         if (Settings.canDrawOverlays(context)) runCatching {
             context.startForegroundService(Intent(context, FloatingBubbleService::class.java)); app.presenceNotice(null)
@@ -54,7 +60,12 @@ import org.nieto.assistant.presence.WakeVoiceService
     fun startWake() {
         beforeWakeStart()
         runCatching {
-            context.startForegroundService(Intent(context, WakeVoiceService::class.java)); app.presenceNotice(null)
+            app.refreshAssistantRole()
+            if (!app.state.value.assistantSelected && Build.VERSION.SDK_INT >= 29) {
+                val roles = context.getSystemService(RoleManager::class.java)
+                assistantRole.launch(roles.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
+            } else app.startWakeListening()
+            app.presenceNotice(null)
         }.onFailure { app.presenceNotice("No pude activar «Hola TINO». Probá otra vez desde la app abierta.") }
     }
     val voicePermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -87,8 +98,8 @@ import org.nieto.assistant.presence.WakeVoiceService
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 if (app.state.value.bubbleEnabled && !Settings.canDrawOverlays(context)) context.stopService(Intent(context, FloatingBubbleService::class.java))
-                if (app.state.value.wakePhase != "off" && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
-                    context.stopService(Intent(context, WakeVoiceService::class.java))
+                if (app.state.value.wakeEnabled && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED)
+                    app.stopWakeListening()
             }
         }
         lifecycle.lifecycle.addObserver(observer)
@@ -103,14 +114,8 @@ import org.nieto.assistant.presence.WakeVoiceService
                 else bubbleDisclosure = true
             }
             HorizontalDivider(Modifier.padding(horizontal = 14.dp), color = Color(0xFFE6EEED))
-            PermissionToggle("Hola TINO", when (state.wakePhase) {
-                "starting" -> "Preparando la activación por voz…"
-                "waiting" -> "Esperando «Hola TINO»."
-                "command" -> "Te escucho. Decí tu consulta."
-                "paused" -> "En pausa mientras TINO responde."
-                else -> "Escuchar en segundo plano."
-            }, state.wakePhase != "off") { enabled ->
-                if (!enabled) context.stopService(Intent(context, WakeVoiceService::class.java))
+            PermissionToggle("Hola TINO", state.wakeStatus, state.wakeEnabled) { enabled ->
+                if (!enabled) app.stopWakeListening()
                 else if (app.settings.read("wakeDisclosurePolicy") == "1") requestWakePermissions()
                 else wakeDisclosure = true
             }
@@ -137,18 +142,33 @@ import org.nieto.assistant.presence.WakeVoiceService
 }
 
 @Composable private fun PermissionToggle(title: String, subtitle: String, checked: Boolean, change: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = change)
-        .semantics { stateDescription = if (checked) "Activado" else "Desactivado" }
+    var visualChecked by remember { mutableStateOf(checked) }
+    var interaction by remember { mutableIntStateOf(0) }
+    val currentChecked by rememberUpdatedState(checked)
+    LaunchedEffect(checked) { visualChecked = checked }
+    LaunchedEffect(interaction) {
+        if (interaction > 0) {
+            delay(650)
+            visualChecked = currentChecked
+        }
+    }
+    val toggle: (Boolean) -> Unit = { value ->
+        visualChecked = value
+        interaction++
+        change(value)
+    }
+    Row(Modifier.fillMaxWidth().toggleable(value = visualChecked, role = Role.Switch, onValueChange = toggle)
+        .semantics { stateDescription = if (visualChecked) "Activado" else "Desactivado" }
         .padding(horizontal = 14.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, color = Color(0xFF101416), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             Text(subtitle, color = Color(0xFF4C5B61), fontSize = 13.sp, lineHeight = 18.sp)
         }
-        val progress by animateFloatAsState(if (checked) 1f else 0f, animationSpec = tween(280), label = "Permiso")
-        val track by animateColorAsState(if (checked) Color(0xFF00D6C9) else Color(0xFFD6DCDE), animationSpec = tween(280), label = "Color del permiso")
+        val progress by animateFloatAsState(if (visualChecked) 1f else 0f, animationSpec = tween(280), label = "Permiso")
+        val track by animateColorAsState(if (visualChecked) Color(0xFF00D6C9) else Color(0xFFD6DCDE), animationSpec = tween(280), label = "Color del permiso")
         Canvas(Modifier.size(52.dp, 32.dp)) {
             drawRoundRect(track, cornerRadius = CornerRadius(size.height / 2))
-            if (checked) drawLine(Color(0xFF006B64), Offset(11.dp.toPx(), 12.dp.toPx()), Offset(11.dp.toPx(), 20.dp.toPx()), strokeWidth = 1.8.dp.toPx(), cap = StrokeCap.Round)
+            if (visualChecked) drawLine(Color(0xFF006B64), Offset(11.dp.toPx(), 12.dp.toPx()), Offset(11.dp.toPx(), 20.dp.toPx()), strokeWidth = 1.8.dp.toPx(), cap = StrokeCap.Round)
             else drawCircle(Color(0xFF4C5B61), radius = 3.5.dp.toPx(), center = Offset(40.dp.toPx(), size.height / 2), style = Stroke(1.5.dp.toPx()))
             drawCircle(Color.White, radius = 13.dp.toPx(), center = Offset((16 + 20 * progress).dp.toPx(), size.height / 2))
         }

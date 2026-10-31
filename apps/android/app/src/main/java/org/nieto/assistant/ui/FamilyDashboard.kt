@@ -108,7 +108,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                                 Text(when(tab){0->"Así viene su día";1->"Actividad de ${member.optString("name")}";2->"Ubicación compartida";else->"Avisos para acompañar"},color=DashInk,fontSize=if(wide) 27.sp else 23.sp,fontWeight=FontWeight.Bold,modifier=Modifier.semantics{heading()})
                                 Text(runCatching{Instant.parse(now).atZone(FamilyZone).format(DateTimeFormatter.ofPattern("EEEE d 'de' MMMM",Locale.forLanguageTag("es-AR"))).replaceFirstChar{it.uppercase()}}.getOrDefault("Hoy"),color=DashMuted,fontSize=12.sp)
                             }
-                            if(s.demoAccount) Surface(color=FamilyCream,shape=CircleShape){Text("Datos demo",Modifier.padding(horizontal=10.dp,vertical=6.dp),fontSize=10.sp,color=FamilyAmber,fontWeight=FontWeight.SemiBold)}
+                            Surface(color=FamilyCream,shape=CircleShape){Text("Actividad reciente",Modifier.padding(horizontal=10.dp,vertical=6.dp),fontSize=10.sp,color=FamilyAmber,fontWeight=FontWeight.SemiBold)}
                         }
                         when(tab) {
                             0 -> {
@@ -137,7 +137,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                     }
                     val requests=data?.optJSONArray("joinRequests").objects()
                     if(requests.isNotEmpty()) FamilySurface("Solicitudes para sumarse") {requests.forEach{request->Text(request.optString("name"),color=DashInk,fontSize=15.sp,fontWeight=FontWeight.Bold);OutlinedButton(onClick={vm.approveMember(request.getString("id"))},enabled=!s.busy){Text("Aprobar incorporación",color=DashTeal)}}}
-                    if(s.demoAccount) Text("Familia y actividad simuladas para explorar TINO. No corresponden a personas ni teléfonos reales.",color=DashMuted,fontSize=10.sp,lineHeight=15.sp)
+                    Text("La información visible depende de los permisos elegidos por cada persona.",color=DashMuted,fontSize=10.sp,lineHeight=15.sp)
                 }
             }
         }
@@ -168,7 +168,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
         event.optString("domain").takeIf{it.isNotBlank()}?.let{Text(it,color=DashTeal,fontSize=17.sp,fontWeight=FontWeight.SemiBold)}
         Text(event.optString("detail"),fontSize=16.sp,lineHeight=24.sp)
         FamilyAssistanceBadge(event)
-        if(event.optString("outcome")=="reported_complete") Text("Resultado confirmado por la persona" + if(event.optString("resultSource")=="simulated_self_report") " · ejemplo simulado" else "",fontSize=12.sp,color=DashMuted)
+        if(event.optString("outcome")=="reported_complete") Text("Resultado confirmado por la persona",fontSize=12.sp,color=DashMuted)
         Text("El resumen no incluye mensajes, correos ni contenido de conversaciones.",fontSize=12.sp,lineHeight=18.sp,color=DashMuted)
     }},confirmButton={TextButton(onClick={detail=null}){Text("Listo",color=DashTeal)}}) }
 

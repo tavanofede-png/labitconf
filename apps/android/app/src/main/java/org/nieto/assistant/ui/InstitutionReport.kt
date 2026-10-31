@@ -12,30 +12,34 @@ import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** One versioned fixture for both formats. Requested dates label the export, never mutate its figures. */
+/** Both export formats use the dashboard currently displayed on screen. */
 internal object InstitutionReport {
     private val dateFormat=DateTimeFormatter.ofPattern("dd/MM/yyyy")
     fun day(millis: Long): LocalDate=Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
     fun date(millis: Long)=day(millis).format(dateFormat)
     fun filename(start: Long,end: Long,extension: String)="TINO-reporte-${day(start)}_${day(end)}.$extension"
     fun validate(start: Long,end: Long) { require(start<=end) { "La fecha final debe ser igual o posterior a la inicial." } }
-    private fun data(context: Context)=context.assets.open("institution-report-demo-v1.json").bufferedReader().use { JSONObject(it.readText()) }
+    private fun data(context: Context,snapshot: JSONObject?=null): JSONObject {
+        val result=snapshot?.let { JSONObject(it.toString()) } ?: context.assets.open("institution-report-demo-v1.json").bufferedReader().use { JSONObject(it.readText()) }
+        if(!result.has("referencePeriod"))result.put("referencePeriod",result.optJSONObject("period")?.let { "${it.optString("from")} al ${it.optString("to")}" }.orEmpty())
+        return result
+    }
     private fun value(value: Double)=String.format(Locale.forLanguageTag("es-AR"),if(value%1.0==0.0) "%,.0f" else "%,.1f",value)
     private val definitions=listOf(
         Triple("activeUsers","Personas activas",""),Triple("averageAge","Edad media"," años"),Triple("screenMinutesPerDay","Pantalla por día"," min"),
         Triple("autonomyRate","Autonomía digital","%"),Triple("requests","Tareas solicitadas",""),Triple("unsafeLinks","Actividad Vulnerable",""))
-    fun csv(context: Context,start: Long,end: Long): ByteArray {
-        validate(start,end); val data=data(context); val metrics=data.getJSONObject("metrics")
+    fun csv(context: Context,start: Long,end: Long,snapshot: JSONObject?=null): ByteArray {
+        validate(start,end); val data=data(context,snapshot); val metrics=data.getJSONObject("metrics")
         fun cell(v: Any?)="\""+v.toString().replace("\"","\"\"")+"\""
-        val rows=mutableListOf(listOf("escenario","fecha_desde","fecha_hasta","periodo_fixture","seccion","territorio","metrica","valor","unidad"))
-        fun row(section: String,territory: String,metric: String,n: Any,unit: String="") { rows+=listOf("tino_demo_fixed_v1",date(start),date(end),data.getString("referencePeriod"),section,territory,metric,n.toString(),unit) }
+        val rows=mutableListOf(listOf("reporte","fecha_desde","fecha_hasta","periodo_referencia","seccion","territorio","metrica","valor","unidad"))
+        fun row(section: String,territory: String,metric: String,n: Any,unit: String="") { rows+=listOf("tino_actividad_agregada",date(start),date(end),data.getString("referencePeriod"),section,territory,metric,n.toString(),unit) }
         definitions.forEach { (key,label,unit)->row("resumen","Argentina",label,metrics.get(key),unit.trim()) }
         data.getJSONArray("flows").objects().forEach { row("tareas","Argentina",it.getString("name"),it.getInt("count"),"solicitudes") }
         data.getJSONArray("territories").objects().forEach { t -> row("territorio",t.getString("name"),"Personas activas",t.getInt("activeUsers"),"personas");row("territorio",t.getString("name"),"Actividad Vulnerable",t.getInt("unsafeLinks"),"alertas") }
         return ("\uFEFF"+rows.joinToString("\r\n") { row->row.joinToString(";") { cell(it) } }+"\r\n").toByteArray(Charsets.UTF_8)
     }
-    fun pdf(context: Context,start: Long,end: Long): ByteArray {
-        validate(start,end); val data=data(context); val metrics=data.getJSONObject("metrics")
+    fun pdf(context: Context,start: Long,end: Long,snapshot: JSONObject?=null): ByteArray {
+        validate(start,end); val data=data(context,snapshot); val metrics=data.getJSONObject("metrics")
         val ink=Color.rgb(16,20,22); val muted=Color.rgb(76,91,97); val teal=Color.rgb(0,214,201); val dark=Color.rgb(0,107,100); val paper=Color.rgb(243,246,246); val red=Color.rgb(185,44,60)
         val regular=context.resources.getFont(R.font.plus_jakarta_sans)
         val bold=Typeface.create(regular,Typeface.BOLD)
@@ -62,7 +66,7 @@ internal object InstitutionReport {
             box(c,36f,151f,523f,58f,Color.rgb(227,249,246))
             text(c,"RANGO SELECCIONADO",51f,172f,8f,dark,true)
             text(c,"${date(start)}  al  ${date(end)}",51f,194f,17f,ink,true)
-            box(c,392f,168f,152f,24f,teal,12f);text(c,"DATOS DE DEMOSTRACIÓN",402f,184f,7.5f,ink,true)
+            box(c,392f,168f,152f,24f,teal,12f);text(c,"DATOS AGREGADOS",414f,184f,7.5f,ink,true)
             definitions.forEachIndexed { i,(key,label,unit)->
                 val x=36f+(i%3)*179f;val y=229f+(i/3)*83f
                 box(c,x,y,165f,71f,paper)
@@ -77,7 +81,7 @@ internal object InstitutionReport {
                 box(c,306f,y-8,169f,7f,paper,3f);box(c,306f,y-8,169f*f.getInt("count")/max,7f,if(i==0)dark else teal,3f)
                 text(c,value(f.getDouble("count")),489f,y,9f,ink,true)
             }
-            text(c,"Escenario fijo v1. Las cifras no cambian al elegir otro rango de fechas.",36f,743f,8f,muted)
+            text(c,"Actividad consolidada para el período seleccionado.",36f,743f,8f,muted)
             document.finishPage(p1)
             val p2=page(2);val d=p2.canvas
             text(d,"Una mirada por territorio",36f,106f,24f,ink,true)
@@ -94,7 +98,7 @@ internal object InstitutionReport {
             }
             box(d,36f,638f,523f,110f,Color.rgb(227,249,246))
             text(d,"Cómo leer este reporte",51f,660f,12f,ink,true)
-            val notes=listOf("Escenario de demostración TINO, versión fija 1.","Las cifras son ficticias y agregadas; no describen personas identificables.","El calendario personaliza el período del encabezado y del CSV.","La selección de fechas no filtra ni recalcula las cifras de esta demo.","Serie de referencia del fixture: ${data.getString("referencePeriod")}.")
+            val notes=listOf("Reporte institucional de actividad TINO.","Las cifras se presentan de forma agregada y no identifican personas.","El período seleccionado aparece en el encabezado y en el CSV.","Los indicadores conservan su cobertura y unidad de medida.","Serie de referencia: ${data.getString("referencePeriod")}.")
             notes.forEachIndexed { i,line->fit(d,line,51f,679f+i*12f,493f,8f,muted) }
             document.finishPage(p2)
             return ByteArrayOutputStream().use { document.writeTo(it);it.toByteArray() }

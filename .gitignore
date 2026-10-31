@@ -36,6 +36,9 @@ artifacts/SHA256SUMS*.txt
 # Locally generated reports and previews.
 /output/
 
+# Blender render frames are regenerated from the animation source.
+brand/animation/frames/
+
 artifacts/*.part
 .vercel
 .env*

@@ -28,6 +28,8 @@ data class EntryState(
     val expiresAt: String = "", val resendAt: Long = 0, val code: String = "", val delivery: String = "email",
     val dashboard: JSONObject? = null, val context: JSONObject? = null, val invitationCode: String = "",
     val demoAccount: Boolean = false, val dashboardTerritory: String = "AR", val dashboardMonths: Int = 6, val dashboardMonth: String = "",
+    val dashboardStart: String = "2026-05-01", val dashboardEnd: String = "2026-10-31",
+    val dashboardRefreshing: Boolean = false,
     val section: Int = 0
 ) { fun field(key: String) = fields[key].orEmpty() }
 
@@ -40,6 +42,8 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     private var usernameJob: Job? = null
     private var answerJob: Job? = null
     private var usernameRevision = 0
+    private var demoDashboardBase: JSONObject? = null
+    private var demoDashboardAlternate = false
     init {
         if (app.settings.read("accountSession").isNotBlank()) work {
             try {
@@ -50,6 +54,9 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
                 if(error.status==401) { app.stopPresence();listOf("accountSession","installation","caregiverToken","institutionToken","onboardingComplete").forEach { app.settings.write(it,"") };change { EntryState() } }
                 else throw error
             }
+        } else if (app.settings.token.isNotBlank() && !app.settings.token.startsWith("jury-")) work {
+            val device = app.api.request("/devices/me")
+            change { it.copy(page = EntryPage.HOME, role = AccountRole.USER, fields = it.fields + ("name" to device.optString("name", app.settings.deviceName))) }
         }
     }
     private fun restore(): EntryState = runCatching {
@@ -147,11 +154,82 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     }
     fun message(value: String) = change { it.copy(message = value) }
     fun login() { change { it.copy(login = true, firstTime = false) }; move(EntryPage.LOGIN) }
+    fun quickDemo() = work {
+        app.settings.baseUrl = org.nieto.assistant.BuildConfig.API_BASE_URL
+        val reply=app.api.request("/auth/demo/login","POST",JSONObject().put("email","test@labitconf.com").put("password","0000"),authenticated=false)
+        app.settings.write("accountSession",reply.getString("sessionToken"))
+        applyAccount(reply)
+        val invitation=app.api.request("/jury?resource=activate","POST",JSONObject(),installationToken=reply.getString("sessionToken"))
+        app.api.register(invitation.getString("enrollmentCode"))
+        app.refreshDeviceSettings()
+        change { it.copy(page = EntryPage.HOME, role = AccountRole.USER, section = 0, demoAccount = true) }
+    }
+    fun connectDevice(url: String, code: String) = work {
+        app.settings.baseUrl = url
+        app.api.request("/health", authenticated = false)
+        app.api.register(code)
+        app.refreshDeviceSettings()
+        change { it.copy(page = EntryPage.HOME, role = AccountRole.USER, demoAccount = false, section = 0, message = null) }
+    }
     fun family(mode: String) { change { it.copy(familyMode = mode, login = mode == "join", firstTime = true) }; move(if (mode == "join") EntryPage.JOIN_FAMILY else EntryPage.FIND_PERSON) }
     fun findPerson() {
         if (state.value.field("targetIdentifier").trim().length < 3) { change { it.copy(error = "Ingresá su usuario, correo o teléfono.") }; return }
         // No unauthenticated people directory: the server resolves the invitation after account verification.
         move(EntryPage.PROFILE)
+    }
+    fun institutionChoice(index: Int) {
+        val s = state.value
+        val step = s.profileStep
+        if (s.role != AccountRole.INSTITUTION || s.page != EntryPage.PROFILE || step !in 1..3 || index !in 0..3) return
+        answerJob?.cancel()
+        val question = questionsFor(AccountRole.INSTITUTION)[step - 1]
+        val extra = when (question.id) {
+            "size" -> mapOf("organizationSize" to listOf("1", "2-10", "11-100", "100+")[index])
+            "institutionType" -> mapOf("organizationType" to listOf("education", "government", "company", "community")[index])
+            else -> emptyMap()
+        }
+        change { it.copy(answers = it.answers + (question.id to index), fields = it.fields + extra, error = null) }
+        val current = generation
+        answerJob = viewModelScope.launch {
+            delay(220)
+            if (generation == current && state.value.page == EntryPage.PROFILE && state.value.profileStep == step) {
+                change { it.copy(profileStep = step + 1, error = null) }
+            }
+        }
+    }
+    fun nextInstitutionStep() {
+        val s = state.value
+        if (s.role != AccountRole.INSTITUTION || s.page != EntryPage.PROFILE) return
+        if (s.profileStep == 0) {
+            if (s.field("organization").trim().isBlank()) { change { it.copy(error = "Ingresá el nombre de la institución.") }; return }
+            change { it.copy(profileStep = 1, error = null) }
+            return
+        }
+        if (s.profileStep < 4) return
+        val email = s.field("email").trim()
+        val name = s.field("name").trim()
+        val phone = s.field("phone").trim()
+        val error = when {
+            name.isBlank() -> "Ingresá el nombre de la persona de contacto."
+            !Patterns.EMAIL_ADDRESS.matcher(email).matches() -> "Ingresá un correo institucional válido."
+            !validPhone(phone) -> "Ingresá un teléfono válido, con código de área."
+            s.field("territoryId").isBlank() -> "Elegí una provincia o jurisdicción."
+            questionsFor(AccountRole.INSTITUTION).any { s.answers[it.id] == null } -> "Respondé las preguntas institucionales antes de continuar."
+            else -> null
+        }
+        if (error != null) { change { it.copy(error = error) }; return }
+        work {
+            val usernameReply = app.api.request(
+                "/accounts/username/suggest", "POST", JSONObject().put("name", "$name ${s.field("organization")}"), authenticated = false,
+            )
+            change { it.copy(fields = it.fields + ("username" to usernameReply.getString("username")), error = null) }
+            val reply = app.api.request(
+                "/auth/code/request", "POST",
+                JSONObject().put("email", email).put("role", AccountRole.INSTITUTION.wire).put("purpose", "signup"),
+                authenticated = false,
+            )
+            change { it.copy(page = EntryPage.CODE, challengeId = reply.getString("challengeId"), expiresAt = reply.getString("expiresAt"), code = "", delivery = reply.optString("delivery", "email"), resendAt = System.currentTimeMillis() + reply.optLong("retryAfterSeconds", 60) * 1000) }
+        }
     }
     private fun work(block: suspend () -> Unit) {
         if (state.value.busy) return
@@ -204,7 +282,15 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         }
     }
     fun nextQuestion() { val s = state.value; if (s.answers[questionsFor(s.role)[s.question].id] == null) return; if (s.question == questionsFor(s.role).lastIndex) move(EntryPage.REVIEW) else change { it.copy(question = it.question + 1) } }
-    fun editQuestion(index: Int) { change { it.copy(question = index) }; move(EntryPage.QUESTIONS) }
+    fun editQuestion(index: Int) {
+        if (state.value.role == AccountRole.INSTITUTION) {
+            change { it.copy(profileStep = index + 1) }
+            move(EntryPage.PROFILE)
+        } else {
+            change { it.copy(question = index) }
+            move(EntryPage.QUESTIONS)
+        }
+    }
     fun back() {
         val s = state.value
         answerJob?.cancel(); usernameJob?.cancel()
@@ -216,7 +302,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             EntryPage.CODE -> if (s.login) if (s.role == AccountRole.FAMILY && s.familyMode == "join") EntryPage.JOIN_FAMILY else EntryPage.LOGIN else EntryPage.PROFILE
             EntryPage.PERMISSIONS -> EntryPage.PROFILE
             EntryPage.QUESTIONS -> EntryPage.PERMISSIONS
-            EntryPage.REVIEW -> EntryPage.QUESTIONS
+            EntryPage.REVIEW -> if (s.role == AccountRole.INSTITUTION) EntryPage.PERMISSIONS else EntryPage.QUESTIONS
             else -> EntryPage.WELCOME
         })
     }
@@ -267,6 +353,10 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     fun openSpace(role: AccountRole, section: Int = 0) {
         if (state.value.busy) return
         if (role == state.value.role) { change { it.copy(section = section, error = null, message = null) }; return }
+        if (app.settings.read("accountSession").isBlank()) {
+            change { it.copy(role = role, login = true, page = EntryPage.LOGIN, section = section, error = null, message = null) }
+            return
+        }
         work {
             val reply = app.api.request("/accounts/space", "POST", JSONObject().put("role", role.wire), installationToken = app.settings.read("accountSession"))
             require(reply.getString("role") == role.wire) { "No pude abrir ese espacio." }
@@ -287,15 +377,57 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         val s = state.value
         val token = app.settings.read(if (s.demoAccount) "accountSession" else if (s.role == AccountRole.FAMILY) "caregiverToken" else "institutionToken")
         val path = if (s.demoAccount) {
-            if (s.role == AccountRole.FAMILY) "/demo/family/dashboard" else "/demo/institution/dashboard?territoryId=${s.dashboardTerritory}&months=${s.dashboardMonths}" + if (s.dashboardMonth.isNotBlank()) "&month=${s.dashboardMonth}" else ""
-        } else if (s.role == AccountRole.FAMILY) "/family/summary" else "/institution/analytics?territoryId=${s.dashboardTerritory}&days=${if (s.dashboardMonths == 1) 30 else if (s.dashboardMonths == 3) 90 else 180}"
+            if (s.role == AccountRole.FAMILY) "/demo/family/dashboard" else "/demo/institution/dashboard?territoryId=${s.dashboardTerritory}&from=${s.dashboardStart}&to=${s.dashboardEnd}"
+        } else if (s.role == AccountRole.FAMILY) "/family/summary" else "/institution/analytics?territoryId=${s.dashboardTerritory}&from=${s.dashboardStart}&to=${s.dashboardEnd}"
         val data = app.api.request(path, installationToken = token)
         change { it.copy(dashboard = data) }
     }
-    fun refreshDashboardIfIdle() { if(!state.value.busy && state.value.page==EntryPage.HOME) dashboard() }
+    fun refreshDashboardIfIdle() { if(!state.value.busy && !state.value.dashboardRefreshing && demoDashboardBase == null && state.value.page==EntryPage.HOME) dashboard() }
     fun dashboardFilters(territory: String = state.value.dashboardTerritory, months: Int = state.value.dashboardMonths, month: String = "") {
         if (state.value.busy) return
         change { it.copy(dashboardTerritory = territory, dashboardMonths = months, dashboardMonth = month) }; dashboard()
+    }
+    fun dashboardDateRange(start: Long, end: Long) {
+        if (start > end || state.value.dashboardRefreshing) return
+        val from = java.time.Instant.ofEpochMilli(start).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+        val to = java.time.Instant.ofEpochMilli(end).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+        if (state.value.demoAccount && state.value.role == AccountRole.INSTITUTION && state.value.dashboard != null) {
+            change { it.copy(dashboardRefreshing = true, error = null) }
+            viewModelScope.launch {
+                try {
+                    while (state.value.busy) delay(100)
+                    val base = demoDashboardBase ?: JSONObject(state.value.dashboard.toString()).also { demoDashboardBase = it }
+                    delay(1100)
+                    demoDashboardAlternate = !demoDashboardAlternate
+                    val next = JSONObject(base.toString())
+                    if (demoDashboardAlternate) varyDemoDashboard(next)
+                    change { it.copy(dashboard = next, dashboardStart = from, dashboardEnd = to, dashboardMonth = "") }
+                } finally { change { it.copy(dashboardRefreshing = false) } }
+            }
+            return
+        }
+        if (state.value.busy) return
+        change { it.copy(dashboardStart = from, dashboardEnd = to, dashboardMonth = "") }
+        dashboard()
+    }
+    private fun varyDemoDashboard(data: JSONObject) {
+        val counts = setOf("activeUsers", "requests", "unsafeLinks", "independent", "count")
+        val decimals = setOf("screenMinutesPerDay", "tinoMinutesPerDay", "screenMinutes", "tinoMinutes", "unsafePerThousand", "usersPer10000")
+        val rates = setOf("autonomyRate", "completionRate")
+        fun update(row: JSONObject) {
+            row.keys().asSequence().toList().forEach { key ->
+                val value = row.opt(key)
+                when {
+                    value is JSONObject && key != "publicContext" -> update(value)
+                    value is org.json.JSONArray -> (0 until value.length()).forEach { index -> value.optJSONObject(index)?.let(::update) }
+                    value is Number && key in counts -> row.put(key, kotlin.math.round(value.toDouble() * 1.08).toLong())
+                    value is Number && key in decimals -> row.put(key, kotlin.math.round(value.toDouble() * .94 * 10) / 10)
+                    value is Number && key in rates -> row.put(key, (value.toDouble() + 3.2).coerceAtMost(100.0))
+                    value is Number && key == "averageAge" -> row.put(key, value.toDouble() - 1.4)
+                }
+            }
+        }
+        update(data)
     }
     fun familyAction(memberId: String, type: String, audioBase64: String? = null, id: String = java.util.UUID.randomUUID().toString(), alertId: String? = null) = work {
         val demo = state.value.demoAccount

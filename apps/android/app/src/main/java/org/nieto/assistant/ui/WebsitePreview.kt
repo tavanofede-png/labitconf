@@ -28,7 +28,7 @@ import org.json.JSONObject
             if(!compact) Text(event.optString("title"),color=DashInk,fontWeight=FontWeight.SemiBold)
             Box(Modifier.fillMaxWidth(.85f).height(if(compact)2.dp else 5.dp).background(DashPaper))
             Box(Modifier.fillMaxWidth(.65f).height(if(compact)2.dp else 5.dp).background(DashPaper))
-            if(!compact) Text("Vista ilustrativa del escenario demo",fontSize=10.sp,color=DashMuted)
+            if(!compact) Text("Vista previa del sitio",fontSize=10.sp,color=DashMuted)
         }
     }
 }

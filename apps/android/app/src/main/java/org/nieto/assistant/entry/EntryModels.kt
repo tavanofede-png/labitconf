@@ -21,9 +21,9 @@ fun questionsFor(role: AccountRole): List<EntryQuestion> = when (role) {
         EntryQuestion("guidance", "¿Qué te ayudaría a acompañar mejor?", listOf("Explicaciones simples para orientar a distancia", "Preparar indicaciones breves por voz", "Ver el progreso en un resumen visual", "Más detalle de las tareas autorizadas"))
     )
     AccountRole.INSTITUTION -> listOf(
-        EntryQuestion("objective", "¿Qué quiere mejorar tu institución?", listOf("Acceso y autonomía digital", "Talleres y capacitación", "Prevención de riesgos digitales", "Planificación territorial de servicios")),
-        EntryQuestion("evidence", "¿Qué información necesitás priorizar?", listOf("Necesidades de ayuda por territorio", "Flujos más pedidos y dificultades", "Uso y aprendizaje en el tiempo", "Resultados de programas")),
-        EntryQuestion("work", "¿Cómo vas a usar el portal?", listOf("Consultar indicadores y mapas", "Diseñar programas de acompañamiento", "Evaluar programas existentes", "Preparar informes para mi equipo"))
+        EntryQuestion("size", "¿Cuántas personas forman parte de la institución?", listOf("1 persona", "2 a 10 personas", "11 a 100 personas", "+100 personas")),
+        EntryQuestion("institutionType", "¿Qué tipo de institución es?", listOf("Educativa", "Gubernamental", "Empresa", "Centro comunitario u ONG")),
+        EntryQuestion("objective", "¿Qué están buscando con TINO?", listOf("Entender dónde está la brecha tecnológica", "Analizar comportamientos de uso y métricas", "Implementar TINO en nuestra institución", "Diseñar programas de inclusión digital"))
     )
 }
 val entryTerritories = listOf("AR-C" to "Ciudad de Buenos Aires", "AR-B" to "Buenos Aires", "AR-X" to "Córdoba", "AR-S" to "Santa Fe", "AR-M" to "Mendoza", "AR-T" to "Tucumán", "AR-A" to "Salta", "AR-E" to "Entre Ríos", "AR-H" to "Chaco", "AR-U" to "Chubut", "AR-K" to "Catamarca", "AR-W" to "Corrientes", "AR-P" to "Formosa", "AR-Y" to "Jujuy", "AR-L" to "La Pampa", "AR-F" to "La Rioja", "AR-N" to "Misiones", "AR-Q" to "Neuquén", "AR-R" to "Río Negro", "AR-J" to "San Juan", "AR-D" to "San Luis", "AR-Z" to "Santa Cruz", "AR-G" to "Santiago del Estero", "AR-V" to "Tierra del Fuego")

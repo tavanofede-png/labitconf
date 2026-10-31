@@ -91,7 +91,11 @@ private val Background = Color(0xFFF3F6F6)
     }
     BackHandler(enabled = s.page != EntryPage.WELCOME && s.page != EntryPage.HOME) { vm.back() }
     if (s.page == EntryPage.WELCOME) {
-        TinoWelcomeScreen(s, vm::start, vm::login)
+        TinoWelcomeScreen(s, vm::start, vm::login, vm::quickDemo)
+        return
+    }
+    if (s.page == EntryPage.PROFILE && s.role == AccountRole.INSTITUTION) {
+        InstitutionOnboardingScreen(s, vm)
         return
     }
     if (s.page == EntryPage.PROFILE || s.page == EntryPage.QUESTIONS) {
@@ -103,7 +107,7 @@ private val Background = Color(0xFFF3F6F6)
         return
     }
     if (s.page == EntryPage.HOME) {
-        AppMenu(app, s, beforeWakeStart, vm::openSpace, vm::logout) { openMenu ->
+        AppMenu(app, s, beforeWakeStart, vm::openSpace, vm::back, vm::logout) { openMenu ->
             when (s.role) {
                 AccountRole.USER -> assistant(openMenu, s.section) { vm.openSpace(AccountRole.USER, it) }
                 AccountRole.FAMILY -> FamilyDashboard(s, vm, app, openMenu)
@@ -174,10 +178,15 @@ private val Background = Color(0xFFF3F6F6)
                             if (s.role == AccountRole.USER) Permission("Guía en pantalla", "Reconocer controles de WhatsApp durante una guía. Android te pedirá autorizar Accesibilidad.", device.accessibilityConnected && app.settings.screenConsent) { enabled -> if (enabled) disclosure = true else { app.cancel(); app.settings.screenConsent = false; app.setOverlay(false); vm.preference("screen", false) } }
                             else Permission("Solicitar resúmenes de acompañamiento", "La otra persona acepta o rechaza cada permiso. Esto no habilita acceso a sus datos.", s.preferences["support"] == true) { vm.preference("support", it) }
                         } else Banner("Tu institución consulta datos agregados por territorio. No accede a conversaciones, capturas ni ubicaciones individuales. El acceso debe estar autorizado por el equipo.")
-                        Primary("Personalizar mi experiencia", !s.busy) { vm.move(EntryPage.QUESTIONS) }
+                        Primary(if (s.role == AccountRole.INSTITUTION) "Revisar configuración" else "Personalizar mi experiencia", !s.busy) {
+                            vm.move(if (s.role == AccountRole.INSTITUTION) EntryPage.REVIEW else EntryPage.QUESTIONS)
+                        }
                     }
                     EntryPage.QUESTIONS -> Unit // Dedicated single-question flow.
                     EntryPage.REVIEW -> {
+                        TinoCompletionAnimation(
+                            Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 220.dp),
+                        )
                         Title("Así va a\nacompañarte TINO.", "Revisá tus elecciones antes de guardarlas.")
                         Surface(color = Mint, shape = RoundedCornerShape(20.dp)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(s.field("name"), fontWeight = FontWeight.Bold); Text("@${s.field("username")}", fontSize = 18.sp); Text(s.field("phone"), fontSize = 16.sp); Text(s.field("email"), fontSize = 16.sp); Text(s.role.label, color = Teal); TextButton(onClick = vm::editProfile) { Text("Editar datos") } } }
                         questionsFor(s.role).forEachIndexed { index, q -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) { Text(q.title, color = Muted, fontSize = 16.sp); Text(q.options[s.answers[q.id] ?: 0], fontSize = 18.sp); TextButton(onClick = { vm.editQuestion(index) }) { Text("Cambiar respuesta") }; HorizontalDivider() } }
@@ -185,7 +194,7 @@ private val Background = Color(0xFFF3F6F6)
                         CheckRow("Confirmo mis datos y entiendo que puedo cambiar mis preferencias y revocar permisos.", s.accepted, vm::accept)
                         Primary("Guardar y empezar", s.accepted && !s.busy, vm::finish)
                     }
-                    EntryPage.CONNECTION -> ConnectionScreen(app.settings.baseUrl, s.busy, vm::connect)
+                    EntryPage.CONNECTION -> ConnectionScreen(app.settings.baseUrl, s.busy, vm::connectDevice)
                     EntryPage.HOME -> RoleDashboard(s, vm)
                 }
                 if (s.page !in listOf(EntryPage.WELCOME, EntryPage.HOME, EntryPage.CONNECTION)) TextButton(onClick = { vm.move(EntryPage.WELCOME) }, enabled = !s.busy, modifier = Modifier.fillMaxWidth()) { Text("Volver a la bienvenida", color = Muted, fontSize = 15.sp) }
@@ -234,14 +243,13 @@ private val Background = Color(0xFFF3F6F6)
     LogoutButton(enabled = !s.busy, onClick = vm::logout)
 }
 
-@Composable private fun ConnectionScreen(initial: String, busy: Boolean, connect: (String) -> Unit) {
+@Composable private fun ConnectionScreen(initial: String, busy: Boolean, connect: (String, String) -> Unit) {
     var url by rememberSaveable { mutableStateOf(initial) }
-    Title("Tu app y tu servidor,\nconectados.", "La tablet se conecta al backend de TINO. Esta dirección no es la landing.")
+    var code by rememberSaveable { mutableStateOf("") }
+    Title("Conectá TINO.", "Ingresá el código de vinculación para empezar a hablar o escribir.")
     EntryField("Dirección del servidor", url, { url = it }, KeyboardType.Uri, enabled = !busy)
-    Primary("Guardar y comprobar conexión", !busy) { connect(url) }
-    Text("Por USB en la computadora de Federico: ejecutar adb reverse tcp:8787 tcp:8787 y usar http://127.0.0.1:8787.", fontSize = 16.sp, color = Muted)
-    TextButton(onClick = { url = "http://127.0.0.1:8787" }) { Text("Usar conexión USB") }
-    TextButton(onClick = { url = "http://10.0.2.2:8787" }) { Text("Usar emulador Android") }
+    EntryField("Código de vinculación", code, { code = it.uppercase().filter { c -> c in 'A'..'F' || c in '0'..'9' }.take(12) }, enabled = !busy)
+    Primary("Conectar y empezar", !busy && code.length == 12) { connect(url, code) }
 }
 @Composable private fun Title(title: String, detail: String) { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { Text(title, fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.semantics { heading() }); Text(detail, fontSize = 18.sp, lineHeight = 27.sp, color = Muted) } }
 @Composable private fun EntryField(label: String, value: String, onChange: (String) -> Unit, keyboard: KeyboardType = KeyboardType.Text, enabled: Boolean = true, secret: Boolean = false) {

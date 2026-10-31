@@ -4,7 +4,7 @@ import { ageOn } from './dashboard-demo.mjs';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const token = () => randomBytes(32).toString('base64url');
 const roles = ['user', 'family', 'institution'];
-const questionIds = { user: ['purpose', 'interaction', 'pace', 'priority'], family: ['relationship', 'support', 'frequency', 'guidance'], institution: ['objective', 'evidence', 'work'] };
+const questionIds = { user: ['purpose', 'interaction', 'pace', 'priority'], family: ['relationship', 'support', 'frequency', 'guidance'], institution: ['size', 'institutionType', 'objective'] };
 export class AccountError extends Error { constructor(status, code, message) { super(message); this.status = status; this.code = code; } }
 function check(condition, status, code, message) { if (!condition) throw new AccountError(status, code, message); }
 const email = value => { check(typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value), 400, 'invalid_email', 'Ingresá un correo válido.'); return value.trim().toLowerCase(); };
@@ -181,7 +181,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       const input = body.profile;
       check(input && typeof input === 'object' && !Array.isArray(input), 400, 'invalid_profile', 'Completá tu perfil.');
       check(email(input.email) === account.email, 403, 'email_mismatch', 'El correo debe coincidir con el que verificaste.');
-      const profile = Object.fromEntries(['name', 'email', 'username', 'phone', 'birthDate', 'territoryId', 'organization', 'organizationType', 'position'].map(key => [key, cleanText(input[key], key === 'email' ? 254 : 100)]));
+      const profile = Object.fromEntries(['name', 'email', 'username', 'phone', 'birthDate', 'territoryId', 'organization', 'organizationType', 'organizationSize', 'position'].map(key => [key, cleanText(input[key], key === 'email' ? 254 : 100)]));
       profile.email = account.email;
       check(profile.name && /^AR-[A-Z]$/.test(profile.territoryId), 400, 'invalid_profile', 'Completá el nombre y el territorio.');
       profile.username = profile.username.toLowerCase();

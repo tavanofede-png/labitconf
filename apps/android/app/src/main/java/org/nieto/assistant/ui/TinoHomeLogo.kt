@@ -13,10 +13,10 @@ import org.nieto.assistant.R
 
 internal val LocalTinoHome = staticCompositionLocalOf<(() -> Unit)?> { null }
 
-/** Every authenticated header uses the same accessible home action. */
+/** Every authenticated header uses the same accessible back action. */
 @Composable fun TinoHomeLogo(modifier: Modifier = Modifier) {
     val home = LocalTinoHome.current
-    Image(painterResource(R.drawable.tino_logo), "TINO, ir al chat",
+    Image(painterResource(R.drawable.tino_logo), "TINO, volver atrás",
         modifier.heightIn(min = 48.dp).then(if (home != null) Modifier.clickable(
-            role = Role.Button, onClickLabel = "Ir al chat de TINO", onClick = home) else Modifier))
+            role = Role.Button, onClickLabel = "Volver atrás", onClick = home) else Modifier))
 }

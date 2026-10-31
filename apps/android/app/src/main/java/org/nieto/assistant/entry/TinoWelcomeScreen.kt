@@ -31,15 +31,20 @@ private val WelcomeSecondary = Color(0xFF4C5B61)
     state: EntryState,
     onRole: (AccountRole) -> Unit,
     onLogin: () -> Unit,
+    onDemo: () -> Unit,
 ) {
     Scaffold(containerColor = WelcomeBackground, topBar = {
         BoxWithConstraints(Modifier.fillMaxWidth().statusBarsPadding()) {
             val tablet = maxWidth >= 600.dp
             Row(Modifier.fillMaxWidth().padding(horizontal = if (tablet) 40.dp else 24.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Image(painterResource(R.drawable.tino_logo), contentDescription = "TINO",
                     modifier = Modifier.width(if (tablet) 142.dp else 116.dp).height(if (tablet) 58.dp else 48.dp))
-
+                Button(onClick = onDemo, enabled = !state.busy, shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = WelcomeInk, contentColor = Color.White),
+                    contentPadding = PaddingValues(horizontal = if (tablet) 24.dp else 18.dp, vertical = 10.dp)) {
+                    Text("DEMO", fontSize = if (tablet) 16.sp else 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                }
             }
         }
     }) { insets ->
@@ -59,7 +64,13 @@ private val WelcomeSecondary = Color(0xFF4C5B61)
                     Image(painterResource(R.drawable.tino_mascot), contentDescription = "TINO, tu asistente",
                         modifier = Modifier.fillMaxSize())
                 }
-                Text("La tech, de todos.", color = WelcomeInk, fontSize = if (tablet) 30.sp else 25.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 20.dp))
+                Text(
+                    "La ayuda justa, cuando la necesitás.",
+                    color = WelcomeInk,
+                    fontSize = if (tablet) 19.sp else 17.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 20.dp),
+                )
                 Spacer(Modifier.height(if (compactHeight) 22.dp else 30.dp))
                 Column(Modifier.widthIn(max = if (tablet) 420.dp else 320.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
                     AccountRole.entries.forEach { role ->

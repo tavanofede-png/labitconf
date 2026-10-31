@@ -29,7 +29,7 @@ import java.time.ZoneOffset
                 DateRangePicker(state=calendar,modifier=Modifier.weight(1f).fillMaxWidth(),showModeToggle=true,title={Text("Período del reporte",Modifier.padding(start=24.dp,top=12.dp),color=DashMuted)},headline={
                     Text(if(start!=null && end!=null) "${InstitutionReport.date(start)} - ${InstitutionReport.date(end)}" else "Seleccioná ambas fechas",Modifier.padding(horizontal=24.dp,vertical=12.dp),fontSize=20.sp,fontWeight=FontWeight.SemiBold,color=DashInk)
                 },colors=DatePickerDefaults.colors(containerColor=DashPaper,selectedDayContainerColor=DashCyan,selectedDayContentColor=DashInk,dayInSelectionRangeContainerColor=DashCyan.copy(alpha=.17f),dayInSelectionRangeContentColor=DashInk))
-                Text("Datos de demostración: las cifras son fijas. El rango elegido aparece en ambos archivos.",Modifier.padding(horizontal=20.dp,vertical=8.dp),fontSize=12.sp,color=DashMuted)
+                Text("El rango elegido se incluye en ambos archivos.",Modifier.padding(horizontal=20.dp,vertical=8.dp),fontSize=12.sp,color=DashMuted)
                 Row(Modifier.fillMaxWidth().padding(16.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                     OutlinedButton(onClick={if(start!=null && end!=null)export(start,end,"csv")},enabled=start!=null && end!=null,modifier=Modifier.weight(1f).heightIn(min=48.dp)) { Text("Guardar CSV",color=DashTeal) }
                     Button(onClick={if(start!=null && end!=null)export(start,end,"pdf")},enabled=start!=null && end!=null,modifier=Modifier.weight(1f).heightIn(min=48.dp),colors=ButtonDefaults.buttonColors(containerColor=DashCyan,contentColor=DashInk)) { Text("Guardar PDF") }

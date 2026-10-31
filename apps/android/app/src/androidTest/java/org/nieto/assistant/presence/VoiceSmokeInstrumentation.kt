@@ -21,6 +21,29 @@ class VoiceSmokeInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); suite=arguments?.getString("suite"); start() }
     override fun onStart() {
         val output = Bundle()
+        if(suite=="dictation-model") {
+            try {
+                val recognized=kotlinx.coroutines.runBlocking {
+                    val model=org.nieto.assistant.voice.OfflineVoiceModel.load(targetContext)
+                    try {
+                        val decoder=Recognizer(model,16000f)
+                        try {
+                            val phrases=mutableListOf<String>()
+                            context.assets.open("voice-command.pcm").use { input ->
+                                val bytes=ByteArray(4096)
+                                while(true){val count=input.read(bytes);if(count<0)break;if(decoder.acceptWaveForm(bytes,count))phrases+=JSONObject(decoder.result).optString("text")}
+                            }
+                            phrases+=JSONObject(decoder.finalResult).optString("text")
+                            phrases.joinToString(" ").trim()
+                        } finally { decoder.close() }
+                    } finally { model.close() }
+                }
+                check(recognized.contains("correo")) { "Unexpected transcript: $recognized" }
+                output.putString("stream","\nPASS: bundled shared dictation model loaded and transcribed real PCM: $recognized\n")
+                finish(Activity.RESULT_OK,output)
+            } catch(error:Throwable){output.putString("stream","\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n");finish(Activity.RESULT_CANCELED,output)}
+            return
+        }
         if (suite=="jury-demo") {
             try { val checks=juryDemoSmoke(targetContext); output.putString("stream","\nPASS: $checks offline jury checks; login, expiry, replay, privacy, messages, 225 public-context filters, both interactive practice engines and logout.\n");output.putInt("tests",checks);finish(Activity.RESULT_OK,output) }
             catch(error:Throwable) { output.putString("stream","\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n${error.stackTraceToString().take(3000)}\n");finish(Activity.RESULT_CANCELED,output) }

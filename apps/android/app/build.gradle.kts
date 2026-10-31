@@ -19,10 +19,10 @@ android {
         versionName = "0.7.0-tino"
         testInstrumentationRunner = "org.nieto.assistant.presence.VoiceSmokeInstrumentation"
         testApplicationId = "org.nieto.assistant.tino.test"
-        buildConfigField("String", "API_BASE_URL", "\"${providers.environmentVariable("TINO_API_URL").getOrElse("https://tino-api-labitconf.vercel.app")}\"")
+        buildConfigField("String", "API_BASE_URL", "\"${providers.environmentVariable("TINO_API_URL").getOrElse("https://tino-web.vercel.app")}\"")
     }
     buildFeatures { compose = true; buildConfig = true }
-    testBuildType = "release"
+    testBuildType = providers.environmentVariable("TINO_TEST_BUILD_TYPE").getOrElse("release")
     signingConfigs {
         create("production") {
             providers.environmentVariable("TINO_KEYSTORE_FILE").orNull?.let { storeFile = file(it) }

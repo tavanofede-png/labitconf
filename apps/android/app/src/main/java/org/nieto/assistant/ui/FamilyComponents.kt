@@ -199,6 +199,6 @@ internal fun familyMinutes(n: Int): String = if (n < 60) "$n min" else "${n / 60
         }
         Text("Plaza",color=Color(0xFF71836B),fontSize=11.sp,modifier=Modifier.align(Alignment.TopStart).padding(start=35.dp,top=25.dp))
         Surface(Modifier.align(Alignment.Center).offset(x=28.dp,y=35.dp),color=Color.White,shape=CircleShape,shadowElevation=2.dp){Text(label,Modifier.padding(horizontal=10.dp,vertical=5.dp),fontSize=11.sp,color=DashTeal,fontWeight=FontWeight.Bold)}
-        Text("Vista ilustrativa",Modifier.align(Alignment.BottomEnd).padding(8.dp),fontSize=9.sp,color=DashMuted)
+        Text("Vista del mapa",Modifier.align(Alignment.BottomEnd).padding(8.dp),fontSize=9.sp,color=DashMuted)
     }
 }

@@ -71,7 +71,7 @@ data class AppState(
     val territoryId: String = "AR-C",
     val nativeSurfaceVisible: Boolean = false,
     val voiceSurfaceVisible: Boolean = false,
-    val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy TINO. Contame qué necesitás hacer con tu teléfono. Podés escribirme o hablarme.")),
+    val chat: List<ChatLine> = emptyList(),
     val suggestedFlow: String? = null,
     val task: GuidedTask? = null, val emailDraft: EmailDraft? = null,
     val bubbleEnabled: Boolean = false,
@@ -139,6 +139,10 @@ class NietoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         settings = LocalSettings(this)
+        if (settings.read("juryActive") == "true" || settings.token.startsWith("jury-")) {
+            listOf("juryActive", "accountSession", "installation", "caregiverToken", "institutionToken", "onboardingComplete").forEach { settings.write(it, "") }
+            settings.baseUrl = BuildConfig.API_BASE_URL
+        }
         api = NietoApi(settings)
         TelemetrySync.initialize(this)
         scope.launch { TelemetrySync.status.collect { queue ->
@@ -151,7 +155,12 @@ class NietoApp : Application() {
                 mutable.value = mutable.value.copy(voice = voice)
                 if (!voice.active && voice.phase != VoicePhase.ERROR) scheduleScreenFollowUp()
             },
-            onAnswer = { answer -> mutable.value = mutable.value.copy(answer = answer) },
+            onAnswer = { answer ->
+                val current=state.value
+                val updated=if(answer.isNotBlank() && current.chat.lastOrNull()?.text!=answer)
+                    (current.chat+ChatLine(false,answer)).takeLast(30) else current.chat
+                mutable.value = current.copy(answer = answer,chat=updated)
+            },
             onTaskContext = { context -> hasTask = context != null },
             onConversationEnded = { clearConversationState() },
             onObservationRefresh = { refreshSilentObservation() },
@@ -405,7 +414,7 @@ class NietoApp : Application() {
         followUp?.cancel(); followUp = null
         preparedVoiceScreen = null; hasTask = false; lastScreenSent = null; automaticSteps = 0
         stopSpeaking()
-        mutable.value = mutable.value.copy(answer = "", screenStep = null, screen = null, screenValid = false, chat = emptyList(),
+        mutable.value = mutable.value.copy(answer = "", busy = false, screenStep = null, screen = null, screenValid = false, chat = emptyList(),
             suggestedFlow = null, emailDraft = null, screenCapturePending = false)
     }
 
@@ -580,7 +589,8 @@ class NietoApp : Application() {
         if(!settings.juryDemo && state.value.assistanceEnabled && attachments.isEmpty()) { sendVisualMessage(clean,onSubmitted=onComplete);return }
         if (attachments.size > ChatAttachment.MAX_COUNT || attachments.sumOf { it.byteSize } > ChatAttachment.MAX_TOTAL_BYTES) { onComplete(false); return }
         mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean, attachments.map { ChatAttachmentLabel(it.name,it.mimeType) })).takeLast(30), busy = true, suggestedFlow = null)
-        scope.launch {
+        messageJob = scope.launch {
+            val typingStartedAt = android.os.SystemClock.elapsedRealtime()
             try {
                 api.register()
                 val history = JSONArray()
@@ -599,12 +609,14 @@ class NietoApp : Application() {
                     if (url.startsWith("https://")) answer += "\nFuente: $title\n$url"
                 }
                 val draft = reply.optJSONObject("emailDraft")?.let { EmailDraft(it.getString("to"), it.getString("subject"), it.getString("body")) }
+                delay((2000L - (android.os.SystemClock.elapsedRealtime() - typingStartedAt)).coerceAtLeast(0L))
                 mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() }, emailDraft = if (reply.optBoolean("clearEmailDraft")) null else draft ?: state.value.emailDraft)
                 speak(answer)
                 if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
                 onComplete(true)
-            } catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta."); onComplete(false) }
-            finally { mutable.value = mutable.value.copy(busy = false) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta."); onComplete(false) }
+            finally { if(messageJob==kotlin.coroutines.coroutineContext[Job]) { messageJob=null;mutable.value = mutable.value.copy(busy = false) } }
         }
     }
     fun sendVisualMessage(text: String, textOnly: Boolean = true, onSubmitted: (Boolean) -> Unit = {}): Boolean {
@@ -745,8 +757,7 @@ class NietoApp : Application() {
     fun foreground(visible: Boolean) { mutable.value = mutable.value.copy(foreground = visible) }
 
     private var chatOpenPending = false
-    // Legacy entry points now use the foreground service handoff instead of opening a chat.
-    fun openChat() { requestSystemVoice() }
+    fun openChat() { chatOpenPending=true;mutable.value=mutable.value.copy(openChatEpoch=state.value.openChatEpoch+1) }
     fun consumeChatOpen(): Boolean = chatOpenPending.also { chatOpenPending = false }
 
     private val audioUse=org.nieto.assistant.presence.AudioUseGate()
@@ -783,6 +794,19 @@ class NietoApp : Application() {
         updateGuide(engine.cancel())
         conversationId = UUID.randomUUID().toString()
         mutable.value = mutable.value.copy(practiceFlow = null, chat = AppState().chat, suggestedFlow = null, task = null, emailDraft = null, familyInbox = emptyList())
+    }
+
+    fun closeChatConversation() {
+        cancelRealtimeVoice();clearConversationState()
+        guideSession=null;manualTelemetry=null;sessionId=null
+        conversationId=UUID.randomUUID().toString()
+        mutable.value=mutable.value.copy(practiceFlow=null,task=null)
+    }
+
+    fun showWelcomeMessage() {
+        if (state.value.chat.isNotEmpty() || state.value.busy) return
+        mutable.value = mutable.value.copy(chat = listOf(ChatLine(false,
+            "Hola, soy TINO. Contame qué necesitás hacer con tu teléfono. Podés escribirme o hablarme.")))
     }
 
     fun openPractice(flow: org.nieto.assistant.demo.PracticeFlow) { stopSpeaking(); mutable.value=mutable.value.copy(practiceFlow=flow) }
@@ -901,7 +925,11 @@ class NietoApp : Application() {
     }
 
     fun startConversationVoice() {
-        requestSystemVoice()
+        if (state.value.wakeEnabled) requestSystemVoice()
+        else {
+            if (!state.value.assistanceEnabled) enableAssistance()
+            prepareVoice { startRealtimeVoice() }
+        }
     }
 
 }

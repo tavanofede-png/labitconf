@@ -1,0 +1,13 @@
+import {cp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+const root=fileURLToPath(new URL('../',import.meta.url));
+const output='/private/tmp/tino-jury-deployment';
+await rm(output,{recursive:true,force:true});await mkdir(output,{recursive:true});
+await cp(path.join(root,'apps/web/dist'),output,{recursive:true});
+await cp(path.join(root,'api'),path.join(output,'api'),{recursive:true});
+await mkdir(path.join(output,'apps/api'),{recursive:true});
+await cp(path.join(root,'apps/api/src'),path.join(output,'apps/api/src'),{recursive:true});
+await writeFile(path.join(output,'package.json'),JSON.stringify({name:'tino-jury',private:true,type:'module',engines:{node:'24.x'},dependencies:{'@vercel/blob':'2.8.2','@vercel/functions':'3.10.5',ws:'8.22.0'}}));
+await writeFile(path.join(output,'vercel.json'),JSON.stringify({version:2,framework:null,buildCommand:null,installCommand:'npm install --omit=dev',outputDirectory:null,functions:{'api/index.mjs':{maxDuration:300,includeFiles:'apps/api/src/public-data/**'},'api/jury.mjs':{maxDuration:65,includeFiles:'apps/api/src/public-data/**'}},routes:[{handle:'filesystem'},{src:'/api/(.*)',dest:'/api/index'},{src:'/(.*)',dest:'/index.html'}],headers:undefined}));
+console.log(`TINO deployment prepared: ${output}`);

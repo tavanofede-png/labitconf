@@ -146,7 +146,9 @@ class FloatingBubbleService : Service() {
             y=(anchor.y-height/3).coerceIn(area.top,(area.bottom-height).coerceAtLeast(area.top))
             softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN
         }
-        val view=FloatingChatPanel(this,draft,::closePanel,{
+        val view=FloatingChatPanel(this,draft,{
+            closePanel();draft="";pending=emptyList();writtenDraft.edit("");app.closeChatConversation()
+        },::closePanel,{
             closePanel(); app.openChat(); startActivity(Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         },::send,::toggleVoice,{ images -> launchHelper(if(images) "images" else "files") },{ index -> pending=pending.filterIndexed { i,_ -> i!=index }; panel?.attachments(pending) })
         // IME insets are relative to this overlay's frame, not to the entire display.
@@ -171,7 +173,9 @@ class FloatingBubbleService : Service() {
             insets
         }
         view.setOnTouchListener { _,event -> if(event.actionMasked==MotionEvent.ACTION_OUTSIDE) { view.performClick();closePanel(); true } else false }
-        try { windows.addView(view,layout); panel=view; panelParams=layout; view.requestApplyInsets(); view.attachments(pending); view.render(app.state.value); view.notice("Seguís en tu app. Escribí, dictá o adjuntá un archivo.") }
+        try { windows.addView(view,layout); panel=view; panelParams=layout; view.requestApplyInsets(); view.attachments(pending); view.render(app.state.value)
+            if(app.state.value.chat.isEmpty())scope.launch { delay(2000);if(panel===view)app.showWelcomeMessage() }
+        }
         catch (_: Exception) { notice("No pude abrir el chat flotante.") }
     }
     private fun send(text: String) {

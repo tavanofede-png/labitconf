@@ -26,14 +26,14 @@ import org.nieto.assistant.entry.EntryState
 
 /** One drawer for every authenticated screen, with device-wide permission state. */
 @Composable fun AppMenu(app: NietoApp, entry: EntryState, beforeWakeStart: () -> Unit,
-    navigate: (AccountRole, Int) -> Unit, logout: () -> Unit,
+    navigate: (AccountRole, Int) -> Unit, back: () -> Unit, logout: () -> Unit,
     content: @Composable (openMenu: () -> Unit) -> Unit) {
     val state by app.state.collectAsState()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val closeThen: (() -> Unit) -> Unit = { action -> scope.launch { drawer.close(); action() } }
     val home: (() -> Unit)? = if (entry.busy || state.busy) null else ({
-        closeThen { beforeWakeStart(); app.stopSpeaking(); navigate(AccountRole.USER, 0) }
+        closeThen { beforeWakeStart(); app.stopSpeaking(); back() }
     })
     val current = when (entry.role) {
         AccountRole.FAMILY -> "Grupo familiar"

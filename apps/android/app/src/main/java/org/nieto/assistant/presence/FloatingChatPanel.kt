@@ -14,7 +14,7 @@ import org.nieto.assistant.R
 
 /** A bounded overlay window; no Activity, WebView or navigation for ordinary conversation. */
 internal class FloatingChatPanel(context: Context, draft: String,
-    close: () -> Unit, openApp: () -> Unit, private val send: (String) -> Unit,
+    close: () -> Unit, minimize: () -> Unit, openApp: () -> Unit, private val send: (String) -> Unit,
     private val voice: () -> Unit, attach: (Boolean) -> Unit, private val remove: (Int) -> Unit,
 ) : LinearLayout(context) {
     override fun performClick(): Boolean { super.performClick();return true }
@@ -27,7 +27,7 @@ internal class FloatingChatPanel(context: Context, draft: String,
     private val files = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(12),dp(4),dp(12),0) }
     private val status = label("", 13f, muted).apply { setPadding(dp(16),dp(5),dp(16),dp(8)); accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
     val input = EditText(context).apply {
-        hint = "Escribí o dictá tu mensaje…"; setText(draft); setTextColor(ink); setHintTextColor(muted); textSize = 16f
+        hint = "Escribí o dictá tu mensaje…"; setText(draft); setTextColor(ink); setHintTextColor(muted); textSize = 16f;typeface=resources.getFont(R.font.plus_jakarta_sans)
         background = shape(Color.WHITE, 18f, Color.rgb(208,223,220)); setPadding(dp(12),dp(10),dp(12),dp(10))
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         minLines = 1; maxLines = 3; filters = arrayOf(InputFilter.LengthFilter(1000)); imeOptions = EditorInfo.IME_ACTION_SEND
@@ -55,7 +55,8 @@ internal class FloatingChatPanel(context: Context, draft: String,
             text = "Ir a la App"; textSize = 13f; isAllCaps = false; minWidth = 0; minimumWidth = 0; setTextColor(Color.rgb(0,107,100))
             background = shape(Color.rgb(227,249,246), 15f); setPadding(dp(10),0,dp(10),0); contentDescription = "Ir a la App TINO"; setOnClickListener { openApp() }
         }, LayoutParams(LayoutParams.WRAP_CONTENT,dp(44)).apply { marginEnd = dp(4) })
-        header.addView(icon("close", "Cerrar chat flotante", Color.WHITE, close), LayoutParams(dp(44),dp(44)))
+        header.addView(icon("minimize", "Minimizar conversación", Color.WHITE, minimize), LayoutParams(dp(44),dp(44)))
+        header.addView(icon("close", "Cerrar y borrar conversación", Color.WHITE, close), LayoutParams(dp(44),dp(44)))
         addView(header)
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT,0,1f))
         addView(files, LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.WRAP_CONTENT))
@@ -72,7 +73,7 @@ internal class FloatingChatPanel(context: Context, draft: String,
         composer.addView(sendButton, LayoutParams(dp(44),dp(48)).apply { marginStart = dp(3) })
         addView(composer)
         addView(status)
-        setOnKeyListener { _, key, event -> if (key == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { close(); true } else false }
+        setOnKeyListener { _, key, event -> if (key == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { minimize(); true } else false }
         requestFocus()
     }
     private var itAnchor: View? = null
@@ -109,15 +110,19 @@ internal class FloatingChatPanel(context: Context, draft: String,
         state.chat.forEach { message ->
             val row = LinearLayout(context).apply { gravity = if (message.fromUser) Gravity.RIGHT else Gravity.LEFT }
             val card = LinearLayout(context).apply {
-                orientation = VERTICAL; setPadding(dp(12),dp(10),dp(12),dp(10)); background = shape(if (message.fromUser) Color.rgb(216,248,243) else Color.WHITE,18f)
+                orientation = VERTICAL; setPadding(dp(if(message.fromUser)12 else 22),dp(10),dp(12),dp(10)); background = if(message.fromUser) shape(Color.rgb(216,248,243),18f) else DialogBubbleBackground()
             }
-            card.addView(label(if (message.fromUser) "Vos" else "TINO",12f,muted).apply { setTypeface(typeface,Typeface.BOLD) })
             if (message.text.isNotBlank()) card.addView(label(message.text,16f,ink).apply { setPadding(0,dp(4),0,0); setTextIsSelectable(true) })
             message.attachments.forEach { file -> card.addView(label((if(file.mimeType == "application/pdf") "PDF · " else "Imagen · ") + file.name,13f,Color.rgb(0,107,100)).apply { setPadding(0,dp(5),0,0) }) }
-            row.addView(card,LayoutParams(LayoutParams.WRAP_CONTENT,LayoutParams.WRAP_CONTENT).apply { if (message.fromUser) marginStart = dp(32) else marginEnd = dp(32) })
+            if(!message.fromUser)row.addView(ImageView(context).apply { setImageResource(R.drawable.tino_mascot);contentDescription="" },LayoutParams(dp(34),dp(34)).apply { marginEnd=dp(5);gravity=Gravity.BOTTOM })
+            row.addView(card,LayoutParams(LayoutParams.WRAP_CONTENT,LayoutParams.WRAP_CONTENT).apply { if (message.fromUser) marginStart = dp(32) else marginEnd = dp(20) })
             messages.addView(row,LayoutParams(LayoutParams.MATCH_PARENT,LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(10) })
         }
-        if (state.busy) messages.addView(label("TINO está escribiendo…",14f,muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE })
+        if (state.busy || state.chat.isEmpty()) messages.addView(LinearLayout(context).apply {
+            gravity=Gravity.CENTER_VERTICAL
+            addView(ImageView(context).apply{setImageResource(R.drawable.tino_mascot);contentDescription=""},LayoutParams(dp(34),dp(34)))
+            addView(TypingDots(context),LayoutParams(dp(70),dp(38)))
+        })
         scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
     }
     private fun thumbnail(file: ChatAttachment): ImageView? = runCatching {
@@ -130,7 +135,7 @@ internal class FloatingChatPanel(context: Context, draft: String,
         options.inJustDecodeBounds = false
         ImageView(context).apply { setImageBitmap(BitmapFactory.decodeByteArray(bytes,0,bytes.size,options)); scaleType = ImageView.ScaleType.CENTER_CROP; contentDescription = "Vista previa de ${file.name}" }
     }.getOrNull()
-    private fun label(text: String, size: Float, color: Int) = TextView(context).apply { this.text = text; textSize = size; setTextColor(color); setLineSpacing(dp(2).toFloat(),1f) }
+    private fun label(text: String, size: Float, color: Int) = TextView(context).apply { this.text = text; textSize = size; setTextColor(color);typeface=resources.getFont(R.font.plus_jakarta_sans);setLineSpacing(dp(2).toFloat(),1f) }
     private fun icon(kind: String, label: String, fill: Int, action: () -> Unit) = FrameLayout(context).apply {
         background = shape(fill,24f); contentDescription = label; isFocusable = true; isClickable = true
         addView(OverlayIcon(context,kind,ink),FrameLayout.LayoutParams(dp(22),dp(22),Gravity.CENTER)); setOnClickListener { action() }
@@ -144,11 +149,30 @@ private class OverlayIcon(context: Context, private val kind: String, color: Int
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas); canvas.save(); canvas.scale(width/24f,height/24f)
         when(kind) {
+            "minimize" -> canvas.drawLine(5f,12f,19f,12f,paint)
             "close" -> { canvas.drawLine(6f,6f,18f,18f,paint); canvas.drawLine(18f,6f,6f,18f,paint) }
             "send" -> { canvas.drawLine(12f,20f,12f,4f,paint); canvas.drawLine(5f,11f,12f,4f,paint); canvas.drawLine(19f,11f,12f,4f,paint) }
             "mic" -> { canvas.drawRoundRect(9f,2f,15f,14f,3f,3f,paint); canvas.drawArc(5f,5f,19f,19f,0f,180f,false,paint); canvas.drawLine(12f,19f,12f,22f,paint); canvas.drawLine(8f,22f,16f,22f,paint) }
             else -> { val path=Path().apply { moveTo(9f,16f); lineTo(16f,9f); cubicTo(20f,5f,14f,0f,11f,4f); lineTo(4f,12f); cubicTo(-1f,18f,6f,25f,11f,20f); lineTo(19f,12f) }; canvas.drawPath(path,paint) }
         }
         canvas.restore()
+    }
+}
+
+private class DialogBubbleBackground: android.graphics.drawable.Drawable() {
+    private val fill=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.WHITE}
+    override fun draw(canvas:Canvas){val b=bounds;val tail=10f;val path=Path().apply{
+        addRoundRect(RectF(b.left+tail,b.top.toFloat(),b.right.toFloat(),b.bottom.toFloat()),18f,18f,Path.Direction.CW)
+        moveTo(b.left+tail,b.bottom-18f);lineTo(b.left.toFloat(),b.bottom.toFloat());lineTo(b.left+24f,b.bottom.toFloat());close()
+    };canvas.drawPath(path,fill)}
+    override fun setAlpha(alpha:Int){fill.alpha=alpha}
+    override fun setColorFilter(filter:ColorFilter?){fill.colorFilter=filter}
+    @Deprecated("Deprecated in Android") override fun getOpacity()=PixelFormat.TRANSLUCENT
+}
+private class TypingDots(context:Context):View(context){
+    private val fill=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.rgb(0,123,115)}
+    override fun onDraw(canvas:Canvas){super.onDraw(canvas);val phase=android.os.SystemClock.uptimeMillis()/180.0
+        for(i in 0..2){val y=height/2f+(kotlin.math.sin(phase-i*.8)*height*.1).toFloat();canvas.drawCircle(width*(.3f+i*.2f),y,resources.displayMetrics.density*3,fill)}
+        if(isAttachedToWindow)postInvalidateOnAnimation()
     }
 }

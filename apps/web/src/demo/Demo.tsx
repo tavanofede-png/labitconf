@@ -3,8 +3,9 @@ import { ArrowCounterClockwiseIcon, ArrowLeftIcon, ArrowRightIcon, BatteryHighIc
 import { contacts, createInitialState, demoLocation, DEMO_PASSWORD, getDemoEmail, getGuidance, hasSharedLocation, reducer, tasks } from './model';
 import type { DemoState, DemoTask } from './model';
 import './demo.css';
+import { juryApi } from '../jury-api';
 
-type Props = { view?: 'phone' | 'web' };
+type Props = { view?: 'phone' | 'web'; initialTask?: DemoTask };
 type BrowserRecognition = {
   lang: string; interimResults: boolean; continuous: boolean;
   onresult: ((event: { results: { 0: { 0: { transcript: string } } } }) => void) | null;
@@ -25,8 +26,8 @@ function GmailField({ id, field, label, gmail, targetId, onChange, type = 'text'
   return <div><label className="d-field-label" htmlFor={id}>{label}</label><input id={id} data-demo-control={id} className={`d-input${targetId === id ? ' d-target' : ''}`} type={type} inputMode={type === 'number' ? 'numeric' : 'text'} autoComplete="off" spellCheck={false} value={gmail[field]} placeholder={placeholder} readOnly={readOnly} maxLength={field === 'username' ? 30 : field === 'year' ? 4 : 50} onChange={event => onChange(field, event.target.value)} /></div>;
 }
 
-export function Demo({ view = 'phone' }: Props) {
-  const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
+export function Demo({ view = 'phone', initialTask }: Props) {
+  const [state, dispatch] = useReducer(reducer, initialTask, task => task ? reducer(createInitialState(), { type: 'START_TASK', task }) : createInitialState());
   const [device, setDevice] = useState<'phone' | 'tablet'>('phone');
   const [bubbleOpen, setBubbleOpen] = useState(false);
   const [question, setQuestion] = useState('');
@@ -77,7 +78,8 @@ export function Demo({ view = 'phone' }: Props) {
   }
   function ask(text: string) {
     if (!text.trim()) return;
-    setReply(`Guía de práctica: ${silentReply.current}`);
+    setReply('…');
+    void juryApi<{instruction:string}>('chat',{text:`Estoy practicando una tarea en una interfaz de demostración. El paso actual es: ${silentReply.current}. Mi consulta: ${text}`}).then(result=>setReply(result.instruction)).catch(error=>setReply(error.message));
     setQuestion('');
   }
   function listen() {

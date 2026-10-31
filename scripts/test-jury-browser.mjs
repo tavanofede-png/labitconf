@@ -1,0 +1,53 @@
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+const require=createRequire('/Users/jazminourens/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/package.json');
+const {chromium}=require('playwright');
+const browser=await chromium.launch({channel:'chrome',headless:true,args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});
+const page=await browser.newPage({viewport:{width:1280,height:800}});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const base=process.env.JURY_TEST_URL||'http://127.0.0.1:5173/app';
+try{
+ await page.goto(base);await page.getByRole('button',{name:'DEMO',exact:true}).click();
+ await page.getByText('Hola, soy TINO.',{exact:false}).waitFor();
+ assert.equal(await page.locator('.j-floating-bubble').count(),0);
+ await page.getByRole('button',{name:'Salir de TINO al inicio de Android'}).click();
+ await page.getByRole('main',{name:'Inicio de Android',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Abrir chat flotante de TINO'}).click();
+ await page.getByRole('button',{name:'Minimizar conversación'}).waitFor();
+ await page.getByRole('textbox',{name:'Mensaje para TINO'}).fill('¿Cómo puedo aumentar el tamaño de letra de mi teléfono Android?');
+ const chatResponse=page.waitForResponse(r=>r.url().includes('resource=chat'));
+ await page.getByRole('button',{name:'Enviar mensaje',exact:true}).click();
+ const response=await chatResponse;
+ const chatOkay=response.ok();
+ if(chatOkay){await page.waitForFunction(()=>document.querySelectorAll('.j-message-row.assistant .j-message').length>=2,{},{timeout:65000});console.log('REAL_CHAT',await page.locator('.j-message-row.assistant .j-message').last().innerText());}
+ else {console.log('CHAT_BLOCKED',response.status(),await response.text());await page.locator('.j-error').waitFor();}
+ await page.getByRole('button',{name:'Minimizar conversación'}).click();
+ await page.getByRole('button',{name:'Abrir chat flotante de TINO'}).click();
+ assert.equal(await page.locator('.j-message-row.user').count(),1);
+ await page.getByRole('button',{name:'Cerrar y borrar conversación'}).click();
+ await page.getByRole('button',{name:'Abrir chat flotante de TINO'}).click();
+ await page.getByText('Hola, soy TINO.',{exact:false}).waitFor();
+ assert.equal(await page.locator('.j-message-row.assistant .j-message').count(),1);
+ const bubble=page.getByRole('button',{name:'Minimizar TINO',exact:true});const b=await bubble.boundingBox();
+ await page.mouse.move(b.x+30,b.y+30);await page.mouse.down();await page.mouse.move(35,270,{steps:15});await page.mouse.up();
+ assert.ok((await bubble.boundingBox()).x<30);console.log('BUBBLE_DRAG_MINIMIZE_CLOSE_PASS');
+ await page.screenshot({path:'/private/tmp/tino-web-chat-tablet.png'});
+ await page.getByRole('button',{name:'Minimizar conversación'}).click();
+ await page.getByRole('button',{name:'Abrir la app TINO',exact:true}).click();
+ assert.equal(await page.locator('.j-floating-bubble').count(),0);
+ await page.getByRole('button',{name:'Abrir menú'}).click();await page.getByRole('button',{name:'Instituciones',exact:true}).click();
+ await page.locator('.j-metric strong').first().waitFor();
+ const before=await page.locator('.j-metric strong').first().innerText();await page.getByRole('button',{name:'Mostrar datos',exact:true}).click();await page.getByRole('button',{name:'Mostrar datos',exact:true}).waitFor();
+ assert.notEqual(await page.locator('.j-metric strong').first().innerText(),before);
+ await page.getByRole('tab',{name:'Por workflow',exact:true}).click();await page.getByText('Crear un grupo de WhatsApp',{exact:true}).waitFor();
+ await page.getByRole('tab',{name:'Por app',exact:true}).click();
+ const download=page.waitForEvent('download');await page.getByRole('button',{name:'Exportar CSV',exact:true}).click();assert.ok((await download).suggestedFilename().endsWith('.csv'));
+ await page.screenshot({path:'/private/tmp/tino-web-dashboard-tablet.png',fullPage:true});
+ console.log('DASHBOARD_FILTER_TABS_CSV_PASS');
+ await page.getByRole('button',{name:'Abrir menú'}).click();await page.getByRole('button',{name:'Grupo familiar',exact:true}).click();
+ await page.getByRole('heading',{name:'Su día, paso a paso'}).waitFor({timeout:60000});
+ await page.getByRole('button',{name:'¿Todo bien?',exact:true}).click();await page.getByText('Aviso enviado.',{exact:true}).waitFor();
+ console.log('FAMILY_BACKEND_ACTION_PASS');
+ await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ console.log('MOBILE_NO_OVERFLOW_PASS');assert.deepEqual(errors,[]);console.log(chatOkay?'JURY_BROWSER_PASS':'JURY_UI_PASS_CHAT_BLOCKED');
+}catch(error){await page.screenshot({path:'/private/tmp/tino-jury-test-failure.png',fullPage:true});console.log('VISIBLE_ERRORS',await page.locator('.j-error').allTextContents());throw error;}finally{await browser.close();}

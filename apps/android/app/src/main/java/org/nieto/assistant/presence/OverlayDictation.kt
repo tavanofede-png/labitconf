@@ -7,7 +7,6 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
-import java.io.File
 
 /** Local speech-to-text. Only the editable transcript enters chat after the person presses Send. */
 internal class OverlayDictation(private val context: Context, private val scope: CoroutineScope,
@@ -23,10 +22,10 @@ internal class OverlayDictation(private val context: Context, private val scope:
         val id = generation
         loading = scope.launch {
             try {
-                val path = withContext(Dispatchers.IO) { unpack() }
-                if (id != generation) return@launch
-                model = Model(path)
-                decoder = Recognizer(model, 16000f)
+                val loaded = org.nieto.assistant.voice.OfflineVoiceModel.load(context)
+                if (id != generation) { loaded.close();return@launch }
+                model = loaded
+                decoder = Recognizer(loaded, 16000f)
                 speech = SpeechService(decoder, 16000f).also { input ->
                     input.startListening(object : RecognitionListener {
                         override fun onPartialResult(hypothesis: String?) { if (id == generation) { lastText = JSONObject(hypothesis.orEmpty()).optString("partial"); partial(lastText) } }
@@ -48,18 +47,5 @@ internal class OverlayDictation(private val context: Context, private val scope:
         decoder?.close(); decoder = null
         model?.close(); model = null
         if (deliver) finished(text.takeIf { it.isNotBlank() }, if (text.isBlank()) "No escuché palabras. Probá otra vez." else null)
-    }
-    private fun unpack(): String {
-        val target = File(context.filesDir, "overlay-voice-es-0.42")
-        if (File(target, ".ready").exists()) return target.absolutePath
-        fun copy(path: String, out: File) {
-            val children = context.assets.list(path).orEmpty()
-            if (children.isEmpty()) { out.parentFile?.mkdirs(); context.assets.open(path).use { input -> out.outputStream().use { input.copyTo(it) } } }
-            else { out.mkdirs(); children.forEach { copy("$path/$it", File(out, it)) } }
-        }
-        copy("model-es", target)
-        check(File(target, "am/final.mdl").isFile)
-        File(target, ".ready").writeText("0.42")
-        return target.absolutePath
     }
 }

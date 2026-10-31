@@ -46,8 +46,8 @@ http.createServer(async (req, res) => {
     else if (body.type === 'enter') await adb('shell', 'input', 'keyevent', '66');
     else if (body.type === 'launch') await adb('shell', 'am', 'start', '-n', 'org.nieto.assistant/.MainActivity');
     else if ((body.type === 'phone' || body.type === 'tablet') && serial.startsWith('emulator-')) {
-      await adb('shell', 'wm', 'size', body.type === 'tablet' ? '1200x1920' : '1080x1920');
-      await adb('shell', 'wm', 'density', body.type === 'tablet' ? '240' : '420');
+      await adb('shell', 'wm', 'size', body.type === 'tablet' ? '1752x2800' : '1080x1920');
+      await adb('shell', 'wm', 'density', body.type === 'tablet' ? '320' : '420');
     } else if (body.type === 'up' || body.type === 'down') await adb('shell', 'input', 'swipe', String(Math.round(width / 2)), String(Math.round(height * (body.type === 'down' ? .8 : .3))), String(Math.round(width / 2)), String(Math.round(height * (body.type === 'down' ? .3 : .8))), '450');
     else if (body.type === 'text' && typeof body.text === 'string' && /^[\x20-\x7e]{1,500}$/.test(body.text)) await adb('shell', 'input', 'text', "'" + body.text.replaceAll("'", "'\\''").replaceAll(' ', '%s') + "'");
     else { res.writeHead(400).end(); return; }
