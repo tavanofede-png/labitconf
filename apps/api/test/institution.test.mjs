@@ -22,7 +22,7 @@ async function fixture(t) {
     return { status: response.status, data: await response.json() };
   };
   const devices = [];
-  for (let i = 0; i < 5; i++) devices.push((await request('/devices', { method: 'POST', body: { name: `Private person ${i}`, territoryId: 'AR-C' } })).data);
+  for (let i = 0; i < 5; i++) { const invite=await request('/institution/device-invitations',{method:'POST',body:{}});devices.push((await request('/devices', { method: 'POST', body: { name: `Private person ${i}`, territoryId: 'AR-C',enrollmentCode:invite.data.enrollmentCode } })).data); }
   request.store=store;
   for(const device of devices) await request("/devices/me",{token:device.token,method:"PATCH",body:{institutionMetricsConsent:true}});
   return { request, store, devices };

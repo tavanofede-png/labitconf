@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {validateAttachments,attachmentInput,MAX_ATTACHMENT_BYTES} from '../src/chat-attachments.mjs';
 import {createModelAdapter} from '../src/model-adapter.mjs';
+import {RealtimeService} from '../src/realtime.mjs';
 import {createServer} from '../src/server.mjs';
 import {OpenArgClient} from '../src/openarg.mjs';
 const file=(mimeType,data,name='prueba.pdf')=>({name,mimeType,dataBase64:Buffer.from(data).toString('base64')});
@@ -26,12 +27,15 @@ test('model adapter sends explicit PDF and image bytes as multimodal input, with
 });
 test('authenticated chat forwards files over HTTP without persisting content or bypassing attachment analysis with a demo-flow match',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'tino-files-')); const stateFile=join(dir,'state.json'); let received;
-  const server=createServer({dataFile:stateFile,openarg:new OpenArgClient({apiKey:''}),accountOptions:{judgesDemo:true},assistantOptions:{generateReply:async input=>{received=input;return 'Respuesta del modelo de prueba.';}}});
+  const server=createServer({institutionToken:'operator-test',realtime:new RealtimeService({apiKey:'test-key'}),dataFile:stateFile,openarg:new OpenArgClient({apiKey:''}),accountOptions:{judgesDemo:true},assistantOptions:{generateReply:async input=>{received=input;return 'Respuesta del modelo de prueba.';}}});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});});
   const request=async(path,body,token)=>{const r=await fetch(`http://127.0.0.1:${server.address().port}/api${path}`,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
   assert.equal((await request('/assistant/message',{text:'hola',attachments:[pdf]})).status,401);
   const login=await request('/auth/demo/login',{email:'test@labitconf.com',password:'0000'});const token=login.body.sessionToken;
+  assert.equal((await request('/assistant/message',{text:'Quiero enviar un correo',attachments:[pdf]},token)).status,403);assert.equal(received,undefined);
+  const invite=await request('/institution/device-invitations',{},'operator-test');
+  assert.equal((await request('/devices/me/activation',{enrollmentCode:invite.body.enrollmentCode},token)).status,200);
   const result=await request('/assistant/message',{text:'Quiero enviar un correo con este PDF',attachments:[pdf],conversationId:'overlay'},token);
   assert.equal(result.status,200);assert.equal(result.body.instruction,'Respuesta del modelo de prueba.');assert.deepEqual(received.attachments,[pdf]);
   assert.equal((await request('/assistant/message',{text:'Mirá',attachments:[{...pdf,mimeType:'image/jpeg'}]},token)).status,400);
@@ -43,4 +47,16 @@ test('authenticated chat forwards files over HTTP without persisting content or 
 test('missing model never claims to have read a supplied document',async()=>{
   const {createAssistant}=await import('../src/assistant.mjs');
   await assert.rejects(createAssistant().reply({key:'x',text:'Qué dice',attachments:[pdf]}),/No pude analizar/);
+});
+
+
+test('disconnect cancellation propagates to the attachment model request',async()=>{
+ const controller=new AbortController();let forwarded;
+ const model=createModelAdapter({apiKey:'test-key',fetchImpl:async(_url,options)=>{
+   forwarded=options.signal;
+   return new Promise((_resolve,reject)=>{options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true})});
+ }});
+ const pending=model({system:'TINO',messages:[{role:'user',content:'Revisar documento'}],flows:[],task:null,attachments:[pdf],signal:controller.signal});
+ controller.abort(new Error('client-disconnected'));
+ await assert.rejects(pending,/client-disconnected/);assert.equal(forwarded.aborted,true);
 });

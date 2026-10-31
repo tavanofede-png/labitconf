@@ -1,6 +1,6 @@
 # Auditoría funcional de NIETO para LABITCONF
 
-**Estado vigente, 31/10/2026:** los once hallazgos A01–A11 tienen corrección de código y pruebas. El listado completo, evidencia, descarga y límites pendientes está en [AUDIT_CLOSURE.md](AUDIT_CLOSURE.md). El texto siguiente conserva el diagnóstico original; no es una lista actual de defectos abiertos. El original sin modificaciones también está en [AUDIT-2026-10-30.md](AUDIT-2026-10-30.md).
+**Estado vigente, 31/10/2026, entrega 0.5.0:** los nueve hallazgos B01–B09 tienen corrección y el escenario de consumo abierto R01 quedó cerrado en el MVP mediante admisión y límites durables. El [nuevo informe de correcciones](AUDIT_FIXES-2026-10-31.md) reúne evidencia, distribución y pendientes físicos y de producción. El [diagnóstico previo](AUDIT-2026-10-31.md) y los [cierres A01–A11](AUDIT_CLOSURE.md) se conservan como antecedentes. El texto siguiente es el diagnóstico original de `059e0cc`; su copia sin modificaciones está en [AUDIT-2026-10-30.md](AUDIT-2026-10-30.md).
 
 Fecha: 30 de octubre de 2026, hora de Argentina. Código auditado: `059e0cc`, rama `main`.
 

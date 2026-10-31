@@ -9,10 +9,11 @@ import {familyVoice} from './fixtures/family-voice.mjs';
 
 async function fixture(t){
  const dir=await mkdtemp(join(tmpdir(),'tino-family-messages-'));let clock=Date.parse('2026-10-31T15:00:00Z');
- const server=createServer({dataFile:join(dir,'state.json'),now:()=>clock,openarg:new OpenArgClient({apiKey:''}),accountOptions:{judgesDemo:true}});
+ const server=createServer({institutionToken:'operator-test',dataFile:join(dir,'state.json'),now:()=>clock,openarg:new OpenArgClient({apiKey:''}),accountOptions:{judgesDemo:true}});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  t.after(async()=>{server.closeRealtime();await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true})});
  async function call(path,token,body,method=body?'POST':'GET'){
+  if(path==='/devices' && body) { const invite=await call('/institution/device-invitations','operator-test',{});body={...body,enrollmentCode:invite.data.enrollmentCode}; }
   const r=await fetch(`http://127.0.0.1:${server.address().port}/api${path}`,{method,headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
   return {status:r.status,data:await r.json()};
  }

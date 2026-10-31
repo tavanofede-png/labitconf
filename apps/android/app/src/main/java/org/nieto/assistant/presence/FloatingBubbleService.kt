@@ -39,6 +39,7 @@ class FloatingBubbleService : Service() {
     private var panelParams: WindowManager.LayoutParams? = null
     private var snap: ValueAnimator? = null
     private var draft = ""
+    private val writtenDraft=org.nieto.assistant.screen.WrittenDraft()
     private var pending = emptyList<ChatAttachment>()
     private var loadingFiles = false
     private var dictating = false
@@ -176,23 +177,28 @@ class FloatingBubbleService : Service() {
     private fun send(text: String) {
         val view=panel ?: return
         if (loadingFiles || dictating || app.state.value.busy || app.state.value.voice.active || (text.isBlank() && pending.isEmpty())) return
-        if(!app.settings.openAiConsent){view.notice("Autorizá las consultas con IA desde Ajustes de TINO.");return}
-        val files=pending.toList(); val saved=text
-        view.input.setText(""); draft=""; pending=emptyList(); view.attachments(pending)
+        if(!app.settings.openAiConsent && !app.settings.juryDemo){view.notice("Autorizá las consultas con IA desde Ajustes de TINO.");return}
+        val files=pending.toList()
+        writtenDraft.edit(text.ifBlank { if(files.isNotEmpty()) "Ayudame a entender los archivos que adjunté." else "" })
+        val submission=writtenDraft.begin(true)?:return
+        fun complete(sent:Boolean) {
+            writtenDraft.edit(panel?.input?.text?.toString()?:draft)
+            writtenDraft.complete(submission,sent)
+            draft=writtenDraft.value
+            panel?.input?.setText(draft)
+            if(sent && pending==files){pending=emptyList();panel?.attachments(pending)}
+            notice(if(sent)"Podés seguir escribiendo desde acá." else "No se envió. Conservé tu mensaje para reintentar.")
+        }
         getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(view.windowToken,0)
-        if(files.isEmpty() && app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) {
+        if(files.isEmpty() && !app.settings.juryDemo && app.state.value.assistanceEnabled && app.settings.remoteScreenConsent) {
+            app.selectWrittenMode()
             closePanel()
-            scope.launch { delay(300);app.sendScreenMessage(text) { openPanel() } }
+            scope.launch { delay(300);app.sendVisualMessage(text,onSubmitted={sent -> complete(sent);openPanel()}) }
             return
         }
-        app.sendMessage(text,files) { sent ->
-            if (!sent) {
-                if (draft.isBlank() && (panel?.input?.text?.isBlank() != false)) { draft=saved; panel?.input?.setText(saved) }
-                if (pending.isEmpty()) { pending=files; panel?.attachments(pending) }
-                notice("No se envió. Conservé tu mensaje para reintentar.")
-            } else notice("Podés seguir escribiendo desde acá.")
-        }
+        app.sendMessage(text,files,onComplete=::complete)
     }
+
     internal fun notice(text: String) { panel?.notice(text); app.presenceNotice(text) }
     private fun launchHelper(action: String) {
         if (dictating) stopVoice(false)

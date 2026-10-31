@@ -18,6 +18,7 @@ import { generateReply } from './model-adapter.mjs';
 import { validateAttachments, CHAT_BODY_BYTES, AttachmentError } from './chat-attachments.mjs';
 import { demoInstitution, demoFamily, DEMO_FAMILY_VERSION, DEMO_TERRITORIES } from './dashboard-demo.mjs';
 import { createDashboardContext, crossPublicContext } from './dashboard-context.mjs';
+import { RealtimeAdmission, directOrigin } from './admission.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const TERRITORIES = {
@@ -89,8 +90,10 @@ export function createApp({
   institutionToken = process.env.INSTITUTION_TOKEN ?? '', minimumCohort = Number(process.env.MINIMUM_COHORT) || 5,
   corsOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',').map((s) => s.trim()),
   now = Date.now, maxBodyBytes = 16_384, rateLimit = 180, rateWindowMs = 60_000, accountOptions = {}, assistantOptions,
+  realtimeBudgetLimits = {},
 } = {}) {
   minimumCohort = Math.max(5, Math.trunc(minimumCohort));
+  const admission = new RealtimeAdmission(store, { now, limits: realtimeBudgetLimits });
   const rates = new Map(); const realtimeAttempts = new Map();
   const accounts = createAccounts({ store, now, ...accountOptions });
   const assistant = createAssistant({ now, ...(assistantOptions ?? {generateReply}) });
@@ -184,15 +187,18 @@ export function createApp({
         const apk = await androidArtifacts.info();
         respond(200, { status: 'ok', version: '2.0.0', openarg: { configured: status.configured, connected: Boolean(status.lastSuccessAt), endpoint: status.endpoint },
           privacy: { minimumCohort, screenStorage: false, conversationStorage: false }, institutionConfigured: Boolean(institutionToken),
-          android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null },
-          assistant: { ...realtime.status(), providerAvailability: 'not_verified', attachmentsConfigured: assistant.modelConnected, flows: ['whatsapp-group', 'email-send', 'whatsapp-location'] }, storage: 'local_json_single_process' }); return;
+          android: { apkAvailable: Boolean(apk), downloadUrl: apk ? '/downloads/nieto-debug.apk' : null, versionName: apk?.versionName ?? null, versionCode: apk?.versionCode ?? null, sha256: apk?.sha256 ?? null },
+          assistant: { ...realtime.status(), ...admission.status(), providerAvailability: 'not_verified', attachmentsConfigured: assistant.modelConnected, flows: ['whatsapp-group', 'email-send', 'whatsapp-location'], maxConnectionsPerOrigin: realtime.maxConnectionsPerOrigin }, storage: 'local_json_single_process' }); return;
       }
       if (method === 'POST' && route === '/devices') {
-        keys(body, ['name', 'territoryId']);
+        keys(body, ['name', 'territoryId', 'enrollmentCode']);
         const name = text(body.name, 'name', 60); const territoryId = territory(body.territoryId);
         const deviceId = randomUUID(); const newToken = secret();
-        await store.update((state) => { state.users.push({ id: deviceId, name, territoryId, tokenHash: hash(newToken), createdAt: new Date(current).toISOString() }); });
-        respond(201, { deviceId, token: newToken }); return;
+        await store.update((state) => {
+          const user = { id: deviceId, name, territoryId, tokenHash: hash(newToken), createdAt: new Date(current).toISOString() };
+          admission.activate(state, user, body.enrollmentCode); state.users.push(user);
+        });
+        respond(201, { deviceId, token: newToken, realtimeApproved: true }); return;
       }
       if (method === 'POST' && route === '/family/groups') {
         keys(body, ['name']); const name = text(body.name, 'name', 60); const caregiverToken = secret();
@@ -207,6 +213,29 @@ export function createApp({
       if (institutional) {
         required(institutionToken || account?.institutionApproved, 503, 'institution_not_configured', 'Configurá el acceso institucional autorizado en el backend.');
         required((institutionToken && same(token, institutionToken)) || account?.institutionApproved, 401, 'unauthorized', 'Acceso institucional inválido o ausente.');
+      }
+
+      if (method === 'POST' && route === '/institution/device-invitations') {
+        keys(body, []); respond(201, await admission.invitation()); return;
+      }
+      if (method === 'GET' && route === '/institution/devices') {
+        const state = await store.read();
+        const usage = admission.usage(state);
+        respond(200, { devices: state.users.map(user => ({ deviceId: user.id, realtimeApproved: user.realtimeApproved === true,
+          approvedAt: user.realtimeApprovedAt ?? null, createdAt: user.createdAt, budget: usage.device(user.id) })),
+          budget: { ...admission.status(), day: usage.day, globalReserved: usage.globalReserved } }); return;
+      }
+      const revokeDevice = /^\/institution\/devices\/([a-f0-9-]+)\/revoke$/.exec(route);
+      if (method === 'POST' && revokeDevice) {
+        keys(body, []);
+        await store.update(state => {
+          const user = state.users.find(item => item.id === revokeDevice[1]);
+          required(user, 404, 'device_not_found', 'Teléfono inexistente.');
+          user.realtimeApproved = false; user.realtimeRevokedAt = new Date(current).toISOString();
+          audit(state, 'realtime_access_revoked', user.id, current);
+        });
+        realtime.active.get(revokeDevice[1])?.fail(new RealtimeError('device_activation_required', 'El equipo revocó el acceso a la asistencia de este teléfono.', 403));
+        respond(200, { ok: true }); return;
       }
 
       if (method === 'GET' && route === '/openarg/status') {
@@ -315,6 +344,14 @@ export function createApp({
             author: account?.profile?.name ?? group.name, createdAt: new Date(current).toISOString(), expiresAt: new Date(current + 86_400_000).toISOString(), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
         }); respond(201, { ok: true }); return;
       }
+      if (method === 'GET' && route === '/devices/me') {
+        needUser(); respond(200, { deviceId: user.id, name: user.name, territoryId: user.territoryId, realtimeApproved: user.realtimeApproved === true, institutionMetricsConsent: user.institutionMetricsConsent === true }); return;
+      }
+      if (method === 'POST' && route === '/devices/me/activation') {
+        needUser(); keys(body, ['enrollmentCode']);
+        await store.update(state => admission.activate(state, state.users.find(item => item.id === user.id), body.enrollmentCode));
+        respond(200, { ok: true, realtimeApproved: true }); return;
+      }
       if (method === 'GET' && route === '/family/messages') {
         needUser(); const relationship = state.relationships.find(r => r.userId === user.id && r.permissions.help && !r.paused);
         if ((state.familyMessages ?? []).some(m => Date.parse(m.expiresAt) <= current)) await store.update(s => { s.familyMessages = (s.familyMessages ?? []).filter(m => Date.parse(m.expiresAt) > current); });
@@ -366,7 +403,6 @@ export function createApp({
           required(entry, 404, 'event_not_found', 'Evento inexistente.'); entry.resolvedAt ??= new Date(current).toISOString(); });
         respond(200, { ok: true }); return;
       }
-      if (method === 'GET' && route === '/devices/me') { needUser();respond(200,{deviceId:user.id,name:user.name,territoryId:user.territoryId,institutionMetricsConsent:user.institutionMetricsConsent===true});return; }
       if (method === 'PATCH' && route === '/devices/me') {
         needUser();keys(body,['name','territoryId','institutionMetricsConsent']);
         const name=text(body.name,'name',60,true);const id=body.territoryId===undefined?undefined:territory(body.territoryId);
@@ -391,9 +427,15 @@ export function createApp({
         const activeSession = body.sessionId ? state.sessions.find(session => session.id === body.sessionId && session.userId === user.id && ['created','active'].includes(session.state)) : null;
         const activeFlow = TASK_FLOWS[activeSession?.flowId];
         const task = activeFlow ? { flowId: activeFlow.id, title: activeFlow.title, instruction: activeFlow.steps[Math.min(activeSession.completedSteps.length, activeFlow.steps.length - 1)].instruction } : null;
-        const local = await assistant.reply({ key: hash(token) + ':' + conversationId, text: message, history, task, attachments, localOnly: !attachments.length && assistantOptions === undefined });
-        const result = local ?? await realtime.reply({deviceId:user.id,text:history.length && message.length<850 ? ('Contexto previo: '+history.slice(-2).map(h=>h.role+': '+h.content.slice(0,150)).join(' | ')+'\nConsulta: '+message).slice(-1000) : message});
+        required(user.realtimeApproved === true, 403, 'device_activation_required', 'Conectá este teléfono con un código vigente del equipo para habilitar la asistencia.');
+        const controller = new AbortController();
+        const onClose = () => { if (!res.writableEnded) controller.abort(); };
+        res.once('close', onClose);
+        try {
+        const result = await realtime.reply({deviceId:user.id,origin:directOrigin(req.socket.remoteAddress),signal:controller.signal,beforeConnect:()=>admission.reserve(user.id,req.socket.remoteAddress,'http'),localReply:()=>assistant.reply({signal:controller.signal,key:hash(token)+':'+conversationId,text:message,history,task,attachments,localOnly:!attachments.length && assistantOptions===undefined}),text:history.length && message.length<850 ? ('Contexto previo: '+history.slice(-2).map(h=>h.role+': '+h.content.slice(0,150)).join(' | ')+'\nConsulta: '+message).slice(-1000) : message});
         respond(200, result); return;
+        } finally { res.off('close', onClose); }
+
       }
       const eventMatch = /^\/assistant\/sessions\/([a-f0-9-]+)\/events$/.exec(route);
       if (method === 'POST' && eventMatch) {
@@ -506,7 +548,7 @@ export function createApp({
       respond(known ? error.status : 500, { error: { code: known ? error.code : 'internal_error', message: known ? error.message : 'No se pudo completar el pedido.' } });
     }
   };
-  handler.store = store; handler.openarg = openarg; handler.realtime = realtime;
+  handler.store = store; handler.openarg = openarg; handler.realtime = realtime; handler.admission = admission;
   handler.authorizeRealtime = async req => {
     const origin = req.headers.origin;
     if (origin && !corsOrigins.includes(origin)) throw new RealtimeError('origin_not_allowed', 'Origen no permitido.', 403);
@@ -521,6 +563,7 @@ export function createApp({
     const account = await accounts.principal(token);
     const user = account?.deviceId ? state.users.find(user => user.id === account.deviceId) : state.users.find(user => same(hash(token), user.tokenHash));
     if (!user) throw new RealtimeError('unauthorized', 'El acceso de este teléfono no es válido.', 401);
+    if (user.realtimeApproved !== true) throw new RealtimeError('device_activation_required', 'Conectá este teléfono con un código vigente del equipo para habilitar la asistencia.', 403);
     return user.id;
   };
   return handler;

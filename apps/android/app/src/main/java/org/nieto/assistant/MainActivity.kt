@@ -26,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -246,6 +247,7 @@ private val Turquoise = Color(0xFF00D6C9)
 }
 
 @Composable private fun SettingsContent(app: NietoApp, state: AppState, onConsent: () -> Unit, onAccessibility: () -> Unit) {
+    var enrollmentCode by remember { mutableStateOf("") }
     var url by remember { mutableStateOf(app.settings.baseUrl) }
     var name by remember { mutableStateOf(app.settings.deviceName) }
     val screenConsent = app.settings.screenConsent
@@ -260,11 +262,13 @@ private val Turquoise = Color(0xFF00D6C9)
     Text("El equipo de la hackathon te indica la dirección. OpenARG se conecta desde el servidor; este teléfono no necesita su clave.", fontSize = 17.sp)
     OutlinedTextField(value = name, onValueChange = { name = it.take(60) }, label = { Text("Nombre de este teléfono") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
     OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Dirección del servidor") }, modifier = Modifier.fillMaxWidth(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri))
-    BigButton("Guardar y conectar", { app.saveServer(url, name) }, enabled = !state.busy)
+    OutlinedTextField(value=enrollmentCode,onValueChange={enrollmentCode=it.filter(Char::isLetterOrDigit).uppercase(java.util.Locale.ROOT).take(12)},label={Text("Código de conexión del equipo")},modifier=Modifier.fillMaxWidth(),singleLine=true)
+    Text("El equipo genera este código de un uso desde Conexión. Vence a los 15 minutos y es independiente del ingreso y del grupo familiar.",fontSize=15.sp)
+    BigButton("Guardar y conectar", { app.saveServer(url, name, enrollmentCode, onConnected={enrollmentCode=""}) }, enabled = !state.busy)
     Text("Emulador: http://10.0.2.2:8787\nPor USB con adb reverse: http://127.0.0.1:8787\nEn celular por Wi-Fi: dirección LAN del equipo.", fontSize = 15.sp, lineHeight = 23.sp)
     Text("Privacidad", style = MaterialTheme.typography.titleLarge)
-    Text("Las credenciales de instalación se cifran con Android Keystore. El chat vive en memoria y se envía al servidor para responder. El servidor recibe eventos de pasos y duración, nunca tu pantalla. No se solicita acceso a contactos, SMS, cámara ni ubicación.", fontSize = 17.sp)
-    Text("Versión 0.1.0 · ${GuidanceEngine.PROFILE_VERSION}\nPrototipo experimental. La validación de pantallas en un teléfono real es necesaria antes de ampliar compatibilidad.", fontSize = 15.sp, lineHeight = 22.sp)
+    Text("Las credenciales de instalación se cifran con Android Keystore. El chat vive en memoria y se envía al servidor para responder. La asistencia visual solo envía controles y capturas a OpenAI con tu autorización. Tu grupo familiar no recibe el chat ni las capturas. La ubicación familiar requiere un permiso independiente y la compartís por tiempo limitado.", fontSize = 17.sp)
+    Text("Versión ${BuildConfig.VERSION_NAME} · ${GuidanceEngine.PROFILE_VERSION}\nPrototipo experimental. La validación de pantallas en un teléfono real es necesaria antes de ampliar compatibilidad.", fontSize = 15.sp, lineHeight = 22.sp)
 }
 
 @Composable private fun PermissionRow(title: String, detail: String, checked: Boolean, onChecked: (Boolean) -> Unit) {

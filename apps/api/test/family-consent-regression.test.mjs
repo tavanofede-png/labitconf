@@ -11,9 +11,9 @@ import {summarize,institutionOverview,periodFor} from '../src/institution.mjs';
 
 test('a real family link supports granular opt-in, pause, expiring approximate location and complete revocation',async t=>{
  const dir=await mkdtemp(join(tmpdir(),'tino-consent-'));let clock=Date.parse('2026-10-31T15:00:00Z');
- const server=createServer({dataFile:join(dir,'state.json'),now:()=>clock,openarg:new OpenArgClient({apiKey:''})});
+ const server=createServer({institutionToken:'operator-test',dataFile:join(dir,'state.json'),now:()=>clock,openarg:new OpenArgClient({apiKey:''})});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(async()=>{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});});
- async function call(path,method='GET',body,token){const r=await fetch(`http://127.0.0.1:${server.address().port}/api${path}`,{method,headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};}
+ async function call(path,method='GET',body,token){if(path==='/devices' && body){const invite=await call('/institution/device-invitations','POST',{},'operator-test');body={...body,enrollmentCode:invite.data.enrollmentCode};}const r=await fetch(`http://127.0.0.1:${server.address().port}/api${path}`,{method,headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};}
  const user=(await call('/devices','POST',{name:'Persona ficticia',territoryId:'AR-C'})).data;
  const group=(await call('/family/groups','POST',{name:'Grupo de prueba'})).data;
  const perms={progress:true,help:true,usage:false,safety:true,websites:false,location:true};

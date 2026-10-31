@@ -10,11 +10,12 @@ import {OpenArgClient} from '../src/openarg.mjs';
 const fixture=new URL('../../android/app/build/reports/guide-telemetry-contract.tsv',import.meta.url);
 const rows=(await readFile(fixture,'utf8')).trim().split('\n').map(line=>line.split('\t'));
 const directory=await mkdtemp(join(tmpdir(),'tino-android-contract-'));
-const server=createServer({dataFile:join(directory,'state.json'),openarg:new OpenArgClient({apiKey:''})});
+const server=createServer({institutionToken:'contract-operator',dataFile:join(directory,'state.json'),openarg:new OpenArgClient({apiKey:''})});
 try {
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  async function request(path,body,token){const response=await fetch(`http://127.0.0.1:${server.address().port}/api${path}`,{method:body?'POST':'GET',headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});assert.ok(response.ok,`${path}: ${response.status}`);return response.json();}
- const device=await request('/devices',{name:'Motor Android sintético',territoryId:'AR-C'});
+ const invitation=await request('/institution/device-invitations',{},'contract-operator');
+ const device=await request('/devices',{name:'Motor Android sintético',territoryId:'AR-C',enrollmentCode:invitation.enrollmentCode});
  const session=await request('/assistant/sessions',{clientSessionId:randomUUID(),flowId:'whatsapp-location'},device.token);
  for(const [type,stepId,attemptId,duration] of rows){
   const event={eventId:randomUUID(),type,...(stepId?{stepId}:{}),...(attemptId?{attemptId}:{}),...(duration?{durationSeconds:Number(duration)}:{})};

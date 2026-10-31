@@ -4,7 +4,9 @@
 
 La persona pide por voz qué necesita hacer. El agente analiza la pantalla que autorizó compartir y responde con el siguiente paso; el teléfono señala el control correspondiente. La consulta también puede escribirse desde la burbuja y la respuesta puede leerse sin audio. La aplicación muestra la respuesta actual, sin un historial de conversaciones guardado.
 
-La conexión conserva el contexto de la tarea actual para poder continuar después de un toque. Este contexto es temporal, termina al cerrar la asistencia y no se almacena en el servidor. El agente no depende de un catálogo de guías: la guía de WhatsApp anterior permanece como recorrido local opcional.
+La conexión conserva el contexto de la tarea actual para poder continuar después de un toque. Este contexto es temporal, termina al cerrar la asistencia y no se almacena en el servidor. La modalidad escrita evita micrófono, reproductor y TTS; se puede elegir voz en la misma conexión. Al interrumpir audio se informa el punto reproducido para eliminar del contexto lo que no se escuchó. El agente no depende de un catálogo de guías: la guía de WhatsApp anterior permanece como recorrido local opcional y termina al activar acompañamiento remoto.
+
+El equipo admite cada teléfono mediante un código de un uso, con vigencia de 15 minutos, generado en Conexión del portal. Las instalaciones anteriores también necesitan activar acceso a IA con un código. Las reservas diarias y la concurrencia se limitan por dispositivo, origen directo y servidor; no son un presupuesto monetario exacto. Ver [admisión y uso](../apps/api/docs/ADMISSION.md).
 
 Android envía controles identificados con sus límites de pantalla y, desde Android 11, una captura JPEG efímera cuando puede sanearla. Android 8–10 aporta controles accesibles. Cada paso del agente se refiere a un `screenId` y `controlId` válidos; el servidor y Android comprueban esos identificadores. Un cambio de pantalla invalida el resaltado anterior. Si una app no expone controles suficientes, no se puede garantizar el señalamiento.
 
@@ -38,12 +40,13 @@ Los indicadores públicos se calculan por MCP desde tablas verificadas, conserva
 
 ## Evidencia y validación pendiente
 
-- Cierre de compilación el 31 de octubre de 2026: **65 pruebas API, 3 web y 37 Android aprobadas**, sin fallos. TypeScript y build web aprobados. La revisión independiente de permisos, credenciales, snapshots y límites no dejó bloqueantes de código.
-- APK local `artifacts/nieto-debug.apk`, versión `0.4.0-labitconf`, código `4`, paquete `org.nieto.assistant`. SHA-256: `b6072c3cc3139be6e873edb7373978c6b57edb0a9468e5dfc745ef0165b7f562`. Coincide con el APK producido por Gradle; no se incluye en Git.
+- Entrega 0.5.0 del 31 de octubre de 2026: **78 pruebas API, 10 web y 49 Android aprobadas**, sin fallos. TypeScript y build web aprobados. El [informe de correcciones B01–B09 y R01](AUDIT_FIXES-2026-10-31.md) distingue las comprobaciones de software de los pendientes físicos.
+- APK local `artifacts/nieto-debug.apk`, versión `0.5.0-labitconf`, código `5`, paquete `org.nieto.assistant`. El manifiesto `artifacts/android-build.json` y [SHA256SUMS publicado](https://github.com/tavanofede-png/labitconf/releases/download/v0.5.0-labitconf/SHA256SUMS.txt) identifican el binario exacto. El APK no se incluye en Git.
 - OpenAI real recibió una imagen artificial de 12.421 bytes y dos controles, y devolvió un señalamiento válido de Buscar mediante `point_to_control` con el modelo `gpt-realtime-2.1-mini`. No se enviaron capturas personales. Duración observada de esa prueba: 3,4 segundos, sin compromiso de latencia.
 - OpenArg real devolvió población de 65 años o más de Salta del Censo 2022 y conectividad provincial de 2026. Cada territorio requiere que sus propios filtros y agregados pasen la verificación.
 - El portal se comprobó en navegador con estado sintético aislado: cohortes publicables y suprimidas, valores nulos, datos de seguimiento y vista de 390 píxeles sin desborde. Esos datos de QA no se incorporaron al producto ni a la persistencia normal.
-- Las regresiones locales verificaron que una invitación tardía del grupo A no aparezca en el B y que el panorama institucional se actualice cada 30 segundos.
+- Las regresiones locales verificaron identidad de invitaciones y códigos, actualización institucional, selección territorial durante carga demorada, navegación accesible y verificación MCP después de cerrar acceso.
+- La entrega 0.5.0 también verificó contra OpenAI real la alternancia texto/voz en una conexión, la truncación de una respuesta ya generada y el cierre por revocación. OpenArg completó descubrimiento de seis herramientas y una consulta autenticada `listar_fuentes`; no se revalidaron todas las tablas territoriales.
 - Falta validación en teléfonos reales: micrófono y actividad transparente, captura/redacción, cambios de pantalla, controles de distintas apps, resaltados, notificaciones con la app cerrada y restricciones del fabricante. Las pruebas de software y el relay real no reemplazan esa comprobación.
 
-El informe [AUDIT.md](AUDIT.md) conserva los hallazgos de la versión `059e0cc`. Esta entrega cambia la asistencia, corrige la cohorte efectiva y las regresiones web mencionadas; el [cierre A01–A11](AUDIT_CLOSURE.md) documenta las correcciones de esta entrega. La guía solo registra reportes explícitos; envío verificado, autonomía y requisitos de producción siguen fuera de lo acreditado.
+El [estado de auditoría vigente](AUDIT.md) enlaza las correcciones B01–B09/R01 de esta entrega y conserva los antecedentes A01–A11. La guía solo registra reportes explícitos; envío verificado, autonomía y requisitos de producción siguen fuera de lo acreditado.

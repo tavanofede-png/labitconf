@@ -26,4 +26,11 @@ class GuideAnnouncementPolicyTest {
         assertNull(policy.next("COMPLETE", report, null))
         assertEquals("Guía terminada", policy.next("CANCELLED", "Guía terminada", null))
     }
+    @Test fun switchingAwayAndStartingAnotherGuideDoesNotSuppressItsFirstInstruction() {
+        val policy = GuideAnnouncementPolicy()
+        assertEquals("Abrí tu conversación", policy.next("OPEN_CHAT", "Abrí tu conversación", null))
+        assertNull(policy.next("OPEN_CHAT", "Abrí tu conversación", null))
+        policy.reset()
+        assertEquals("Abrí tu conversación", policy.next("OPEN_CHAT", "Abrí tu conversación", null))
+    }
 }

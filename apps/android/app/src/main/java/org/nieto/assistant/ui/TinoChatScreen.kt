@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -54,7 +55,7 @@ private val Paper = Color(0xFFF3F6F6)
     val guideSuggested = state.suggestedFlow != null
     var consentText by remember { mutableStateOf<String?>(null) }
     var consentVoice by remember { mutableStateOf(false) }
-    val send = { if (message.isNotBlank() && !state.busy && !state.voice.active) { if(app.settings.openAiConsent || app.settings.juryDemo){app.sendMessage(message);message=""} else consentText=message } }
+    val send = { if (message.isNotBlank() && !state.busy && !state.voice.active) { if(app.settings.openAiConsent || app.settings.juryDemo){val sent=message;app.sendMessage(sent,onComplete={accepted -> if(accepted && message==sent)message=""})} else consentText=message } }
     if(consentText!=null || consentVoice) AlertDialog(onDismissRequest={consentText=null;consentVoice=false},title={Text("Hablar con TINO")},text={Text("Para responder, TINO envía tu consulta y, si elegís hablar, tu voz a OpenAI. Podés revocar este permiso en Ajustes. Tu grupo familiar no recibe la conversación.")},confirmButton={TextButton(onClick={app.settings.openAiConsent=true;val draft=consentText;val voice=consentVoice;consentText=null;consentVoice=false;if(draft!=null){app.sendMessage(draft);message=""};if(voice)onVoice()}){Text("Aceptar y continuar")}},dismissButton={TextButton(onClick={consentText=null;consentVoice=false}){Text("Volver")}})
     LaunchedEffect(state.foreground) { while (isActive && state.foreground) { app.refreshFamilyInbox(); delay(15000) } }
     LaunchedEffect(state.chat.size, state.busy, guideSuggested, state.task, state.familyInbox.isNotEmpty()) {
@@ -74,7 +75,7 @@ private val Paper = Color(0xFFF3F6F6)
                     Surface(shape = RoundedCornerShape(28.dp), color = Color.White, border = BorderStroke(1.dp, Color(0xFFD7E2E0))) {
                         Row(Modifier.padding(6.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             TextField(value = message, onValueChange = { message = it.take(1000) }, placeholder = { Text("Escribile a TINO…", color = Muted) },
-                                modifier = Modifier.weight(1f).heightIn(min = 52.dp).semantics { contentDescription = "Mensaje para TINO" }, maxLines = 4,
+                                modifier = Modifier.weight(1f).heightIn(min = 52.dp).onFocusChanged { if(it.isFocused)app.selectWrittenMode() }.semantics { contentDescription = "Mensaje para TINO" }, maxLines = 4,
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 18.sp, lineHeight = 26.sp, color = Ink),
                                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { send() }),
                                 colors = TextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, cursorColor = Ink))

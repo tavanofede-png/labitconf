@@ -19,8 +19,8 @@ android {
         applicationId = "org.nieto.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "0.6.0-tino"
+        versionCode = 7
+        versionName = "0.6.1-tino"
         testInstrumentationRunner = "org.nieto.assistant.presence.VoiceSmokeInstrumentation"
     }
     buildFeatures { compose = true; buildConfig = true }

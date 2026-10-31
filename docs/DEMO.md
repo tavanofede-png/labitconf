@@ -1,6 +1,6 @@
 # TINO · La tech, de todos.
 
-Demo Android 0.6.0 para LABITCONF. El frontend es nativo (Kotlin + Compose), no una página web dentro de una APK.
+Demo Android 0.6.1 para LABITCONF. El frontend es nativo (Kotlin + Compose), no una página web dentro de una APK.
 
 ## Ingreso de jurados
 
@@ -31,6 +31,8 @@ Los reportes CSV/PDF usan el fixture estable y muestran el rango elegido, tal co
 ## Guía real sobre otras apps: estado comprobado
 
 La ruta de asistencia sobre WhatsApp/Gmail reales permanece en el proyecto para cuentas normales. Necesita backend disponible, credencial válida del proveedor, consentimiento para la asistencia visual y Accesibilidad habilitada por la persona en Android. No se debe presentar una práctica como evidencia de un envío real.
+
+Para cuentas reales, el equipo genera un código de conexión de un uso en el portal. Se ingresa en Ajustes Android para activar el acceso del dispositivo a IA. Este código de 12 caracteres vence a los 15 minutos y es independiente del código de ingreso y de Familia. Los límites de uso, la revocación y las correcciones de modalidad escrita/reproducción de la auditoría se conservan.
 
 La última comprobación del proveedor en esta Mac devolvió `invalid_api_key`. No quedó certificado un recorrido externo completo con esa credencial. El permiso de Accesibilidad de la Samsung estaba desactivado al revisarlo. Los tests de protocolo con respuestas simuladas no sustituyen esa prueba real.
 

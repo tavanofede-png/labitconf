@@ -18,12 +18,17 @@ export function attachRealtimeSocket(server, app) {
       const deviceId = await app.authorizeRealtime(req);
       if (socket.destroyed) return;
       if (!app.realtime.status().configured) throw new RealtimeError('openai_not_configured', 'Falta OPENAI_API_KEY en el servidor.', 503);
-      wss.handleUpgrade(req, socket, head, client => {
+      wss.handleUpgrade(req, socket, head, async client => {
         client.on('error', () => { if (client.readyState !== WebSocket.CLOSED) client.terminate(); });
+        client.once('close', () => conversation?.close());
         // Invalid handshakes never reserve a slot: ws can reject them without
         // throwing or invoking this callback.
-        try { conversation = app.realtime.reserve(deviceId, 'audio'); }
-        catch (error) { client.send(JSON.stringify(safeEvent(error))); client.close(1008, 'Conversación no disponible'); return; }
+        try {
+          conversation = app.realtime.reserve(deviceId, 'audio', req.socket.remoteAddress);
+          await app.admission.reserve(deviceId, req.socket.remoteAddress, 'ws');
+          if (client.readyState !== WebSocket.OPEN || conversation.closed) { conversation.close(); return; }
+        }
+        catch (error) { conversation?.close(); if (client.readyState === WebSocket.OPEN) { client.send(JSON.stringify(safeEvent(error))); client.close(1008, 'Conversación no disponible'); } return; }
         clients.add(client);
         let stopped = false; let windowStart = Date.now(); let messageCount = 0;
         const send = event => {

@@ -57,4 +57,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "tino-demo-0.6.0-${GITHUB_RUN_NUMBER}" distribution/tino-demo.apk distribution/android-build.json distribution/SHA256SUMS distribution/LEEME.md --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'TINO · La tech, de todos. · Demo Android 0.6.0' --notes-file docs/DEMO.md --latest
+          TINO_VERSION=$(node -p "JSON.parse(require('fs').readFileSync('artifacts/android-build.json')).versionName")
+          gh release create "tino-demo-${TINO_VERSION}-${GITHUB_RUN_NUMBER}" distribution/tino-demo.apk distribution/android-build.json distribution/SHA256SUMS distribution/LEEME.md --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "TINO · La tech, de todos. · Demo Android ${TINO_VERSION}" --notes-file docs/DEMO.md --latest

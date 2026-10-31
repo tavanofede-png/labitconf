@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { RealtimeService } from '../src/realtime.mjs';
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
 import { createAccounts } from '../src/accounts.mjs';
@@ -11,7 +12,7 @@ import { JsonStore } from '../src/store.mjs';
 async function fixture(t, overrides = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'tino-accounts-')); const file = join(dir, 'state.json');
   const codes = new Map(); let clock = Date.now();
-  const server = createServer({ assistantOptions:{generateReply:async()=> 'Respuesta sintética para probar autenticación.'}, dataFile: file, institutionToken: '', openarg: new OpenArgClient({ apiKey: '' }), now: () => clock,
+  const server = createServer({ assistantOptions:{generateReply:async()=> 'Respuesta sintética para probar autenticación.'}, dataFile: file, institutionToken: 'operator-test', realtime: new RealtimeService({apiKey:'test-key'}), openarg: new OpenArgClient({ apiKey: '' }), now: () => clock,
     accountOptions: { authSecret: 'test-secret-not-a-production-credential', sendCode: ({ email, code }) => codes.set(email, code), institutionEmails: ['institution@example.com'], ...overrides } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
@@ -32,7 +33,11 @@ async function fixture(t, overrides = {}) {
     const result = await auth.handle({ route: '/auth/code/verify', method: 'POST', body: { challengeId: challenge[1].challengeId, code: codes.get(address) } });
     return result[1].sessionToken;
   };
-  return { request, login, realLogin, onboard, codes, file, advance: ms => { clock += ms; } };
+  const activate = async token => {
+    const invite=await request('/institution/device-invitations',{method:'POST',body:{},token:'operator-test'});
+    assert.equal((await request('/devices/me/activation',{method:'POST',body:{enrollmentCode:invite.body.enrollmentCode},token})).status,200);
+  };
+  return { request, login, realLogin, onboard, codes, file, activate, advance: ms => { clock += ms; } };
 }
 
 test('codes are single-use, bounded to five attempts, throttled, expired, and never returned or stored in clear text', async t => {
@@ -62,6 +67,7 @@ test('verified identity owns the profile, assistant data and revocable session, 
   assert.equal((await f.onboard(token, 'someone@example.com')).status, 403);
   assert.equal((await f.onboard(token, 'person@example.com', 'institution')).status, 403);
   const profile = await f.onboard(token, 'person@example.com'); assert.equal(profile.status, 200); assert.equal(profile.body.deviceToken, token);
+  await f.activate(token);
   const message = await f.request('/assistant/message', { token, method: 'POST', body: { text: 'quiero compartir mi ubicación' } }); assert.equal(message.status, 200); assert.equal(message.body.flowId, 'whatsapp-location');
   assert.notEqual((await f.request('/institution/analytics', { token })).status, 200);
   assert.equal((await f.request('/accounts/session', { method: 'DELETE', token })).status, 200);
@@ -160,6 +166,7 @@ test('judges log in with test@labitconf.com / 0000 without email or onboarding',
     assert.equal(result.status, 200); assert.equal(result.body.demo, true); assert.equal(result.body.onboardingRequired, false); assert.ok(result.body.deviceToken);
     const me = await f.request('/accounts/me', { token: result.body.sessionToken });
     assert.equal(me.body.profile.username, 'labitconf.demo'); assert.equal(me.body.profile.email, 'test@labitconf.com');
+    await f.activate(result.body.sessionToken);
     const message = await f.request('/assistant/message', { token: result.body.sessionToken, method: 'POST', body: { text: 'quiero compartir mi ubicación' } });
     assert.equal(message.status, 200); assert.equal(message.body.flowId, 'whatsapp-location');
     assert.notEqual((await f.request('/institution/analytics', { token: result.body.sessionToken })).status, 200);
@@ -224,6 +231,7 @@ test('Ya tengo cuenta with the demo code opens an onboarded assistant account di
   const login = await verify(await request('login'));
   assert.equal(login.status, 200); assert.equal(login.body.onboardingRequired, false); assert.ok(login.body.deviceToken); assert.ok(login.body.profile.username);
   const me = await f.request('/accounts/me', { token: login.body.sessionToken }); assert.equal(me.body.onboardingRequired, false);
+  await f.activate(login.body.sessionToken);
   const message = await f.request('/assistant/message', { token: login.body.sessionToken, method: 'POST', body: { text: 'quiero compartir mi ubicación' } });
   assert.equal(message.status, 200); assert.equal(message.body.flowId, 'whatsapp-location');
 });

@@ -83,7 +83,7 @@ test('OpenAI adapter requests no response storage, bounds output, preserves role
 test('demo dashboards are role-bound, actions are group-isolated, and demo institutions never access private analytics', async t => {
   let clock = now;
   const dir = await mkdtemp(join(tmpdir(), 'tino-dashboards-'));
-  const server = createServer({ dataFile: join(dir, 'state.json'), now: () => clock, institutionToken: '', openarg: new OpenArgClient({ apiKey: '' }), accountOptions: { judgesDemo: true } });
+  const server = createServer({ dataFile: join(dir, 'state.json'), now: () => clock, institutionToken: 'operator-test', openarg: new OpenArgClient({ apiKey: '' }), accountOptions: { judgesDemo: true } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { await new Promise(r => server.close(r)); await rm(dir, { recursive: true, force: true }); });
   const req = async (path, token, body, method = body ? 'POST' : 'GET') => { const r = await fetch(`http://127.0.0.1:${server.address().port}/api${path}`, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, body: await r.json() }; };
@@ -96,7 +96,7 @@ test('demo dashboards are role-bound, actions are group-isolated, and demo insti
   const family = await login('family@example.com', 'family'); const other = await login('other@example.com', 'family');
   assert.equal((await req('/demo/institution/dashboard')).status, 403);
   assert.equal((await req('/demo/institution/dashboard', family)).status, 403);
-  assert.equal((await req('/institution/analytics', institution)).status, 503);
+  assert.equal((await req('/institution/analytics', institution)).status, 401);
   assert.equal((await req('/demo/institution/dashboard?months=6', institution)).body.flows.length, 10);
   assert.equal((await req('/demo/institution/dashboard?territoryId=invalid', institution)).status, 400);
   assert.equal((await req('/demo/family/actions', family, { id: 'ping-demo-001', memberId: 'marta', type: 'ping' })).status, 200);
@@ -113,7 +113,8 @@ test('demo dashboards are role-bound, actions are group-isolated, and demo insti
   assert.equal((await req('/demo/family/dashboard', other)).body.alerts[0].resolvedAt, null);
   for(const type of ['ping','voice','location_request','resolve']) assert.equal((await req('/demo/family/actions', family, { id: 'blocked-lucia-'+type, memberId:'lucia',type })).status,403);
   assert.equal((await req('/demo/family/actions', family, { id: 'voice-demo-001', memberId: 'marta', type: 'voice', audioBase64: 'not-a-recording' })).status, 400);
-  const device = (await req('/devices', null, { name: 'Prueba de entrega', territoryId: 'AR-C' })).body;
+  const enrollment = await req('/institution/device-invitations','operator-test',{});
+  const device = (await req('/devices', null, { name: 'Prueba de entrega', territoryId: 'AR-C',enrollmentCode:enrollment.body.enrollmentCode })).body;
   const invite = (await req('/family/invitations', family, {})).body;
   assert.equal((await req('/family/link', device.token, { invitationCode: invite.invitationCode, permissions: { progress: false, help: true } })).status, 200);
   const message = { id: 'delivery-demo-001', memberId: device.deviceId, type: 'ping' };

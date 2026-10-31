@@ -7,20 +7,22 @@ Todas las rutas usan JSON y el prefijo `/api`. Los errores tienen `{error:{code,
 ## Estado y configuración
 
 - `GET /health`: `{status,version,openarg:{configured,connected?,endpoint},privacy:{minimumCohort},...}`. No expone secretos.
-- `POST /devices` con `{name,territoryId}` → `{deviceId,token}`. Identidad seudónima de instalación.
-- `GET /devices/me` devuelve el dispositivo, su jurisdicción declarada y `institutionMetricsConsent` vigente.
+- `POST /institution/device-invitations` con `{}` y token institucional → `{enrollmentCode,expiresAt}`. Código de conexión de un uso, vigente durante 15 minutos; independiente de Familia.
+- `POST /devices` con `{name,territoryId,enrollmentCode}` → `{deviceId,token}`. El código se consume atómicamente para autorizar la instalación. Sin código vigente no se registra un dispositivo nuevo.
+- `POST /devices/me/activation` con `{enrollmentCode}` y token de dispositivo activa una instalación anterior. Las credenciales heredadas no habilitan IA sin esta admisión.
+- `GET /devices/me` devuelve el dispositivo, su jurisdicción declarada, `realtimeApproved` e `institutionMetricsConsent` vigente.
 - `PATCH /devices/me` con `{name?,territoryId?,institutionMetricsConsent?}` requiere token de dispositivo. El consentimiento institucional es independiente y está desactivado por defecto.
 
 ## Asistente y telemetría
 
 - `POST /assistant/sessions` con `{flowId:"whatsapp-location"|"screen-assistance",clientSessionId:UUID}` → `{id,flowId,createdAt}`. Repetir el mismo identificador devuelve la misma sesión del titular. La asistencia de pantalla registra actividad sin contenido privado.
 - `POST /assistant/message` con `{sessionId?,text}` → `{mode:"conversation",instruction,sources:[],model}` sin `flowId`. Usa `gpt-realtime-2.1-mini`; no clasifica por palabras ni propone una guía local. Falta de clave, cuota o acceso devuelve un error explícito. Cada solicitud HTTP recibe solo su texto actual; no tiene memoria entre solicitudes.
-- `WS /assistant/realtime` autentica con token de dispositivo NIETO y transmite audio PCM24k y texto usando el mismo modelo. La clave OpenAI solo existe en el backend. El [contrato Realtime](REALTIME_CONTRACT.md) define los mensajes, límites, cancelación y sugerencias de guía. Las conversaciones de voz viven en memoria de la conexión y se eliminan al cerrarla.
+- `WS /assistant/realtime` autentica con token de dispositivo NIETO admitido y transmite audio PCM24k o texto usando el mismo modelo. La clave OpenAI solo existe en el backend. El [contrato Realtime](REALTIME_CONTRACT.md) define modalidad, límites, cancelación y señalamiento de controles. Las conversaciones viven en memoria de la conexión y se eliminan al cerrarla. Tanto HTTP como WS requieren admisión y reserva durable de presupuesto antes de abrir el proveedor; ver [ADMISSION.md](../apps/api/docs/ADMISSION.md).
 - Su extensión `screen.context`/`screen.clear` admite controles y una imagen JPEG efímera con consentimiento remoto. `guidance.step` refiere IDs validados del snapshot actual. Ver [contrato de pantalla](SCREEN_ASSISTANCE_CONTRACT.md); la herramienta solo propone un control y nunca lo pulsa.
 - `POST /assistant/sessions/:id/events` con `{eventId:UUID,type,stepId?,durationSeconds?,attemptId?:UUID}` → `{ok:true,duplicate:boolean}`. El servidor exige inicio y pasos en orden, separa prácticas, congela duración al cierre y deduplica de forma durable. Terminales admitidos: `flow_reported`, `practice_reported` y `cancelled`. `flow_completed`, `practice_completed` y `autonomy_completed` devuelven `409 verification_unavailable`. Solo eventos cerrados, nunca texto libre ni pantalla. Ver [protocolo de sesiones](../apps/api/docs/SESSIONS.md).
 - `GET /assistant/history` devuelve únicamente sesiones operativas propias, con reportes, `resultSource` e intentos de práctica separados; no contiene consultas ni historial conversacional. Registros anteriores se proyectan como `legacy_unverified` y `autonomyCompleted:false`.
 
-Android valida que el paso propuesto siga correspondiendo a los controles actuales antes de resaltarlo. Nunca ejecuta clics ni gestos. El motor de la guía local permanece separado y conserva sus limitaciones de verificación. Si falta evidencia de pantalla, la asistencia pide aclaración sin inventar coordenadas.
+Android valida que el paso propuesto siga correspondiendo al contexto y los controles actuales antes de resaltarlo. Nunca ejecuta clics ni gestos. El motor de la guía local se detiene al activar asistencia remota. Los resultados de la guía solo son reportes explícitos de la persona; no acreditan envío verificado ni autonomía. Si falta evidencia de pantalla, la asistencia pide aclaración sin inventar coordenadas.
 
 ## Familia
 
@@ -41,7 +43,7 @@ Las rutas institucionales y OpenArg requieren `INSTITUTION_TOKEN` configurado en
 - `GET /openarg/status` → `{configured,connected,endpoint,tools:[{name,description}],error?}`. Handshake y descubrimiento MCP reales; sin clave, estado pendiente.
 - `GET /openarg/search?q=...&territoryId=AR-C` → `{query,datasets:[{id,title,description,sourceUrl,organization?,updatedAt?,period?,resources:[{id,name,format,url}]}],sources:[{title,url}],warnings:[],cached,fetchedAt}`.
 - `POST /openarg/ask` con `{question,territoryId}` → `{answer,sources:[{title,url}],warnings:[],fetchedAt,cached}`. La respuesta conserva atribución y declara cuando no hay período o indicador verificable. Usa herramienta MCP real descubierta, sin endpoints o nombres inventados.
-- `GET /openarg/territory?territoryId=AR-C&q=...` con `q` opcional de hasta 300 caracteres → `{territoryId,query,indicators:[{id,label,value,unit,period,sourceUrl,sourceTitle,freshness?,method?}],datasets,sources,warnings,cached,fetchedAt}`. CABA tiene dos indicadores históricos del Censo 2010 (población de 65 años y más y total), obtenidos mediante agregados MCP después de verificar estructura y período. Cada indicador declara su vigencia histórica; no describe población actual ni impacto actual de NIETO. Otras jurisdicciones devuelven indicadores vacíos con advertencia hasta verificar una fuente específica. Nunca derivar un número de una descripción o inventarlo. La búsqueda usa el territorio como contexto y puede devolver fuentes de otras jurisdicciones; su cobertura debe verificarse en origen.
+- `GET /openarg/territory?territoryId=AR-C&q=...` con `q` opcional de hasta 300 caracteres → `{territoryId,query,indicators:[{id,label,value,unit,period,sourceUrl,sourceTitle,freshness?,method?}],datasets,sources,warnings,cached,fetchedAt}`. Consulta tablas curadas del Censo 2022 para población de 65 años y más y conectividad provincial ENACOM. Cada valor requiere verificar estructura, provincia, período y cardinalidad por MCP. Una fuente no verificada se omite con advertencia; no se reutilizan cifras de otro territorio. Los períodos de cada fuente permanecen explícitos. La búsqueda de catálogo puede devolver fuentes de otras jurisdicciones y no acredita por sí sola una cifra territorial.
 
 ## Ejecución local
 
