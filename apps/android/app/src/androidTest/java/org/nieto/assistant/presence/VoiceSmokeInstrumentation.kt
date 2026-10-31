@@ -14,6 +14,14 @@ class VoiceSmokeInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); suite=arguments?.getString("suite"); start() }
     override fun onStart() {
         val output = Bundle()
+        if (suite=="family-audio") {
+            try {
+                val file=familyAudioSmoke(targetContext)
+                output.putString("stream","\nPASS: synthetic AAC recorded by codec, valid M4A, native playback completed (${file.length()} bytes); microphone not used.\n")
+                output.putInt("tests",3);finish(Activity.RESULT_OK,output)
+            } catch(error: Throwable) {output.putString("stream","\nFAIL: ${error.javaClass.simpleName}: ${error.message}\n");finish(Activity.RESULT_CANCELED,output)}
+            return
+        }
         if (suite=="reports") { reportSmoke(output); return }
         try {
             val directory = File(targetContext.cacheDir, "voice-smoke-model")

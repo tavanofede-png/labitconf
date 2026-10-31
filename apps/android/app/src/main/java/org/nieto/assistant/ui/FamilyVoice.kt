@@ -26,24 +26,38 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 @Composable fun AudioMessageButton(encoded: String) {
     val context = LocalContext.current
     val app = context.applicationContext as NietoApp
+    val lifecycle = LocalLifecycleOwner.current
+    val audioOwner = remember { UUID.randomUUID().toString() }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     var file by remember { mutableStateOf<File?>(null) }
     var playing by remember { mutableStateOf(false) }
+    var preparing by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf(false) }
-    DisposableEffect(Unit) { onDispose { player?.release(); file?.delete(); app.resumeWakeAfterRecording() } }
+    fun releasePlayback(failed: Boolean = false) {
+        player?.release(); player = null; file?.delete(); file = null
+        playing = false; preparing = false; failure = failed
+        app.resumeWakeAfterRecording(audioOwner)
+    }
+    DisposableEffect(encoded,lifecycle) {
+        val observer=LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_STOP) releasePlayback() }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer);releasePlayback() }
+    }
     TextButton(onClick = {
-        if (playing) { player?.stop(); player?.release(); player = null; playing = false; app.resumeWakeAfterRecording(); return@TextButton }
+        if (playing || preparing) { releasePlayback(); return@TextButton }
         runCatching {
-            app.stopSpeaking(); app.pauseWakeForRecording()
-            file?.delete(); val clip = File.createTempFile("tino-message-", ".m4a", context.cacheDir)
-            clip.writeBytes(Base64.decode(encoded, Base64.DEFAULT)); file = clip
-            player = MediaPlayer().apply {
-                setDataSource(clip.absolutePath); setOnCompletionListener { playing = false; it.release(); player = null; clip.delete(); app.resumeWakeAfterRecording() }
-                setOnErrorListener { p, _, _ -> playing = false; failure = true; p.release(); player = null; clip.delete(); app.resumeWakeAfterRecording(); true }
-                prepare(); start()
-            }; playing = true; failure = false
-        }.onFailure { failure = true; playing = false; player?.release(); player = null; file?.delete(); app.resumeWakeAfterRecording() }
-    }, enabled = encoded.isNotBlank()) { Text(if (failure) "Reintentar" else if (playing) "Detener" else "▶ Escuchar", color = DashTeal) }
+            app.stopSpeaking(); app.pauseWakeForRecording(audioOwner)
+            val clip = File.createTempFile("tino-message-", ".m4a", context.cacheDir)
+            file = clip; clip.writeBytes(Base64.decode(encoded, Base64.DEFAULT))
+            val active=MediaPlayer(); player=active; preparing=true; failure=false
+            active.setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            active.setDataSource(clip.absolutePath)
+            active.setOnPreparedListener { current -> if(player===current) runCatching { current.start();preparing=false;playing=true }.onFailure { releasePlayback(true) } }
+            active.setOnCompletionListener { current -> if(player===current) releasePlayback() }
+            active.setOnErrorListener { current,_,_ -> if(player===current) releasePlayback(true);true }
+            active.prepareAsync()
+        }.onFailure { releasePlayback(true) }
+    }, enabled = encoded.isNotBlank()) { Text(if (failure) "Reintentar audio" else if (preparing) "Cancelar carga" else if (playing) "Detener audio" else "▶ Escuchar", color = DashTeal) }
 }
 
 @Composable internal fun VoiceNoteDialog(name: String, busy: Boolean, serverError: String?, serverMessage: String?, close: () -> Unit, send: (String, String) -> Unit) {
@@ -51,7 +65,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
     val app = context.applicationContext as NietoApp
     val lifecycle = LocalLifecycleOwner.current
     val file = remember { File.createTempFile("tino-voice-", ".m4a", context.cacheDir) }
-    val requestId = remember { UUID.randomUUID().toString() }
+    var requestId by remember { mutableStateOf(UUID.randomUUID().toString()) }
+    val audioOwner = remember { UUID.randomUUID().toString() }
     var recorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recording by remember { mutableStateOf(false) }
     var ready by remember { mutableStateOf(false) }
@@ -60,26 +75,27 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
     var sent by remember { mutableStateOf(false) }
     fun stopRecording() {
         val active = recorder ?: return
-        runCatching { active.stop(); ready = file.length() in 100..131072 }.onFailure { ready = false; error = "El aviso fue demasiado corto. Probá grabarlo de nuevo." }
+        runCatching { active.stop(); ready = file.length() in 100..131072; if(!ready) error = "No pude preparar el audio. Probá grabarlo de nuevo." }.onFailure { ready = false; error = "El aviso fue demasiado corto. Probá grabarlo de nuevo." }
         active.release(); recorder = null; recording = false
-        app.resumeWakeAfterRecording()
+        app.resumeWakeAfterRecording(audioOwner)
     }
     fun startRecording() {
-        app.pauseWakeForRecording(); app.stopSpeaking()
+        app.pauseWakeForRecording(audioOwner); app.stopSpeaking()
+        requestId=UUID.randomUUID().toString();sent=false;error=null;ready=false
         runCatching {
             @Suppress("DEPRECATION") val active = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else MediaRecorder()
             recorder = active
             active.setAudioSource(MediaRecorder.AudioSource.MIC); active.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             active.setAudioEncoder(MediaRecorder.AudioEncoder.AAC); active.setAudioSamplingRate(16000); active.setAudioEncodingBitRate(24000)
-            active.setMaxDuration(30_000); active.setOutputFile(file.absolutePath)
-            active.setOnInfoListener { _, what, _ -> if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) stopRecording() }
+            active.setMaxDuration(30_000); active.setMaxFileSize(131072); active.setOutputFile(file.absolutePath)
+            active.setOnInfoListener { _, what, _ -> if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED || what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED) stopRecording() }
             active.prepare(); active.start(); recording = true; ready = false; seconds = 0; error = null
-        }.onFailure { recorder?.release(); recorder = null; recording = false; app.resumeWakeAfterRecording(); error = "No pude iniciar la grabación. Revisá el micrófono y probá otra vez." }
+        }.onFailure { recorder?.release(); recorder = null; recording = false; app.resumeWakeAfterRecording(audioOwner); error = "No pude iniciar la grabación. Revisá el micrófono y probá otra vez." }
     }
     val microphone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) startRecording() else error = "El aviso de voz necesita permiso de micrófono." }
     LaunchedEffect(recording) { while (recording) { delay(1000); seconds++ } }
     LaunchedEffect(busy, serverMessage) { if (sent && !busy && serverError == null && serverMessage == "Aviso de voz enviado.") close() }
-    DisposableEffect(Unit) { onDispose { runCatching { recorder?.stop() }; recorder?.release(); file.delete(); app.resumeWakeAfterRecording() } }
+    DisposableEffect(Unit) { onDispose { runCatching { recorder?.stop() }; recorder?.release(); file.delete(); app.resumeWakeAfterRecording(audioOwner) } }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP && recording) stopRecording() }
         lifecycle.lifecycle.addObserver(observer)

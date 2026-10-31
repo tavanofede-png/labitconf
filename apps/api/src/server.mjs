@@ -171,7 +171,9 @@ export function createApp({
           if (body.type === 'voice') validateVoice(body.audioBase64);
           await store.update(s => {
             s.demoFamilyActions ??= []; s.demoFamilyActions = s.demoFamilyActions.filter(a => Date.parse(a.createdAt) > current - 86_400_000);
-            if (!s.demoFamilyActions.some(a => a.id === body.id && a.groupId === account.groupId)) s.demoFamilyActions.push({ id: body.id, memberId: body.memberId, type: body.type, groupId: account.groupId, createdAt: new Date(current).toISOString(), ...(body.alertId ? { alertId: body.alertId } : {}), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
+            const previous=s.demoFamilyActions.find(a => a.id === body.id && a.groupId === account.groupId);
+            required(!previous || (previous.memberId===body.memberId && previous.type===body.type && previous.audioBase64===body.audioBase64 && previous.alertId===body.alertId),409,'idempotency_conflict','Este envío ya corresponde a otro aviso. Grabá uno nuevo.');
+            if (!previous) s.demoFamilyActions.push({ id: body.id, memberId: body.memberId, type: body.type, groupId: account.groupId, createdAt: new Date(current).toISOString(), ...(body.alertId ? { alertId: body.alertId } : {}), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
           }); respond(200, { ok: true, simulated: true }); return;
         }
         throw new ApiError(404, 'not_found', 'Ruta inexistente.');
@@ -307,7 +309,9 @@ export function createApp({
         if (body.type === 'voice') validateVoice(body.audioBase64);
         await store.update(s => {
           s.familyMessages ??= []; s.familyMessages = s.familyMessages.filter(m => Date.parse(m.expiresAt) > current);
-          if (!s.familyMessages.some(m => m.id === body.id && m.groupId === group.id)) s.familyMessages.push({ id: body.id, memberId: body.memberId, groupId: group.id, type: body.type,
+          const previous=s.familyMessages.find(m => m.id === body.id && m.groupId === group.id);
+          required(!previous || (previous.memberId===body.memberId && previous.type===body.type && previous.audioBase64===body.audioBase64),409,'idempotency_conflict','Este envío ya corresponde a otro aviso. Grabá uno nuevo.');
+          if (!previous) s.familyMessages.push({ id: body.id, memberId: body.memberId, groupId: group.id, type: body.type,
             author: account?.profile?.name ?? group.name, createdAt: new Date(current).toISOString(), expiresAt: new Date(current + 86_400_000).toISOString(), ...(body.type === 'voice' ? { audioBase64: body.audioBase64 } : {}) });
         }); respond(201, { ok: true }); return;
       }

@@ -525,9 +525,10 @@ class NietoApp : Application() {
     fun openChat() { chatOpenPending = true; mutable.value = mutable.value.copy(openChatEpoch = mutable.value.openChatEpoch + 1) }
     fun consumeChatOpen(): Boolean = chatOpenPending.also { chatOpenPending = false }
 
-    fun pauseWakeForRecording() { mutable.value = mutable.value.copy(recordingVoiceNote = true) }
+    private val audioUse=org.nieto.assistant.presence.AudioUseGate()
+    fun pauseWakeForRecording(owner: String = "overlay-dictation") { audioUse.acquire(owner); mutable.value = mutable.value.copy(recordingVoiceNote = audioUse.active) }
 
-    fun resumeWakeAfterRecording() { mutable.value = mutable.value.copy(recordingVoiceNote = false) }
+    fun resumeWakeAfterRecording(owner: String = "overlay-dictation") { audioUse.release(owner); mutable.value = mutable.value.copy(recordingVoiceNote = audioUse.active) }
 
     suspend fun refreshFamilyInbox() {
         if (settings.token.isBlank()) return
