@@ -32,8 +32,17 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
     val context = LocalContext.current
     val motion = remember { android.provider.Settings.Global.getFloat(context.contentResolver,android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,1f)>0f }
     val transition=rememberInfiniteTransition(label="Actividad territorial")
-    val animatedPulse by transition.animateFloat(1f,1.8f,infiniteRepeatable(tween(2200,easing=LinearEasing),RepeatMode.Restart),label="Pulso agregado")
-    val pulse=if(motion)animatedPulse else 1f
+    // Read animation state only while drawing, without recomposing the dashboard every frame.
+    val ripple=transition.animateFloat(0f,1f,infiniteRepeatable(tween(1800,easing=LinearEasing),RepeatMode.Restart),label="Halo territorial")
+    val heartbeat=transition.animateFloat(1f,1f,infiniteRepeatable(keyframes {
+        durationMillis=1800
+        1f at 0
+        1.20f at 160
+        1f at 330
+        1.10f at 460
+        1f at 680
+        1f at 1800
+    }),label="Latido territorial")
     val shapes = remember {
         val root = JSONObject(context.assets.open("argentina-provinces.json").bufferedReader().use { it.readText() })
         root.getJSONArray("provinces").objects().map { province ->
@@ -65,20 +74,32 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
                 }
             }
         }
-        territories.sortedByDescending { metric(it, "activeUsers") }.forEach { territory ->
+        val beat=if(motion) heartbeat.value else 1f
+        val progress=if(motion) ripple.value else 0f
+        territories.sortedByDescending { metric(it, "activeUsers") }.forEachIndexed { index, territory ->
             val center = project(point(territory), size.width, size.height)
             val dim = selected != "AR" && selected != territory.optString("id")
             val alpha = if (dim) .25f else .82f
+            val wave=(progress+index*.065f)%1f
+            fun dot(color: Color, radius: Float, point: Offset) {
+                if(motion) {
+                    val haloRadius=radius*(1.15f+wave*1.25f)
+                    val haloAlpha=alpha*.32f*(1f-wave)
+                    drawCircle(color.copy(alpha=haloAlpha),haloRadius,point)
+                    drawCircle(color.copy(alpha=haloAlpha*1.6f),haloRadius,point,style=Stroke(1.2.dp.toPx()))
+                }
+                drawCircle(color.copy(alpha=alpha),radius*beat,point)
+                drawCircle(Color.White.copy(alpha=if(dim) .45f else 1f),radius*beat,point,style=Stroke(1.dp.toPx()))
+            }
             if (layer != 2 && metric(territory, "activeUsers") > 0) {
                 val radius = (4 + 13 * sqrt(metric(territory, "activeUsers") / maxUsers)).toFloat().dp.toPx()
                 val p = center + Offset(if (layer == 0) -5.dp.toPx() else 0f, 0f)
-                drawCircle(DashGreen.copy(alpha = .18f*(2f-pulse)), radius * pulse, p)
-                drawCircle(DashGreen.copy(alpha = alpha), radius, p); drawCircle(Color.White, radius, p, style = Stroke(1.dp.toPx()))
+                dot(DashGreen,radius,p)
             }
             if (layer != 1 && metric(territory, "unsafeLinks") > 0) {
                 val radius = (3 + 10 * sqrt(metric(territory, "unsafeLinks") / maxRisk)).toFloat().dp.toPx()
                 val p = center + Offset(if (layer == 0) 7.dp.toPx() else 0f, 2.dp.toPx())
-                drawCircle(DashRed.copy(alpha = .16f*(2f-pulse)), radius * pulse, p); drawCircle(DashRed.copy(alpha = alpha), radius, p); drawCircle(Color.White, radius, p, style = Stroke(1.dp.toPx()))
+                dot(DashRed,radius,p)
             }
         }
     }
