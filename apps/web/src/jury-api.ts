@@ -1,3 +1,4 @@
+let browserClientId: string | undefined;
 export async function juryApi<T>(resource: string, body?: unknown, query = '', signal?:AbortSignal): Promise<T> {
   const family=resource==='family'||resource==='family-action';
   const token=family?await jurySession('family'):'';
@@ -8,7 +9,7 @@ export async function juryApi<T>(resource: string, body?: unknown, query = '', s
   const response = await fetch(`/api/jury?resource=${resource}${query}`, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { ...(body===undefined?{}:{'Content-Type':'application/json'}),...(token?{Authorization:`Bearer ${token}`}:{}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(resource==='chat'?{...(body as object),clientId:browserClientId??=(crypto.randomUUID())}:body),
     signal: signal?AbortSignal.any([signal,AbortSignal.timeout(65000)]):AbortSignal.timeout(65000),
   });
   const value = await response.json();

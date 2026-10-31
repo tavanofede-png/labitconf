@@ -1,5 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { setTimeout as waitForSlot } from 'node:timers/promises';
+import { juryBrowserDeviceId } from '../apps/api/src/jury-client.mjs';
 import { juryRealtime as realtime, juryStore, juryAccounts, juryApp } from '../apps/api/src/jury-runtime.mjs';
 import { demoInstitution, demoFamily } from '../apps/api/src/dashboard-demo.mjs';
 import { crossPublicContext } from '../apps/api/src/dashboard-context.mjs';
@@ -80,12 +82,21 @@ export default async function handler(req, res) {
     const userText=body.text.trim();
     const activationHint=body.voice===true&&/^hola\s+tino[\s.!?¡¿,]*$/i.test(userText)?'\n\nAcabo de activar el asistente por voz. Confirmá que me escuchás y preguntá cómo podés ayudarme en una sola oración breve, sin enumerar funciones.':'';
     const text=userText+(activationHint+screenText+historyText).slice(0,Math.max(0,1000-userText.length));
-    const deviceId=`jury-web-${origin.slice(0,24)}`;
+    const deviceId=juryBrowserDeviceId(origin,body.clientId);
     await juryStore.update(state=>{if(!state.users.some(u=>u.id===deviceId))state.users.push({id:deviceId,name:'Jurado web',territoryId:'AR-C',demo:true,realtimeApproved:true,createdAt:new Date().toISOString()});});
     let reservation;
     let result;
     const abort=new AbortController();const onClose=()=>{if(!res.writableEnded)abort.abort();};res.once('close',onClose);
-    try {result=await realtime.reply({deviceId,origin,text,outputMode:body.voice===true?'audio':'text',signal:abort.signal,beforeConnect:async()=>{reservation=await juryApp.admission.reserve(deviceId,origin,'http');}});}
+    try {
+      const queuedAt=Date.now();
+      while(true){
+        try {result=await realtime.reply({deviceId,origin,text,outputMode:body.voice===true?'audio':'text',signal:abort.signal,beforeConnect:async()=>{reservation=await juryApp.admission.reserve(deviceId,origin,'http');}});break;}
+        catch(error){
+          if(abort.signal.aborted||Date.now()-queuedAt>=8000||!['realtime_already_active','realtime_origin_busy','realtime_busy'].includes(error.code))throw error;
+          await waitForSlot(400,undefined,{signal:abort.signal});
+        }
+      }
+    }
     finally {res.off('close',onClose);if(reservation?.leaseId)await juryApp.admission.release(reservation.leaseId).catch(()=>{});}
     return send(200, result);
   } catch (error) {
