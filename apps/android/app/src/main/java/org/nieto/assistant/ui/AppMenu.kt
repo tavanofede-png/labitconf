@@ -32,19 +32,22 @@ import org.nieto.assistant.entry.EntryState
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val closeThen: (() -> Unit) -> Unit = { action -> scope.launch { drawer.close(); action() } }
+    val home: (() -> Unit)? = if (entry.busy || state.busy) null else ({
+        closeThen { beforeWakeStart(); app.stopSpeaking(); navigate(AccountRole.USER, 0) }
+    })
     val current = when (entry.role) {
         AccountRole.FAMILY -> "Grupo familiar"
         AccountRole.INSTITUTION -> "Instituciones"
         AccountRole.USER -> when (entry.section) { 2 -> "Guías"; 3 -> "Ajustes"; else -> "TINO Chat" }
     }
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl, LocalTinoHome provides home) {
         ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = drawer.isOpen, drawerContent = {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                 ModalDrawerSheet(Modifier.width(340.dp).fillMaxHeight(), drawerContainerColor = DashPaper,
                     drawerShape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp)) {
                     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(100.dp).height(44.dp))
+                            TinoHomeLogo(Modifier.width(100.dp).height(48.dp))
                             IconButton(onClick = { closeThen {} }, modifier = Modifier.semantics { contentDescription = "Cerrar menú" }) { Text("×", color = DashInk, fontSize = 30.sp) }
                         }
                         Text("Estás en $current", color = DashTeal, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 12.dp))

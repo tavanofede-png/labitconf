@@ -59,7 +59,7 @@ private val Paper = Color(0xFFF3F6F6)
     }
     Scaffold(containerColor = Paper, topBar = {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(116.dp).height(48.dp))
+            TinoHomeLogo(Modifier.width(116.dp).height(48.dp))
             IconButton(onClick = onMenu, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { ChatIcon("menu") }
         }
     }, bottomBar = {

@@ -39,6 +39,7 @@ import org.nieto.assistant.flow.Stage
 import org.nieto.assistant.entry.TinoEntryRoot
 import org.nieto.assistant.ui.TinoTypography
 import org.nieto.assistant.ui.TinoChatScreen
+import org.nieto.assistant.ui.TinoHomeLogo
 import org.nieto.assistant.presence.WakeVoiceService
 
 class MainActivity : ComponentActivity() {
@@ -149,7 +150,7 @@ private val Turquoise = Color(0xFF00D6C9)
     } else {
         Scaffold(containerColor = WarmWhite, topBar = {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(116.dp).height(48.dp))
+                TinoHomeLogo(Modifier.width(116.dp).height(48.dp))
                 IconButton(onClick = onMenu, modifier = Modifier.semantics { contentDescription = "Abrir menú" }) { Text("☰", color = Ink, fontSize = 24.sp) }
             }
         }) { insets ->

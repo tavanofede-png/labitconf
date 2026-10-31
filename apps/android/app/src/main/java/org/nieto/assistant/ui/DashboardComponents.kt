@@ -90,7 +90,7 @@ internal data class DashboardMetric(val label: String, val value: String, val de
 
 @Composable internal fun DashboardHeader(label: String, title: String, onMenu: () -> Unit) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(100.dp).height(44.dp))
+        TinoHomeLogo(Modifier.width(100.dp).height(48.dp))
         Column(Modifier.weight(1f)) { Text(label, color = DashTeal, fontSize = 13.sp, fontWeight = FontWeight.SemiBold); Text(title, color = DashInk, fontSize = 14.sp, maxLines = 1) }
         IconButton(onClick = onMenu, modifier = Modifier.size(52.dp).semantics { contentDescription = "Abrir menú" }) { Text("☰", color = DashInk, fontSize = 24.sp) }
     }
