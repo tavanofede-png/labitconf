@@ -25,7 +25,7 @@ data class EntryState(
     val familyMode: String = "create", val question: Int = 0, val login: Boolean = false,
     val firstTime: Boolean = true, val accepted: Boolean = false, val busy: Boolean = false,
     val error: String? = null, val message: String? = null, val challengeId: String = "",
-    val demoPassword: String = "", val expiresAt: String = "", val resendAt: Long = 0, val code: String = "", val delivery: String = "email",
+    val expiresAt: String = "", val resendAt: Long = 0, val code: String = "", val delivery: String = "email",
     val dashboard: JSONObject? = null, val context: JSONObject? = null, val invitationCode: String = ""
 ) { fun field(key: String) = fields[key].orEmpty() }
 
@@ -121,8 +121,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
     fun preference(key: String, enabled: Boolean) = change { it.copy(preferences = it.preferences + (key to enabled)) }
     fun accept(value: Boolean) = change { it.copy(accepted = value) }
     fun firstTime(value: Boolean) = change { it.copy(firstTime = value) }
-    fun loginRole(role: AccountRole) = change { it.copy(role = role, challengeId = "", code = "", demoPassword = "") }
-    fun demoPassword(value: String) = change { it.copy(demoPassword = value.filter(Char::isDigit).take(4), error = null) }
+    fun loginRole(role: AccountRole) = change { it.copy(role = role, challengeId = "", code = "") }
     fun code(value: String) {
         val s = state.value
         if (s.busy || s.page != EntryPage.CODE) return
@@ -163,16 +162,6 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         if (!validPhone(s.field("phone"))) { change { it.copy(error = "Ingresá tu teléfono. Es obligatorio.") }; return }
         if (app.settings.read("accountSession").isNotBlank()) move(EntryPage.PERMISSIONS) else requestCode()
     }
-    fun signInDemo() {
-        val s = state.value
-        if (s.field("email").trim().lowercase(java.util.Locale.ROOT) != DEMO_ACCOUNT_EMAIL || s.demoPassword.length != 4) return
-        work {
-            val reply = app.api.request("/auth/demo/login", "POST", JSONObject().put("email", s.field("email").trim()).put("password", s.demoPassword), authenticated = false)
-            app.settings.write("accountSession", reply.getString("sessionToken"))
-            loadAccount()
-            change { it.copy(role = AccountRole.USER, page = EntryPage.HOME, demoPassword = "", emailVerified = true, code = "", challengeId = "") }
-        }
-    }
     fun requestCode() {
         val s = state.value
         if (System.currentTimeMillis() < s.resendAt) { change { it.copy(error = "Esperá un momento antes de solicitar otro código.") }; return }
@@ -192,6 +181,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
             val reply = app.api.request("/auth/code/verify", "POST", JSONObject().put("challengeId", s.challengeId).put("code", s.code), authenticated = false)
             require(reply.getString("role") == s.role.wire) { "El acceso no corresponde a este espacio." }
             app.settings.write("accountSession", reply.getString("sessionToken"))
+            if (reply.getString("role") == "user") app.resetConversation()
             val hasProfile = s.field("name").isNotBlank() && validUsername(s.field("username")) && validPhone(s.field("phone")) && (s.role != AccountRole.INSTITUTION || s.field("organization").isNotBlank())
             if (!reply.optBoolean("onboardingRequired", true)) loadAccount()
             change { it.copy(page = if (reply.optBoolean("onboardingRequired", true)) if (hasProfile) EntryPage.PERMISSIONS else EntryPage.PROFILE else EntryPage.HOME, profileStep = 0, emailVerified = true, code = "", challengeId = "") }

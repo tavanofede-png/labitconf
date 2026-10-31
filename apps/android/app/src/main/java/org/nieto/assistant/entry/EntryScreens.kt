@@ -60,7 +60,7 @@ private val Ink = Color(0xFF101416)
 private val Muted = Color(0xFF4C5B61)
 private val Background = Color(0xFFF3F6F6)
 
-@Composable fun TinoEntryRoot(app: NietoApp, vm: EntryViewModel = viewModel(), assistant: @Composable () -> Unit) {
+@Composable fun TinoEntryRoot(app: NietoApp, vm: EntryViewModel = viewModel(), assistant: @Composable (onLogout: () -> Unit) -> Unit) {
     val s by vm.state.collectAsState()
     val device by app.state.collectAsState()
     val context = LocalContext.current
@@ -78,7 +78,7 @@ private val Background = Color(0xFFF3F6F6)
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); vm.photo(uri.toString()) }.onFailure { vm.message("No pude conservar esa foto. Podés elegir otra o continuar sin foto.") }
     }
-    BackHandler(enabled = s.page != EntryPage.WELCOME) { vm.back() }
+    BackHandler(enabled = s.page != EntryPage.WELCOME && s.page != EntryPage.HOME) { vm.back() }
     if (s.page == EntryPage.WELCOME) {
         TinoWelcomeScreen(s, vm::start, vm::login, onConnection = { vm.move(EntryPage.CONNECTION) })
         return
@@ -88,13 +88,7 @@ private val Background = Color(0xFFF3F6F6)
         return
     }
     if (s.page == EntryPage.HOME && s.role == AccountRole.USER) {
-        Column(Modifier.fillMaxSize().background(Background).statusBarsPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { vm.move(EntryPage.WELCOME) }) { Text("← Mi espacio") }
-                TextButton(onClick = { vm.move(EntryPage.CONNECTION) }) { Text("Conexión") }
-            }
-            Box(Modifier.weight(1f)) { assistant() }
-        }
+        assistant(vm::logout)
         return
     }
     Scaffold(containerColor = Background, topBar = {
@@ -135,14 +129,10 @@ private val Background = Color(0xFFF3F6F6)
                         Primary("Solicitar código de acceso", !s.busy, vm::requestCode)
                     }
                     EntryPage.LOGIN -> {
-                        val demo = s.role == AccountRole.USER && s.field("email").trim().equals(DEMO_ACCOUNT_EMAIL, ignoreCase = true)
-                        Title("Volvé a tu espacio.", if (demo) "Ingresá con la cuenta de prueba. Tu perfil ya está listo para usar TINO." else "Ingresá con un código de un solo uso. No necesitás contraseña.")
+                        Title("Volvé a tu espacio.", "Ingresá tu correo para recibir tu código de acceso.")
                         Column(Modifier.selectableGroup()) { AccountRole.entries.forEach { role -> RadioRow(role.label, role == s.role, { vm.loginRole(role) }, !s.busy) } }
                         EntryField("Tu correo", s.field("email"), { vm.field("email", it) }, KeyboardType.Email, enabled = !s.busy)
-                        if (demo) {
-                            EntryField("Contraseña de prueba", s.demoPassword, vm::demoPassword, KeyboardType.NumberPassword, enabled = !s.busy, secret = true)
-                            Primary("Ingresar a la demo", !s.busy && s.demoPassword.length == 4, vm::signInDemo)
-                        } else Primary("Enviar código", !s.busy, vm::requestCode)
+                        Primary("Enviar código", !s.busy, vm::requestCode)
                     }
                     EntryPage.CODE -> {
                         Title("Te llegó un código\na tu mail.", "Ingresá el código acá para verificar ${s.field("email")}.")

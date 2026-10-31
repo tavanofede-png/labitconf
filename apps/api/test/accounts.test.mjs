@@ -213,3 +213,17 @@ test('email verification in the demo advances without mail setup and accepts exa
   const disabled = createAccounts({ store: new JsonStore(f.file), judgesDemo: false });
   assert.equal(await disabled.principal(sessions[0].body.sessionToken), null);
 });
+
+
+test('Ya tengo cuenta with the demo code opens an onboarded assistant account directly', async t => {
+  const f = await fixture(t, { judgesDemo: true, demoEmail: 'test@labitconf.com', sendCode: null, localDemo: false, resendKey: '', mailFrom: '' });
+  const address = 'demo-chat@example.com';
+  const request = purpose => f.request('/auth/code/request', { method: 'POST', body: { email: address, role: 'user', purpose } });
+  const verify = c => f.request('/auth/code/verify', { method: 'POST', body: { challengeId: c.body.challengeId, code: '000000' } });
+  const unfinished = await verify(await request('signup')); assert.equal(unfinished.body.onboardingRequired, true);
+  const login = await verify(await request('login'));
+  assert.equal(login.status, 200); assert.equal(login.body.onboardingRequired, false); assert.ok(login.body.deviceToken); assert.ok(login.body.profile.username);
+  const me = await f.request('/accounts/me', { token: login.body.sessionToken }); assert.equal(me.body.onboardingRequired, false);
+  const message = await f.request('/assistant/message', { token: login.body.sessionToken, method: 'POST', body: { text: 'quiero compartir mi ubicación' } });
+  assert.equal(message.status, 200); assert.equal(message.body.flowId, 'whatsapp-location');
+});

@@ -11,6 +11,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
@@ -33,6 +34,7 @@ import org.nieto.assistant.flow.GuidanceEngine
 import org.nieto.assistant.flow.Stage
 import org.nieto.assistant.entry.TinoEntryRoot
 import org.nieto.assistant.ui.TinoTypography
+import org.nieto.assistant.ui.TinoChatScreen
 
 class MainActivity : ComponentActivity() {
     private val app get() = application as NietoApp
@@ -43,7 +45,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { NietoTheme { TinoEntryRoot(app) { NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openAccessibility) } } }
+        setContent { NietoTheme { TinoEntryRoot(app) { onLogout -> NietoScreen(app, listening, ::toggleVoice, ::openWhatsApp, ::openAccessibility, onLogout) } } }
         if (app.consumeVoiceRequest()) window.decorView.post { toggleVoice() }
     }
     override fun onResume() {
@@ -114,38 +116,33 @@ private val Turquoise = Color(0xFF00D6C9)
         onSecondaryContainer = Forest), typography = TinoTypography, content = content)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onAccessibility: () -> Unit) {
+@Composable private fun NietoScreen(app: NietoApp, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onAccessibility: () -> Unit, onLogout: () -> Unit) {
     val state by app.state.collectAsState()
     var tab by remember { mutableIntStateOf(0) }
     var disclosure by remember { mutableStateOf(false) }
-    Scaffold(containerColor = WarmWhite,
-        topBar = { Column(Modifier.fillMaxWidth().background(WarmWhite).statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(painter = painterResource(R.drawable.tino_logo), contentDescription = "TINO",
-                    modifier = Modifier.width(128.dp).height(52.dp))
-                Spacer(Modifier.width(20.dp))
-                Text("Tu teléfono,\na tu manera.", fontSize = 15.sp, lineHeight = 21.sp, color = Forest)
+    BackHandler(enabled = tab != 0) { tab = 0 }
+    if (tab == 0) {
+        TinoChatScreen(app, state, listening, onVoice,
+            onStartGuide = { app.startGuide(onReady = onWhatsApp) },
+            onFamily = { tab = 1; if (app.settings.token.isNotBlank()) app.refreshFamily() },
+            onGuides = { tab = 2 }, onSettings = { tab = 3 }, onLogout = onLogout)
+    } else {
+        Scaffold(containerColor = WarmWhite, topBar = {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 24.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Image(painterResource(R.drawable.tino_logo), "TINO", Modifier.width(116.dp).height(48.dp))
+                TextButton(onClick = { tab = 0 }) { Text("Volver al chat", color = Ink) }
             }
-        } },
-        bottomBar = { NavigationBar(containerColor = Color(0xFFE3F9F6)) {
-            listOf("Inicio" to "◎", "Familia" to "♡", "Ajustes" to "☷").forEachIndexed { index, item ->
-                NavigationBarItem(selected = tab == index, onClick = { tab = index; if (index == 1 && app.settings.token.isNotBlank()) app.refreshFamily() },
-                    icon = { Text(item.second, fontSize = 26.sp) }, label = { Text(item.first, fontSize = 16.sp) })
+        }) { insets ->
+            Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.TopCenter) {
+                Column(Modifier.widthIn(max = 800.dp).fillMaxSize().verticalScroll(rememberScrollState()).imePadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
+                    when (tab) {
+                        1 -> FamilyContent(app, state)
+                        2 -> GuideContent(app, state, onWhatsApp, onSettings = { tab = 3 })
+                        else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
+                    }
+                }
             }
-        } }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Forest)
-            when (tab) {
-                0 -> HomeContent(app, state, listening, onVoice, onWhatsApp, onSettings = { tab = 2 })
-                1 -> FamilyContent(app, state)
-                else -> SettingsContent(app, state, onConsent = { disclosure = true }, onAccessibility)
-            }
-            Surface(color = Color(0xFFE3F9F6), shape = RoundedCornerShape(16.dp)) {
-                Text(state.status, modifier = Modifier.padding(16.dp), fontSize = 17.sp, lineHeight = 24.sp)
-            }
-            if (state.telemetryPending > 0) Text("Progreso sin sincronizar: ${state.telemetryPending} evento(s).", fontSize = 15.sp)
-            Text("Hecho para aprender a tu ritmo.\nTINO · Labitconf 2026", fontSize = 14.sp, color = Forest, modifier = Modifier.padding(top = 12.dp))
         }
     }
     if (disclosure) AlertDialog(onDismissRequest = { disclosure = false }, title = { Text("Vos decidís qué puedo ver") },
@@ -157,22 +154,7 @@ private val Turquoise = Color(0xFF00D6C9)
         dismissButton = { TextButton(onClick = { disclosure = false }) { Text("Ahora no") } })
 }
 
-@Composable private fun HomeContent(app: NietoApp, state: AppState, listening: Boolean, onVoice: () -> Unit, onWhatsApp: () -> Unit, onSettings: () -> Unit) {
-    var message by remember { mutableStateOf("") }
-    Text("Un paso hoy.\nMás confianza mañana.", style = MaterialTheme.typography.headlineLarge, color = Forest, fontWeight = FontWeight.SemiBold)
-    Text("Contame qué querés hacer. Lo aprendemos juntos, de a una cosa por vez.")
-    BigButton(if (listening) "Terminar de hablar" else "Hablar con TINO", onVoice, enabled = !state.busy || listening)
-    Text("El micrófono se activa solo al tocar Hablar. Se usa el reconocimiento de Android; según tu teléfono, puede necesitar el servicio de voz de su proveedor.", fontSize = 15.sp, lineHeight = 21.sp)
-    OutlinedTextField(value = message, onValueChange = { message = it.take(1000) }, modifier = Modifier.fillMaxWidth(),
-        label = { Text("O escribime acá") }, placeholder = { Text("Quiero compartir mi ubicación") }, minLines = 2)
-    OutlinedButton(onClick = { app.sendMessage(message); message = "" }, enabled = message.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Enviar consulta") }
-    state.chat.takeLast(6).forEach { line -> Surface(color = if (line.fromUser) Color(0xFFE7ECDB) else Color.White, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(if (line.fromUser) "Vos" else "TINO", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Forest)
-            Text(line.text, fontSize = 19.sp, lineHeight = 28.sp)
-        }
-    } }
-    HorizontalDivider(color = Color(0xFFD6DCD0))
+@Composable private fun GuideContent(app: NietoApp, state: AppState, onWhatsApp: () -> Unit, onSettings: () -> Unit) {
     Text("Aprendamos algo", style = MaterialTheme.typography.titleLarge, color = Forest)
     Text("Compartir mi ubicación\npor WhatsApp", fontSize = 24.sp, lineHeight = 31.sp, fontWeight = FontWeight.SemiBold)
     Text("Vos elegís la conversación y hacés cada toque. Yo te acompaño y compruebo los cambios.")

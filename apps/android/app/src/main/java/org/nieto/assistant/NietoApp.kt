@@ -18,9 +18,10 @@ import java.util.Locale
 data class ChatLine(val fromUser: Boolean, val text: String)
 data class AppState(
     val guide: GuideState = GuideState(),
-    val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy TINO. Te acompaño a aprender a usar tu teléfono, de a un paso.")),
+    val chat: List<ChatLine> = listOf(ChatLine(false, "Hola, soy TINO. Contame qué necesitás hacer con tu teléfono. Podés escribirme o hablarme.")),
     val status: String = "Tu ritmo. Tus decisiones.",
     val busy: Boolean = false,
+    val suggestedFlow: String? = null,
     val accessibilityConnected: Boolean = false,
     val overlayEnabled: Boolean = false,
     val familyName: String? = null,
@@ -121,10 +122,14 @@ class NietoApp : Application() {
     fun screenConnection(connected: Boolean) { mutable.value = mutable.value.copy(accessibilityConnected = connected) }
     fun setOverlay(enabled: Boolean) { mutable.value = mutable.value.copy(overlayEnabled = enabled) }
 
+    fun resetConversation() {
+        stopSpeaking()
+        mutable.value = mutable.value.copy(chat = AppState().chat, suggestedFlow = null)
+    }
     fun sendMessage(text: String) {
         val clean = text.trim().take(1000)
         if (clean.isBlank() || state.value.busy) return
-        mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean)).takeLast(30), busy = true)
+        mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(true, clean)).takeLast(30), busy = true, suggestedFlow = null)
         scope.launch {
             try {
                 api.register()
@@ -139,10 +144,10 @@ class NietoApp : Application() {
                     val url = source.optString("url")
                     if (url.startsWith("https://")) answer += "\nFuente: $title\n$url"
                 }
-                mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30))
+                mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, answer)).takeLast(30), suggestedFlow = reply.optString("flowId").takeIf { it.isNotBlank() })
                 speak(answer)
                 if (reply.optString("flowId") == GuidanceEngine.FLOW_ID) status("Podés iniciar la guía con el botón Compartir ubicación.")
-            } catch (e: Exception) { status(e.message ?: "No pude enviar la consulta.") }
+            } catch (e: Exception) { mutable.value = mutable.value.copy(chat = (state.value.chat + ChatLine(false, "No pude enviar tu mensaje. Probá de nuevo.")).takeLast(30), status = e.message ?: "No pude enviar la consulta.") }
             finally { mutable.value = mutable.value.copy(busy = false) }
         }
     }

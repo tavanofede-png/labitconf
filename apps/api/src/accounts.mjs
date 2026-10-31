@@ -48,6 +48,17 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       ...(account.role === 'institution' && (account.demo || !institutionEmails.includes(account.email)) ? { accessStatus: 'institution_approval_required' } : {}),
       ...(account.pendingGroupId ? { accessStatus: 'group_approval_required' } : {}) };
   }
+  function completeDemoUser(state, account, current) {
+    if (account.onboarded && account.deviceId) return;
+    let username = 'labitconf.demo', suffix = 1;
+    while (!availableUsername(state, username, account.id)) username = `labitconf.demo${++suffix}`;
+    account.onboarded = true;
+    account.profile = { name: 'TINO Demo', email: account.email, username, phone: '+540000000000', territoryId: 'AR-C' };
+    account.answers = { purpose: 0, interaction: 3, pace: 0, priority: 3 };
+    account.preferences = { microphone: false, notifications: false, screen: false, support: false, aggregates: false };
+    account.deviceId ??= randomUUID();
+    if (!state.users.some(user => user.id === account.deviceId)) state.users.push({ id: account.deviceId, accountId: account.id, name: account.profile.name, territoryId: 'AR-C', demo: true, tokenHash: digest(token()), createdAt: new Date(current).toISOString() });
+  }
   async function handle({ route, method, body, bearer, remoteAddress }) {
     if (method === 'POST' && route === '/auth/demo/login') {
       check(judgesDemo, 404, 'demo_unavailable', 'El acceso de demostración no está habilitado.');
@@ -58,16 +69,8 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       const result = await store.update(s => {
         init(s);
         let account = s.accounts.find(a => a.demo === true && a.email === demoAddress && a.role === 'user');
-        if (!account) {
-          let username = 'labitconf.demo', suffix = 1;
-          while (!availableUsername(s, username)) username = `labitconf.demo${++suffix}`;
-          account = { id: randomUUID(), email: demoAddress, role: 'user', demo: true, onboarded: true, createdAt: new Date(current).toISOString(),
-            profile: { name: 'TINO Demo', email: demoAddress, username, phone: '+540000000000', territoryId: 'AR-C' },
-            answers: { purpose: 0, interaction: 3, pace: 0, priority: 3 },
-            preferences: { microphone: false, notifications: false, screen: false, support: false, aggregates: false }, deviceId: randomUUID() };
-          s.accounts.push(account);
-          s.users.push({ id: account.deviceId, accountId: account.id, name: account.profile.name, territoryId: 'AR-C', demo: true, tokenHash: digest(token()), createdAt: new Date(current).toISOString() });
-        }
+        if (!account) { account = { id: randomUUID(), email: demoAddress, role: 'user', demo: true, createdAt: new Date(current).toISOString() }; s.accounts.push(account); }
+        completeDemoUser(s, account, current);
         s.authSessions = s.authSessions.filter(session => session.expiresAt > current);
         s.authSessions.push({ id: randomUUID(), accountId: account.id, tokenHash: digest(bearerToken), expiresAt: current + 7 * 86_400_000 });
         return snapshot(account, bearerToken);
@@ -127,6 +130,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
         c.used = true;
         let account = s.accounts.find(a => Boolean(a.demo) === Boolean(c.demo) && a.email === c.email && a.role === c.role);
         if (!account) { account = { id: randomUUID(), email: c.email, role: c.role, demo: Boolean(c.demo), onboarded: false, createdAt: new Date(current).toISOString() }; s.accounts.push(account); }
+        if (c.demo && c.purpose === 'login' && account.role === 'user') completeDemoUser(s, account, current);
         if (c.purpose === 'family_join') account.requestedAdminEmail = c.adminEmail;
         s.authSessions = s.authSessions.filter(session => session.expiresAt > current);
         s.authSessions.push({ id: randomUUID(), accountId: account.id, tokenHash: digest(bearerToken), expiresAt: current + 7 * 86_400_000 });

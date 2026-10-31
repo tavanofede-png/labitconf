@@ -29,15 +29,19 @@ La tablet Samsung SM-X820 con Android 16 se conectó después a esta Mac por USB
 
 ## Acceso de jueces sin onboarding
 
-Activar `TINO_JUDGES_DEMO=1` en el backend (`TINO_DEMO_EMAIL=test@labitconf.com`). Desde **Ya tengo cuenta → Usuario**, ingresar **test@labitconf.com**, escribir la contraseña **0000** y tocar **Ingresar a la demo**. La app abre directamente el asistente con un perfil de prueba completo. No se solicita un código ni se envía correo. El onboarding sigue disponible para cuentas nuevas.
+Activar `TINO_JUDGES_DEMO=1` en el backend (`TINO_DEMO_EMAIL=test@labitconf.com`). Desde **Ya tengo cuenta → Usuario**, ingresar **test@labitconf.com**, tocar **Enviar código** y completar los casilleros con **000-000**. La app abre directamente el asistente con un perfil de prueba completo. La verificación del código es simulada; no se envía correo. El onboarding sigue disponible para cuentas nuevas.
 
 `POST /api/auth/demo/login { email, password }` devuelve una sesión real de API para una identidad de demostración. Su cuenta y dispositivo son distintos de cualquier cuenta real con el mismo correo. La contraseña pública de prueba no otorga permisos de Android, familiares ni institucionales. Varios jueces pueden ingresar a la vez y cerrar sesión de forma independiente. Desactivar `TINO_JUDGES_DEMO` deshabilita también las sesiones demo existentes. La clave 0000 solo es válida en este endpoint de demo habilitado explícitamente.
 
 Para recorrer el alta en el mock, **Verificar mi correo** abre «Te llegó un código a tu mail» y acepta **000-000** (`000000`). El código se muestra en seis casilleros, uno por número: el foco visual avanza al escribir y completar el sexto dispara la verificación automática. Se puede pegar el código completo, borrar o tocar un número para corregirlo; un código rechazado limpia los casilleros para reintentar. En modo demo no requiere proveedor de correo; cada desafío es independiente y conserva expiración, intentos y uso único. Esas identidades se guardan como cuentas de demo separadas, y no obtienen autorización institucional real por escribir un correo autorizado. Fuera del modo demo se conserva el envío real con código aleatorio.
 
+## Inicio en el chat
+
+En el mock, **Ya tengo cuenta → correo → 000-000** abre directamente el chat de TINO, incluso si antes se inició un alta incompleta con ese correo. El login de demo precarga el perfil; el alta nueva conserva su recorrido separado. El inicio muestra la mascota oficial arriba, el menú en la esquina superior derecha y el compositor fijo con escritura, voz y envío. El menú abre Chat, Mi grupo familiar, Guías, Ajustes y Cerrar sesión. El inicio anterior con tarjetas y navegación inferior fue reemplazado por esta conversación. Una nueva sesión limpia la conversación anterior en memoria.
+
 ## Verificación actual
 
-Pasan 40 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
+Pasan 41 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: el login test@labitconf.com / 0000 fue instalado y verificado en la Samsung, y las nuevas revisiones se verifican por separado.
 
 Verificación física anterior: bienvenida, conexión USB al backend, registro de instalación, ingreso de una consulta por teclado y respuesta visible de la API. Todavía deben verificarse en la tablet el nuevo acceso demo, micrófono, permisos de Accesibilidad y el recorrido real sobre WhatsApp. OpenARG no tiene una clave configurada en esta Mac; no se acreditan datos públicos en vivo.
 
