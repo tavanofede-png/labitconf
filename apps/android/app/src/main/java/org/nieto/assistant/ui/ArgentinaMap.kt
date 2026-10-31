@@ -59,7 +59,7 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
     val maxRisk = territories.maxOfOrNull { metric(it, "unsafeLinks") }?.coerceAtLeast(1.0) ?: 1.0
     fun point(t: JSONObject): Offset { val p = t.getJSONArray("point"); return Offset(p.getDouble(0).toFloat(), p.getDouble(1).toFloat()) }
     Canvas(Modifier.fillMaxWidth().height(470.dp).onSizeChanged { dimensions = it }
-        .semantics { contentDescription = "Mapa de Argentina por provincia. Verde: usuarios activos de TINO. Rojo: alertas simuladas de enlaces inseguros. También podés elegir provincia en el filtro accesible de arriba." }
+        .semantics { contentDescription = "Mapa de Argentina por provincia. Verde: usuarios activos de TINO. Rojo: actividad vulnerable del escenario simulado. También podés elegir provincia en el filtro accesible de arriba." }
         .pointerInput(territories, layer) { detectTapGestures { tap ->
             val nearest = territories.minByOrNull { (project(point(it), dimensions.width.toFloat(), dimensions.height.toFloat()) - tap).getDistance() }
             if (nearest != null && (project(point(nearest), dimensions.width.toFloat(), dimensions.height.toFloat()) - tap).getDistance() <= 32.dp.toPx()) onSelect(nearest.getString("id"))
@@ -105,7 +105,7 @@ private fun project(point: Offset, width: Float, height: Float): Offset {
     }
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("● Uso de TINO", color = DashGreen, fontSize = 13.sp)
-        Text("● Enlaces inseguros", color = DashRed, fontSize = 13.sp)
+        Text("● Actividad Vulnerable", color = DashRed, fontSize = 13.sp)
     }
     Text("Tamaños relativos por capa · " + (if(simulated) "datos TINO simulados" else "datos consentidos; se omiten cohortes pequeñas") + ". El pulso es visual. Puntos provinciales agregados. Cartografía Georef / IGN; vista continental y Tierra del Fuego.", color = DashMuted, fontSize = 11.sp, lineHeight = 16.sp)
 }

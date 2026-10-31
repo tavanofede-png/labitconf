@@ -23,7 +23,7 @@ internal object InstitutionReport {
     private fun value(value: Double)=String.format(Locale.forLanguageTag("es-AR"),if(value%1.0==0.0) "%,.0f" else "%,.1f",value)
     private val definitions=listOf(
         Triple("activeUsers","Personas activas",""),Triple("averageAge","Edad media"," años"),Triple("screenMinutesPerDay","Pantalla por día"," min"),
-        Triple("autonomyRate","Autonomía digital","%"),Triple("requests","Tareas solicitadas",""),Triple("unsafeLinks","Enlaces inseguros",""))
+        Triple("autonomyRate","Autonomía digital","%"),Triple("requests","Tareas solicitadas",""),Triple("unsafeLinks","Actividad Vulnerable",""))
     fun csv(context: Context,start: Long,end: Long): ByteArray {
         validate(start,end); val data=data(context); val metrics=data.getJSONObject("metrics")
         fun cell(v: Any?)="\""+v.toString().replace("\"","\"\"")+"\""
@@ -31,7 +31,7 @@ internal object InstitutionReport {
         fun row(section: String,territory: String,metric: String,n: Any,unit: String="") { rows+=listOf("tino_demo_fixed_v1",date(start),date(end),data.getString("referencePeriod"),section,territory,metric,n.toString(),unit) }
         definitions.forEach { (key,label,unit)->row("resumen","Argentina",label,metrics.get(key),unit.trim()) }
         data.getJSONArray("flows").objects().forEach { row("tareas","Argentina",it.getString("name"),it.getInt("count"),"solicitudes") }
-        data.getJSONArray("territories").objects().forEach { t -> row("territorio",t.getString("name"),"Personas activas",t.getInt("activeUsers"),"personas");row("territorio",t.getString("name"),"Enlaces inseguros",t.getInt("unsafeLinks"),"alertas") }
+        data.getJSONArray("territories").objects().forEach { t -> row("territorio",t.getString("name"),"Personas activas",t.getInt("activeUsers"),"personas");row("territorio",t.getString("name"),"Actividad Vulnerable",t.getInt("unsafeLinks"),"alertas") }
         return ("\uFEFF"+rows.joinToString("\r\n") { row->row.joinToString(";") { cell(it) } }+"\r\n").toByteArray(Charsets.UTF_8)
     }
     fun pdf(context: Context,start: Long,end: Long): ByteArray {
@@ -84,7 +84,7 @@ internal object InstitutionReport {
             text(d,"Período solicitado: ${date(start)} al ${date(end)}",36f,129f,10f,muted)
             box(d,36f,150f,523f,27f,ink,6f)
             text(d,"PROVINCIA / JURISDICCIÓN",47f,168f,8f,Color.WHITE,true)
-            text(d,"USO DE TINO",354f,168f,8f,Color.WHITE,true);text(d,"ENLACES INSEGUROS",451f,168f,7.5f,Color.WHITE,true)
+            text(d,"USO DE TINO",354f,168f,8f,Color.WHITE,true);text(d,"ACTIVIDAD VULNERABLE",451f,168f,7.5f,Color.WHITE,true)
             data.getJSONArray("territories").objects().sortedByDescending { it.getInt("activeUsers") }.forEachIndexed { i,t ->
                 val y=177f+i*18f
                 if(i%2==0)box(d,36f,y,523f,18f,paper,0f)

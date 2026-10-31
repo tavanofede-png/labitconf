@@ -98,9 +98,9 @@ import org.nieto.assistant.entry.entryTerritories
                                 DashboardMetric("Pantalla por día", metrics.amount("screenMinutesPerDay", " min"), "Promedio por día-persona activo"),
                                 DashboardMetric("Autonomía", metrics.amount("autonomyRate", "%"), "Prácticas sin ayuda / tareas completadas"),
                                 DashboardMetric("Tareas solicitadas", metrics.amount("requests"), "Solicitudes de acompañamiento"),
-                                DashboardMetric("Enlaces inseguros", metrics.amount("unsafeLinks"), if(s.demoAccount) "Alertas del escenario · no sitios reales" else "Eventos agregados autorizados", DashRed)))
+                                DashboardMetric("Actividad Vulnerable", metrics.amount("unsafeLinks"), if(s.demoAccount) "Alertas del escenario · no sitios reales" else "Eventos agregados autorizados", DashRed)))
                             AdaptivePair({
-                                DashboardCard("Dónde se usa TINO", "Verde: uso · rojo: alertas de enlaces") {
+                                DashboardCard("Dónde se usa TINO", "Verde: uso · rojo: Actividad Vulnerable") {
                                     ArgentinaMap(data.optJSONArray("territories").objects(), s.dashboardTerritory, 0, s.demoAccount) { vm.dashboardFilters(territory = it, month = s.dashboardMonth); tab = 1 }
                                     TextButton(onClick = { tab = 1 }) { Text("Explorar territorio →", color = DashTeal) }
                                 }
@@ -114,7 +114,7 @@ import org.nieto.assistant.entry.entryTerritories
                         }
                         1 -> {
                             DashboardCard("Territorio", "Tocá un círculo o elegí una provincia en el filtro.") {
-                                DashboardTabs(listOf("Ambos", "Uso de TINO", "Enlaces inseguros"), layer) { layer = it }
+                                DashboardTabs(listOf("Ambos", "Uso de TINO", "Actividad Vulnerable"), layer) { layer = it }
                                 ArgentinaMap(data.optJSONArray("territories").objects(), s.dashboardTerritory, layer, s.demoAccount) { vm.dashboardFilters(territory = it, month = s.dashboardMonth) }
                                 if (s.dashboardTerritory != "AR") TextButton(onClick = { vm.dashboardFilters(territory = "AR", month = s.dashboardMonth) }) { Text("Ver todo el país", color = DashTeal) }
                             }
