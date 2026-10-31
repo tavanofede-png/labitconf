@@ -6,9 +6,9 @@ export const OPENARG_TOOLS = Object.freeze([
 ]);
 
 export class OpenArgError extends Error {
-  constructor(code, message, { status = 502, retryAfter = null } = {}) {
+  constructor(code, message, { status = 502, retryAfter = null, scope = null } = {}) {
     super(message); this.name = 'OpenArgError'; this.code = code;
-    this.status = status; this.retryAfter = retryAfter;
+    this.status = status; this.retryAfter = retryAfter; this.scope = scope;
   }
 }
 
@@ -93,13 +93,26 @@ export class OpenArgClient {
     this.cacheTtlMs = cacheTtlMs; this.now = now; this.sleep = sleep; this.maxRetryDelayMs = maxRetryDelayMs;
     this.cache = new Map(); this.inflight = new Map(); this.sequence = 0; this.sessionId = null;
     this.protocolVersion = '2025-03-26'; this.ready = null; this.serverInfo = null; this.tools = [];
-    this.lastSuccessAt = null; this.lastError = null;
+    this.lastSuccessAt = null; this.transportError = null; this.queryError = null;
+    this.transportConnected = false; this.lastTransportSuccessAt = null; this.lastTransportCheckAt = null; this.discovery = null;
   }
   status() {
+    const lastError = this.transportError ?? this.queryError;
     return { provider: 'OpenArg', transport: 'streamable-http', endpoint: this.endpoint,
-      configured: Boolean(this.apiKey), status: !this.apiKey ? 'credentials_required' : this.lastError?.code ?? (this.lastSuccessAt ? 'connected' : 'not_checked'),
-      lastSuccessAt: this.lastSuccessAt, lastError: this.lastError, tools: this.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+      configured: Boolean(this.apiKey), status: !this.apiKey ? 'credentials_required' : lastError?.code ?? (this.transportConnected ? 'connected' : 'not_checked'),
+      transportConnected: this.transportConnected, transportError: this.transportError, queryError: this.queryError,
+      lastTransportSuccessAt: this.lastTransportSuccessAt, lastTransportCheckAt: this.lastTransportCheckAt,
+      lastSuccessAt: this.lastSuccessAt, lastError, tools: this.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
       serverInfo: this.serverInfo, keyLocation: 'backend_environment', cacheTtlSeconds: Math.round(this.cacheTtlMs / 1000) };
+  }
+  transportSucceeded() {
+    this.transportConnected = true; this.transportError = null;
+    this.lastTransportSuccessAt = this.lastTransportCheckAt = new Date(this.now()).toISOString();
+  }
+  transportFailed(error) {
+    this.transportConnected = false; this.ready = null; this.sessionId = null;
+    this.lastTransportCheckAt = new Date(this.now()).toISOString();
+    this.transportError = { code: error.code ?? 'unavailable', message: error.message };
   }
   async rpc(method, params, { notification = false, retryRateLimit = true } = {}) {
     const id = notification ? undefined : ++this.sequence;
@@ -118,6 +131,7 @@ export class OpenArgClient {
           const rawRetry = response.headers.get('retry-after');
           const retryAfter = rawRetry ? Math.max(0, /^\d+$/.test(rawRetry) ? Number(rawRetry) : Math.ceil((Date.parse(rawRetry) - this.now()) / 1000)) : null;
           const error = classified(await response.text(), response.status, retryAfter);
+          error.scope = response.status >= 500 ? 'transport' : 'query';
           if (attempt === 0 && retryRateLimit && error.code === 'rate_limited' && retryAfter !== null && Number.isFinite(retryAfter) && retryAfter * 1000 <= this.maxRetryDelayMs) {
             clearTimeout(timer); await this.sleep(retryAfter * 1000); continue;
           }
@@ -130,8 +144,8 @@ export class OpenArgClient {
         return message.result;
       } catch (error) {
         if (error instanceof OpenArgError) throw error;
-        if (controller.signal.aborted) throw new OpenArgError('timeout', 'OpenArg demoró demasiado. La consulta no se repite automáticamente.', { status: 504 });
-        throw new OpenArgError('unavailable', 'No se pudo contactar a OpenArg.', { status: 503 });
+        if (controller.signal.aborted) throw new OpenArgError('timeout', 'OpenArg demoró demasiado. La consulta no se repite automáticamente.', { status: 504, scope: 'transport' });
+        throw new OpenArgError('unavailable', 'No se pudo contactar a OpenArg.', { status: 503, scope: 'transport' });
       } finally { clearTimeout(timer); }
     }
   }
@@ -141,13 +155,22 @@ export class OpenArgClient {
       this.protocolVersion = result.protocolVersion; this.serverInfo = result.serverInfo;
       await this.rpc('notifications/initialized', undefined, { notification: true });
       const listing = await this.rpc('tools/list', {});
-      this.tools = listing.tools ?? []; return this.tools;
-    })().catch((error) => { this.ready = null; if (error.code === 'session_expired') this.sessionId = null; throw error; });
+      this.tools = listing.tools ?? []; this.transportSucceeded(); return this.tools;
+    })().catch((error) => { error.scope = 'transport'; this.transportFailed(error); throw error; });
     return this.ready;
   }
   async discover() {
-    try { await this.connect(); return this.status(); }
-    catch (error) { this.lastError = { code: error.code, message: error.message }; return this.status(); }
+    if (!this.discovery) this.discovery = (async () => {
+      try {
+        const alreadyReady = Boolean(this.ready);
+        await this.connect();
+        if (alreadyReady) {
+          const listing = await this.rpc('tools/list', {}); this.tools = listing.tools ?? []; this.transportSucceeded();
+        }
+      } catch (error) { this.transportFailed(error); }
+      return this.status();
+    })().finally(() => { this.discovery = null; });
+    return this.discovery;
   }
   async call(tool, args = {}, { refresh = false } = {}) {
     if (!OPENARG_TOOLS.includes(tool)) throw new OpenArgError('invalid_tool', 'Herramienta OpenArg no permitida.', { status: 400 });
@@ -164,6 +187,7 @@ export class OpenArgClient {
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             result = await this.rpc('tools/call', { name: tool, arguments: args }, { retryRateLimit: false });
+            this.transportSucceeded();
             text = (result.content ?? []).filter((block) => block.type === 'text').map((block) => block.text).join('\n');
             if (result.isError) throw classified(text);
             break;
@@ -177,11 +201,12 @@ export class OpenArgClient {
         const value = { provider: 'OpenArg', transport: 'streamable-http', tool, arguments: args, status: 'ok',
           text, structured: result.structuredContent ?? null, ...extractEvidence(text, args), retrievedAt, cached: false,
           expiresAt: new Date(this.now() + this.cacheTtlMs).toISOString() };
-        this.lastSuccessAt = retrievedAt; this.lastError = null;
+        this.lastSuccessAt = retrievedAt; this.queryError = null;
         if (this.cache.size >= 200) this.cache.delete(this.cache.keys().next().value);
         this.cache.set(key, { value, expires: this.now() + this.cacheTtlMs }); return value;
       } catch (error) {
-        this.lastError = { code: error.code ?? 'unavailable', message: error.message };
+        if (error.scope === 'transport' || ['unavailable', 'timeout', 'invalid_response', 'session_expired'].includes(error.code)) this.transportFailed(error);
+        else this.queryError = { code: error.code ?? 'upstream_error', message: error.message };
         throw error;
       } finally { this.inflight.delete(key); }
     })();

@@ -4,7 +4,7 @@ export interface Health {
   version: string;
   openarg: { configured: boolean; connected?: boolean; endpoint: string };
   privacy: { minimumCohort: number };
-  android?: { apkAvailable: boolean; downloadUrl: string | null };
+  android?: { apkAvailable: boolean; downloadUrl: string | null; versionName?: string | null; versionCode?: number | null; sha256?: string | null };
   assistant?: { configured: boolean; model: string; voiceStreaming: boolean; generalConversation: boolean };
 }
 export interface Overview {
@@ -12,10 +12,19 @@ export interface Overview {
   minimumCohort: number;
   suppressed: boolean;
   participants: number | null;
-  metrics: null | { completedFlows: number; autonomyChecks: number; accompaniedMinutes: number; helpRequests: number };
-  flows: { flowId: string; started: number; completed: number }[];
+  metrics: null | { reportedFlows: number | null; practiceReports: number | null; completedFlows: number | null; autonomyChecks: number | null; accompaniedMinutes: number | null; helpRequests: number | null };
+  flows: { flowId: string; started: number | null; completed: number | null; reported: number | null; startedCohort?: MetricCohort; completedCohort?: MetricCohort; reportedCohort?: MetricCohort }[];
+  period?: { from: string; to: string; days: number; basis: string; timezone: string };
+  activity?: MetricCohort & { activePeople: number | null; startedFlows: number | null; startedCohort: MetricCohort };
+  difficulties?: MetricCohort & { events: number | null; steps: (MetricCohort & { stepId: string; events: number | null })[] };
+  familyResponse?: MetricCohort & { resolvedRequests: number | null; meanResponseMinutes: number | null };
+  trend?: (Pick<MetricCohort, 'suppressed' | 'suppressionReason'> & { from: string; to: string; activePeople: number | null })[];
+  cohorts?: Record<string, MetricCohort>;
+  evidence?: { source: string; consent: string; methodVersion: string; interpretation: string; comparison: string };
+  gaps?: string[];
   updatedAt: string;
 }
+export interface MetricCohort { suppressed: boolean; suppressionReason: string | null; contributors: number | null; minimumCohort: number }
 export interface Source { title: string; url: string }
 export interface Dataset {
   id: string; title: string; description: string; sourceUrl: string;
@@ -24,16 +33,18 @@ export interface Dataset {
 }
 export interface PublicContext {
   territoryId?: string; query?: string; status?: string;
-  indicators?: { id: string; label: string; value: number | string; unit: string; period: string; sourceUrl: string; sourceTitle: string }[];
+  indicators?: { id: string; label: string; value: number | string; unit: string; period: string; sourceUrl: string; sourceTitle: string; freshness?: { historical: boolean; dataPeriod: string; sourceReadAt: string | null; retrievedAt: string }; method?: { note?: string } }[];
   datasets: Dataset[]; sources: Source[]; warnings: string[];
   cached: boolean; fetchedAt: string; rawText?: string;
+  gaps?: string[];
+  opportunities?: { id: string; title: string; basis: string[]; limitation: string }[];
 }
 export interface PublicAnswer { answer: string; sources: Source[]; warnings: string[]; fetchedAt: string; cached: boolean }
-export interface McpStatus { configured: boolean; connected: boolean; endpoint: string; tools: { name: string; description: string }[]; error?: string | { code: string; message: string } }
+export interface McpStatus { configured: boolean; connected: boolean; endpoint: string; tools: { name: string; description: string }[]; error?: string | { code: string; message: string }; transportError?: { code: string; message: string } | null; queryError?: { code: string; message: string } | null }
 export interface FamilyGroup { id: string; name: string }
 export interface FamilySummary {
   group: FamilyGroup;
-  members: { id: string; name: string; permissions: { progress: boolean; help: boolean }; completedFlows?: number; autonomyChecks?: number; accompaniedSeconds?: number }[];
+  members: { id: string; name: string; permissions: { progress: boolean; help: boolean }; reportedFlows?: number; practiceReports?: number; completedFlows?: number; autonomyChecks?: number; accompaniedSeconds?: number }[];
   alerts: { id: string; type: string; message: string; requesterName?: string; memberId?: string; createdAt: string; resolvedAt?: string | null }[];
 }
 export interface Invitation { invitationCode: string; expiresAt: string }

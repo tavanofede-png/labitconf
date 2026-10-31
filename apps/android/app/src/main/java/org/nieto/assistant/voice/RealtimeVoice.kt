@@ -21,6 +21,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import org.nieto.assistant.BuildConfig
+import org.nieto.assistant.screen.ScreenStep
 import java.util.concurrent.TimeUnit
 
 enum class VoicePhase { IDLE, CONNECTING, LISTENING, WAITING, SPEAKING, ERROR }
@@ -34,6 +35,7 @@ class RealtimeVoice(
     private val onState: (VoiceState) -> Unit,
     private val onAnswer: (String) -> Unit,
     private val onGuidanceOffer: () -> Unit,
+    private val onStep: (ScreenStep) -> Unit = {},
 ) {
     private val client = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(0, TimeUnit.MILLISECONDS)
         .pingInterval(20, TimeUnit.SECONDS).retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false).build()
@@ -41,6 +43,9 @@ class RealtimeVoice(
     @Volatile private var connectionGeneration = 0L
     private var ready = false
     private var pendingCapture = false
+    private var pendingText: String? = null
+    private var pendingScreen: JSONObject? = null
+    private var ignoredCancelAcks = 0
     private var connectionKey: Pair<String, String>? = null
     private var watchdog: Job? = null
     private var captureJob: Job? = null
@@ -58,7 +63,7 @@ class RealtimeVoice(
         if (turns.accepts(turnId)) emit(VoiceState(message = "Respuesta terminada. Podés volver a hablar."))
     }, onFailure = { message -> fail(message) })
 
-    fun start(baseUrl: String, installationToken: String) {
+    fun start(baseUrl: String, installationToken: String, screen: JSONObject? = null, text: String? = null) {
         require(installationToken.isNotBlank()) { "Conectá este teléfono desde Ajustes." }
         player.stop()
         turns.cancel()
@@ -66,11 +71,13 @@ class RealtimeVoice(
         awaitingResponse = false
         pendingCapture = true
         if (ready && connectionKey == (baseUrl to installationToken)) {
-            beginCapture(connectionGeneration)
+            pendingScreen = screen; pendingText = text
+            beginRequested(connectionGeneration)
             return
         }
         disconnect()
         pendingCapture = true
+        pendingScreen = screen; pendingText = text
         val generation = ++connectionGeneration
         connectionKey = baseUrl to installationToken
         emit(VoiceState(VoicePhase.CONNECTING, "Conectando con OpenAI Realtime. El micrófono todavía está apagado."))
@@ -136,6 +143,7 @@ class RealtimeVoice(
     fun disconnect() {
         ++connectionGeneration
         pendingCapture = false
+        pendingText = null; pendingScreen = null; ignoredCancelAcks = 0
         ready = false
         awaitingResponse = false
         commitCapture = false
@@ -166,6 +174,40 @@ class RealtimeVoice(
         watchdog?.cancel()
         watchdog = scope.launch { delay(ms); if (generation == connectionGeneration) fail(message) }
     }
+    private fun beginRequested(generation: Long) {
+        val screen = pendingScreen; pendingScreen = null
+        if (screen != null && !send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", false))) return
+        if (screen == null) send(JSONObject().put("type", "screen.clear"))
+        val text = pendingText; pendingText = null
+        if (text != null) {
+            pendingCapture = false
+            emit(VoiceState())
+            sendText(text)
+        } else beginCapture(generation)
+    }
+    fun updateScreen(screen: JSONObject, requestGuidance: Boolean): Boolean {
+        if (!ready || current.active) return false
+        if (requestGuidance) {
+            turns.cancel(); player.stop(); transcript = ""; awaitingResponse = true
+            emit(VoiceState(VoicePhase.WAITING, "La pantalla cambió. NIETO prepara el próximo paso…"))
+        }
+        val accepted = send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", requestGuidance))
+        if (accepted && requestGuidance) armTimeout(110_000, connectionGeneration, "No pude preparar el siguiente paso. Tocá Actualizar pantalla para intentar otra vez.")
+        return accepted
+    }
+    fun cancelResponseForScreenChange() {
+        if (!ready) return
+        if (awaitingResponse || current.phase in listOf(VoicePhase.WAITING, VoicePhase.SPEAKING)) {
+            if (send(JSONObject().put("type", "cancel"), false)) ++ignoredCancelAcks
+        }
+        awaitingResponse = false; turns.cancel(); player.stop(); watchdog?.cancel()
+        send(JSONObject().put("type", "screen.clear"), false)
+        emit(VoiceState(message = "La pantalla cambió. Actualizando el próximo paso…"))
+    }
+    fun clearScreen() {
+        cancelResponseForScreenChange()
+        send(JSONObject().put("type", "screen.clear"), false)
+    }
     private fun handle(event: JSONObject, generation: Long) {
         when (event.optString("type")) {
             "ready" -> {
@@ -175,7 +217,7 @@ class RealtimeVoice(
                     fail("El servidor no ofrece el modelo o formato de audio esperado."); return
                 }
                 ready = true; watchdog?.cancel()
-                if (pendingCapture) beginCapture(generation)
+                if (pendingCapture) beginRequested(generation)
             }
             "response.started" -> {
                 if (!awaitingResponse) return
@@ -206,6 +248,10 @@ class RealtimeVoice(
                 emit(current.copy(partialText = ""))
             }
             "guidance.offer" -> if (turns.accepts(event.optString("turnId")) && event.optString("flowId") == "whatsapp-location") onGuidanceOffer()
+            "guidance.step" -> if (turns.accepts(event.optString("turnId"))) {
+                val controlId = event.optString("controlId").takeIf { it.isNotBlank() && it != "null" }
+                onStep(ScreenStep(event.optString("screenId"), controlId, event.optString("instruction").take(2000)))
+            }
             "response.done" -> {
                 val turnId = event.optString("turnId")
                 if (!turns.accepts(turnId)) return
@@ -219,6 +265,7 @@ class RealtimeVoice(
                 player.finish(turnId)
             }
             "cancelled" -> {
+                if (ignoredCancelAcks > 0) { --ignoredCancelAcks; return }
                 if (recording) return // Delayed acknowledgement of audio.start cancelling a prior response.
                 player.stop(); turns.cancel(); awaitingResponse = false; watchdog?.cancel()
                 emit(VoiceState(message = "Respuesta cancelada."))

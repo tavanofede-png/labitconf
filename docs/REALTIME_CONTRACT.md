@@ -1,6 +1,6 @@
 # NIETO Realtime
 
-Modelo fijo `gpt-realtime-2.1-mini`. La clave `OPENAI_API_KEY` solo existe en el entorno del backend. La voz y las consultas del asistente se envían a OpenAI después de la activación/aceptación en el cliente. No se envían capturas, mensajes de WhatsApp ni el árbol de accesibilidad. El modelo conversa; el motor local sigue verificando los pasos y ninguna función de IA toca controles, comparte ubicación ni registra tareas completadas.
+Modelo fijo `gpt-realtime-2.1-mini`. La clave `OPENAI_API_KEY` solo existe en el entorno del backend. La voz y las consultas se envían a OpenAI después de la aceptación en el cliente. La extensión de [asistencia de pantalla](SCREEN_ASSISTANCE_CONTRACT.md) permite controles saneados y una captura efímera con consentimiento remoto separado. La IA propone un paso sobre un control existente; ninguna función toca controles, comparte ubicación ni acredita tareas completadas. Familia e instituciones no reciben el contenido de la pantalla.
 
 ## Transporte
 
@@ -23,7 +23,7 @@ Audio de entrada y salida: PCM firmado little-endian de 16 bits, 24.000 Hz, un c
 - `{type:"response.started",turnId:"..."}`: identifica la nueva respuesta. El cliente descarta audio/texto con identificador anterior.
 - `{type:"audio.delta",turnId:"...",audio:"<base64 PCM>"}`: audio incremental para reproducción inmediata sin escribir archivos.
 - `{type:"text.delta",turnId:"...",delta:"..."}` y `{type:"text.done",turnId:"...",text:"..."}`: texto de salida o transcripción de la respuesta de voz. Evitar duplicarla en el chat.
-- `{type:"guidance.offer",turnId:"...",flowId:"whatsapp-location"}`: sugerencia del único flujo habilitado. El cliente ofrece iniciarlo explícitamente. No ejecuta nada por cuenta de la IA.
+- `{type:"guidance.step",turnId:"...",screenId:"...",controlId:"...",instruction:"..."}`: paso sobre un control existente del snapshot actual. Es la única herramienta del agente; no hay ofertas de guías locales ni redirección por palabras clave.
 - `{type:"response.done",turnId:"...",status:"completed"|"cancelled"|"failed"}`: terminó la generación; permitir vaciar el audio ya encolado antes de liberar el reproductor. Una finalización no completa no se presenta como éxito.
 - `{type:"cancelled"}`: el servidor canceló el turno. El cliente descarta reproducción y texto parcial de ese turno.
 - `{type:"error",code:"...",message:"...",fatal:false|true}`: error de configuración, autorización, cuota, red, captura o protocolo. Mensajes redactados; no incluye objetos de proveedor, claves, headers o transcripciones de entrada. Un error fatal cierra el socket.
@@ -32,7 +32,7 @@ Las respuestas OpenAI identificadas como pertenecientes a turnos cancelados no d
 
 ## Texto HTTP existente
 
-`POST /api/assistant/message` conserva `{text,sessionId?}` y `{mode,instruction,flowId?,sources:[]}`. Cuando está configurado, la respuesta viene del mismo modelo mediante Realtime en modalidad texto; no se usa una respuesta fija como si fuera IA ni se cambia de modelo. La falta de clave, cuota o acceso devuelve error explícito. Historial acotado en memoria por dispositivo, sin persistir mensajes; se permite limitarlo a la solicitud actual si se documenta.
+`POST /api/assistant/message` conserva `{text,sessionId?}` y devuelve `{mode:"conversation",instruction,sources:[],model}` sin `flowId`. La respuesta viene del mismo modelo mediante Realtime en modalidad texto. La falta de clave, cuota o acceso devuelve error explícito. HTTP usa solo la solicitud actual; el WebSocket conserva contexto efímero por conexión. La guía local se abre exclusivamente desde su control explícito en Android.
 
 ## Estado y verificación
 

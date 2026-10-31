@@ -7,6 +7,8 @@ import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
 import { JsonStore } from '../src/store.mjs';
 import { RealtimeService } from '../src/realtime.mjs';
+import { randomUUID } from 'node:crypto';
+import { GUIDED_STEPS } from '../src/sessions.mjs';
 
 async function fixture(t, options = {}) {
   const folder = await mkdtemp(join(tmpdir(), 'nieto-test-')); const dataFile = join(folder, 'state.json');
@@ -22,23 +24,29 @@ async function fixture(t, options = {}) {
   return { request, device, dataFile };
 }
 
-test('device isolation, closed telemetry, completion idempotence, and no conversation persistence', async (t) => {
+test('device isolation, ordered reports, durable event idempotence, and no conversation persistence', async (t) => {
   const { request, device, dataFile } = await fixture(t); const a = await device(); const b = await device();
-  const session = (await request('/assistant/sessions', { method: 'POST', token: a.token, body: { flowId: 'whatsapp-location' } })).body;
-  assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: b.token, body: { type: 'flow_completed' } })).status, 404);
-  assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { type: 'step_shown', stepId: 'attach', screenshot: 'secret' } })).status, 400);
-  for (let n = 0; n < 2; n++) assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { type: 'step_completed', stepId: 'attach' } })).status, 200);
-  for (let n = 0; n < 2; n++) assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { type: 'flow_completed', durationSeconds: 30 } })).status, 200);
-  assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { type: 'step_shown', stepId: 'open_chat' } })).status, 200);
-  assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { type: 'autonomy_completed' } })).status, 200);
-  assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { type: 'cancelled' } })).status, 200);
+  const clientSessionId = randomUUID(); const create = { flowId: 'whatsapp-location', clientSessionId };
+  const session = (await request('/assistant/sessions', { method: 'POST', token: a.token, body: create })).body;
+  assert.equal((await request('/assistant/sessions', { method: 'POST', token: a.token, body: create })).body.id, session.id);
+  const event = body => request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: a.token, body: { eventId: randomUUID(), ...body } });
+  assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: b.token, body: { eventId: randomUUID(), type: 'flow_reported' } })).status, 404);
+  assert.equal((await event({ type: 'step_shown', stepId: 'attach', screenshot: 'secret' })).status, 400);
+  assert.equal((await event({ type: 'flow_reported' })).status, 409);
+  assert.equal((await event({ type: 'flow_started' })).status, 200);
+  for (const stepId of GUIDED_STEPS) { assert.equal((await event({ type: 'step_shown', stepId })).status, 200); assert.equal((await event({ type: 'step_completed', stepId })).status, 200); }
+  const eventId = randomUUID(); const report = { eventId, type: 'flow_reported', durationSeconds: 30 };
+  assert.equal((await event(report)).status, 200); assert.equal((await event(report)).body.duplicate, true);
+  assert.equal((await event({ ...report, durationSeconds: 14_400 })).status, 409);
+  assert.equal((await event({ type: 'cancelled', durationSeconds: 14_400 })).status, 409);
+  assert.equal((await event({ type: 'autonomy_completed' })).body.error.code, 'verification_unavailable');
   const history = (await request('/assistant/history', { token: a.token })).body;
-  assert.equal(history.sessions.length, 1); assert.equal(history.sessions[0].durationSeconds, 30); assert.equal(history.sessions[0].autonomyCompleted, true); assert.equal(history.sessions[0].state, 'completed');
-  assert.deepEqual(history.sessions[0].completedSteps, ['attach']);
+  assert.equal(history.sessions.length, 1); assert.equal(history.sessions[0].durationSeconds, 30); assert.equal(history.sessions[0].autonomyCompleted, false); assert.equal(history.sessions[0].state, 'reported');
+  assert.equal(history.sessions[0].resultSource, 'self_reported'); assert.deepEqual(history.sessions[0].completedSteps, GUIDED_STEPS);
   assert.equal((await request('/assistant/history', { token: b.token })).body.sessions.length, 0);
   await request('/assistant/message', { method: 'POST', token: a.token, body: { text: 'texto privado nunca guardar' } });
   const disk = await readFile(dataFile, 'utf8');
-  assert.equal(disk.includes('texto privado'), false); assert.equal(disk.includes(a.token), false);
+  assert.equal(disk.includes('texto privado'), false); assert.equal(disk.includes(a.token), false); assert.equal(disk.includes(eventId), false); assert.equal(disk.includes(clientSessionId), false);
 });
 
 test('family invitations are single-use, consent gates metrics/help and revocation removes access', async (t) => {
@@ -86,20 +94,40 @@ test('family alerts identify the consenting requester among multiple members and
   assert.equal(JSON.stringify(summary).includes(ana.deviceId), false);
   for (let n = 0; n < 3; n++) await device();
   const overview = (await request('/institution/overview', { token: 'institution-test' })).body;
-  assert.equal(overview.suppressed, false);
+  assert.equal(overview.suppressed, true);
   assert.equal(JSON.stringify(overview).includes('requesterName'), false);
   assert.equal(JSON.stringify(overview).includes('memberId'), false);
   assert.equal(JSON.stringify(overview).includes(juan.deviceId), false);
 });
 
 test('institution minimum cohort suppresses every NIETO breakdown and requires a private token', async (t) => {
-  const { request, device } = await fixture(t);
+  const { request, device } = await fixture(t, { minimumCohort: 1 });
   assert.equal((await request('/institution/overview')).status, 401);
   await device(); let overview = (await request('/institution/overview', { token: 'institution-test' })).body;
-  assert.equal(overview.suppressed, true); assert.equal(overview.participants, null); assert.equal(overview.metrics, null); assert.deepEqual(overview.flows, []);
+  assert.equal(overview.minimumCohort, 5); assert.equal(overview.suppressed, true); assert.equal(overview.participants, null); assert.equal(overview.metrics, null); assert.deepEqual(overview.flows, []);
   for (let n = 0; n < 4; n++) await device();
   overview = (await request('/institution/overview', { token: 'institution-test' })).body;
-  assert.equal(overview.suppressed, false); assert.equal(overview.participants, 5); assert.equal(overview.metrics.completedFlows, 0);
+  assert.equal(overview.suppressed, true); assert.equal(overview.participants, null); assert.equal(overview.metrics, null);
+});
+
+test('institution consent is explicit, independent of family, and revocation excludes past contributions', async t => {
+  const { request, device } = await fixture(t); const devices = [];
+  for (let n = 0; n < 5; n++) {
+    const person = await device(); devices.push(person);
+    assert.equal((await request('/devices/me', { token: person.token })).body.institutionMetricsConsent, false);
+    await request('/devices/me', { method: 'PATCH', token: person.token, body: { institutionMetricsConsent: true } });
+    const session = (await request('/assistant/sessions', { method: 'POST', token: person.token, body: { flowId: 'screen-assistance', clientSessionId: randomUUID() } })).body;
+    assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: person.token, body: { eventId: randomUUID(), type: 'flow_started' } })).status, 200);
+    assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: person.token, body: { eventId: randomUUID(), type: 'step_shown', stepId: 'screen-step' } })).status, 200);
+    assert.equal((await request(`/assistant/sessions/${session.id}/events`, { method: 'POST', token: person.token, body: { eventId: randomUUID(), type: 'flow_completed' } })).status, 409);
+  }
+  let overview = (await request('/institution/overview', { token: 'institution-test' })).body;
+  assert.equal(overview.suppressed, false); assert.equal(overview.activity.activePeople, 5); assert.equal(overview.activity.startedFlows, 5);
+  assert.equal(overview.metrics.completedFlows, null); assert.equal(overview.metrics.helpRequests, null);
+  assert.equal(JSON.stringify(overview).includes(devices[0].deviceId), false);
+  await request('/devices/me', { method: 'PATCH', token: devices[0].token, body: { institutionMetricsConsent: false } });
+  overview = (await request('/institution/overview', { token: 'institution-test' })).body;
+  assert.equal(overview.suppressed, true); assert.equal(overview.activity.activePeople, null);
 });
 
 test('missing service credentials produce an explicit empty state, never sample statistics', async (t) => {

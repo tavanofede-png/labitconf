@@ -6,9 +6,10 @@ La referencia es `NIETO Arquitectura Tecnica Completa.docx`, aportada por el usu
 
 ```text
 Android Kotlin + Compose
-  ├─ guía WhatsApp local, voz Realtime y TTS de guía, accesibilidad opt-in
-  ├─ árbol de interfaz procesado en el teléfono
-  └─ token de dispositivo + eventos cerrados
+  ├─ burbuja: voz o texto, paso actual, resaltado sin clic
+  ├─ controles/captura saneados → Realtime con consentimiento remoto
+  ├─ familia nativa + comprobaciones periódicas WorkManager
+  └─ credenciales separadas + eventos sin contenido de pantalla
                   │ HTTP local / HTTPS para producción
                   ▼
 Node.js API :8787 ─── JSON privado local
@@ -23,19 +24,19 @@ Portal React + TypeScript + Vite :5173
   └─ acceso institucional por token del servidor
 ```
 
-El árbol de accesibilidad no sale de Android. La API recibe la voz o el texto de las consultas al asistente y los transmite a OpenAI para responder sin guardar conversaciones; no recibe capturas ni mensajes de WhatsApp. La conversación de voz requiere activación y consentimiento explícitos. NIETO no solicita contraseñas ni OTP. El servidor conserva eventos de una sesión guiada para calcular progreso y duración de acompañamiento; no observa el uso completo del teléfono.
+Con un consentimiento remoto nuevo, Android envía controles saneados y una captura efímera disponible desde Android 11. El relay los transmite a OpenAI para decidir un paso vinculado al snapshot actual, sin guardarlos. La consulta se hace por voz o texto, sin historial persistente. Familia e instituciones no reciben pantalla, mensajes ni consultas. El servidor conserva eventos operativos sin contenido para calcular uso y dificultades; no observa el uso completo del teléfono. El detalle vigente está en [MVP_FUNCTIONAL_SCOPE.md](MVP_FUNCTIONAL_SCOPE.md).
 
 ## Documento de arquitectura y alcance
 
 | Área | Decisión del MVP | Trabajo posterior |
 | --- | --- | --- |
 | Android primero | Kotlin y Compose; permisos explícitos del sistema. | Pruebas con más dispositivos, idiomas, fabricantes y usuarios. |
-| Comprensión de pantalla | Árbol accesible local y reconocimiento conservador para el perfil experimental `whatsapp-location-es@1`, WhatsApp español `2.26.*`. | Validar ese perfil en un teléfono; más guías y versiones; OCR o visión solo cuando aporte valor y con consentimiento. |
+| Comprensión de pantalla | Controles saneados y captura efímera autorizada al agente; IDs exactos y revalidación antes del resaltado. Android 8–10 usa controles sin captura. | Validación física en distintas apps, controles inaccesibles, pantallas protegidas y cambios de interfaz. |
 | Acompañamiento | Explicación, resaltado local y verificación del siguiente paso. La persona hace cada acción. | Ampliar cobertura y métricas de aprendizaje validadas. |
 | Voz | Streaming PCM24k mediante relay autenticado a OpenAI Realtime; TTS nativo para las instrucciones verificadas. | Validar micrófono, reproducción, interrupciones y redes en el dispositivo real. |
-| IA | Conversación de voz/texto con `gpt-realtime-2.1-mini`; guía local como fuente de verdad y contexto público OpenArg en instituciones. | Evaluaciones de calidad, más guías y recuperación de los fallos descritos en la auditoría. |
-| Familia | Grupos, invitación de un solo uso con vencimiento, permisos separados para progreso y ayuda, revocación. | Identidad y recuperación de cuenta; notificaciones fuera del portal. |
-| Instituciones | Métricas reales de sesiones, selección de las 24 jurisdicciones argentinas por código ISO y supresión bajo el mínimo de cohorte. Android registra instalaciones en CABA (`AR-C`) en esta versión. | Elección de territorio desde Android; roles, auditoría operativa, aislamiento por organización y metodología de indicadores. |
+| IA | Asistencia de pantalla por voz/texto con `gpt-realtime-2.1-mini`; herramienta limitada a proponer un control existente, sin acciones. | Evaluaciones de calidad, validación con usuarios y cobertura de apps. |
+| Familia | Grupo e invitaciones desde Android nativo o web, permisos separados, revocación por la persona asistida y notificaciones locales periódicas. | Push de entrega inmediata, identidad y recuperación de cuenta; cierre local no revoca copias del token. |
+| Instituciones | Métricas operativas de 30 días; consentimiento propio y cohorte efectiva por cada indicador y desglose, con nulos suprimidos. | Roles, aislamiento por organización, metodología de impacto y controles contra inferencias por comparación. |
 | Mapa | Contexto del territorio con cartografía pública; sin ubicación personal. | Más capas justificadas por datos verificables. |
 | OpenArg | MCP oficial en backend; descubrimiento real, consultas autenticadas y evidencia de fuente/período. | Validar datasets concretos con una clave vigente y necesidades de cada institución. |
 | Persistencia | JSON local con escrituras serializadas y reemplazo atómico, un proceso API. | PostgreSQL, migraciones, backups, retención y operación concurrente. Room/Redis no son requisitos de esta demo. |
@@ -46,7 +47,7 @@ El árbol de accesibilidad no sale de Android. La API recibe la voz o el texto d
 
 - Cada instalación tiene una credencial propia. Una sesión solo se consulta o modifica por su titular.
 - La persona acepta el vínculo familiar en Android. Progreso y ayuda son permisos independientes. Sin permiso de progreso se omiten sus métricas en la respuesta familiar.
-- Las instituciones reciben agregados cuando la cohorte alcanza el mínimo configurado. Un territorio con menos participantes no habilita desgloses de flujos.
+- Cada indicador institucional necesita su propia cohorte de contribuyentes efectivos con consentimiento vigente; las instalaciones vacías no habilitan los datos de otro usuario.
 - La clave OpenArg no aparece en Android, en el bundle web, en la persistencia ni en las respuestas. El cliente tiene un endpoint oficial fijo para no desviar ese secreto.
 - Las fuentes y el período del dato pertenecen a la respuesta pública. Una fecha de consulta no se presenta como actualización del dataset. Si el MCP no aporta una cifra verificable, no se fabrica una.
 

@@ -1,5 +1,7 @@
 # Validación de OpenAI Realtime en NIETO
 
+Esta evidencia corresponde a la primera integración de conversación, anterior al envío autorizado de pantalla. El [alcance actual](MVP_FUNCTIONAL_SCOPE.md) y el [contrato de pantalla](SCREEN_ASSISTANCE_CONTRACT.md) describen la evolución posterior.
+
 Integración del modelo solicitado `gpt-realtime-2.1-mini`, realizada después de la auditoría del commit `059e0cc`. La clave fue ingresada por el usuario en `.env`; ninguna herramienta la imprimió y el archivo continúa excluido de Git. No se sustituyó el modelo por otro ni se creó una clave adicional.
 
 ## Comprobaciones con OpenAI real

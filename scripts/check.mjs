@@ -18,6 +18,7 @@ async function npm(args) {
 }
 
 await npm(['run', 'typecheck', '--workspace', '@nieto/web']);
+await npm(['run', 'test', '--workspace', '@nieto/web']);
 await npm(['run', 'test', '--workspace', '@nieto/api']);
 await npm(['run', 'build', '--workspace', '@nieto/web']);
-console.log('\n[NIETO] TypeScript, pruebas API y compilación web correctos.');
+console.log('\n[NIETO] TypeScript, regresiones web, pruebas API y compilación web correctos.');

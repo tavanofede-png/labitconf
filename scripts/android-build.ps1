@@ -31,14 +31,26 @@ try {
     if ((Get-Item -LiteralPath $artifactDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'La carpeta de artifacts no puede ser un enlace.' }
     $distribution = Join-Path $artifactDirectory 'nieto-debug.apk'
     $temporary = Join-Path $artifactDirectory 'nieto-debug.building.apk'
+    $manifest = Join-Path $artifactDirectory 'android-build.json'
+    $manifestTemporary = Join-Path $artifactDirectory 'android-build.building.json'
+    $checksumTemporary = Join-Path $artifactDirectory 'SHA256SUMS.building.txt'
     try {
+        $outputMetadata = Get-Content -LiteralPath (Join-Path $androidProject 'app\build\outputs\apk\debug\output-metadata.json') -Raw | ConvertFrom-Json
+        if ($outputMetadata.applicationId -ne 'org.nieto.assistant' -or @($outputMetadata.elements).Count -ne 1) { throw 'La compilación no identifica un único APK de NIETO.' }
+        $variant = $outputMetadata.elements[0]
         Copy-Item -LiteralPath $apk -Destination $temporary -Force
         $builtHash = (Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash
         if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ne $builtHash) { throw 'La copia del APK no coincide con la compilación.' }
         Move-Item -LiteralPath $temporary -Destination $distribution -Force
         if ((Get-FileHash -LiteralPath $distribution -Algorithm SHA256).Hash -ne $builtHash) { throw 'La distribución del APK no coincide con la compilación.' }
+        $buildManifest = [ordered]@{ schemaVersion=1; apkFile='nieto-debug.apk'; applicationId=$outputMetadata.applicationId; versionCode=$variant.versionCode; versionName=$variant.versionName; builtAt=[DateTime]::UtcNow.ToString('o'); size=(Get-Item -LiteralPath $distribution).Length; sha256=$builtHash.ToLowerInvariant() }
+        [IO.File]::WriteAllText($manifestTemporary, (($buildManifest | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $manifestTemporary -Destination $manifest -Force
+        [IO.File]::WriteAllText($checksumTemporary, ($builtHash.ToLowerInvariant() + "  nieto-debug.apk`n"), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $checksumTemporary -Destination (Join-Path $artifactDirectory 'SHA256SUMS.txt') -Force
         Write-Host "APK de distribución actualizado: $distribution (SHA256 $builtHash)"
-    } finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
+        Write-Host "Manifiesto de versión y SHA256SUMS actualizados: $manifest"
+    } finally { foreach ($temporaryArtifact in @($temporary,$manifestTemporary,$checksumTemporary)) { if (Test-Path -LiteralPath $temporaryArtifact) { Remove-Item -LiteralPath $temporaryArtifact -Force } } }
     if ($Install) {
         & (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe') install -r $apk
         if ($LASTEXITCODE -ne 0) { throw 'No se pudo instalar el APK. Revisá el teléfono conectado y la depuración USB.' }

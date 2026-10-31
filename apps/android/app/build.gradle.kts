@@ -11,8 +11,8 @@ android {
         applicationId = "org.nieto.assistant"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-realtime"
+        versionCode = 4
+        versionName = "0.4.0-labitconf"
     }
     buildFeatures { compose = true; buildConfig = true }
     buildTypes {
@@ -42,6 +42,7 @@ dependencies {
     implementation("androidx.savedstate:savedstate:1.3.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

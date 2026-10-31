@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class ApiFailure(message: String) : Exception(message)
+class ApiFailure(message: String, val status: Int = 0) : Exception(message)
 class NietoApi(private val settings: LocalSettings) {
     private val client = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false).followRedirects(false).followSslRedirects(false).build()
@@ -58,7 +58,7 @@ class NietoApi(private val settings: LocalSettings) {
                                     429 -> "Hubo muchas consultas. Esperá un momento e intentá de nuevo."
                                     else -> runCatching { JSONObject(text).optJSONObject("error")?.optString("message")?.take(180) }.getOrNull()
                                         ?.takeIf { it.isNotBlank() } ?: "El servidor no pudo completar la acción (HTTP ${response.code})."
-                                })
+                                }, response.code)
                                 val result = if (text.isBlank()) JSONObject() else JSONObject(text)
                                 if (continuation.isActive) continuation.resume(result)
                             } catch (error: Exception) {
@@ -74,7 +74,7 @@ class NietoApi(private val settings: LocalSettings) {
 
     suspend fun register() {
         if (settings.token.isNotBlank()) return
-        val response = request("/devices", "POST", JSONObject().put("name", settings.deviceName).put("territoryId", "AR-C"), false)
+        val response = request("/devices", "POST", JSONObject().put("name", settings.deviceName).put("territoryId", settings.territoryId), false)
         val credential = response.getString("token")
         require(credential.isNotBlank())
         settings.token = credential

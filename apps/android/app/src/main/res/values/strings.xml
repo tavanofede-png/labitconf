@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">NIETO</string>
-    <string name="accessibility_description">NIETO identifica controles de WhatsApp en español para enseñarte, paso a paso. Solo durante una guía iniciada por vos. No toca botones, no escribe, no hace capturas ni envía el contenido de tu pantalla. Ignora contraseñas y pantallas sensibles. Podés desactivarlo en cualquier momento.</string>
+    <string name="accessibility_description">NIETO te explica un paso y resalta controles sin tocar ni escribir por vos. Sólo mientras activás la asistencia y aceptás el permiso remoto nuevo, envía nombres y posiciones de controles a OpenAI mediante el servidor. Con autorización adicional puede enviar una captura en Android 11 o posterior. Excluye campos editables y bloquea pantallas sensibles reconocidas. Las capturas y consultas no se guardan en archivos ni historial. Podés apagar o revocar la asistencia y eliminar el contexto de tarea.</string>
 </resources>

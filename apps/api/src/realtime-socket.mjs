@@ -6,7 +6,7 @@ const safeEvent = error => ({ type: 'error', code: error instanceof RealtimeErro
 
 /** The mobile protocol is deliberately not an arbitrary proxy to OpenAI events. */
 export function attachRealtimeSocket(server, app) {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 24_000, perMessageDeflate: false });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 450_000, perMessageDeflate: false });
   const clients = new Set();
   server.on('upgrade', async (req, socket, head) => {
     const reject = (status, message) => { if (!socket.destroyed) socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`); };

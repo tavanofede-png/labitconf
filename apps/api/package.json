@@ -14,6 +14,7 @@
     "start": "node --env-file-if-exists=../../.env src/server.mjs",
     "test": "node --test",
     "verify:openarg": "node --env-file-if-exists=../../.env scripts/verify-openarg.mjs",
-    "verify:realtime": "node --env-file-if-exists=../../.env scripts/verify-realtime.mjs"
+    "verify:realtime": "node --env-file-if-exists=../../.env scripts/verify-realtime.mjs",
+    "verify:screen": "node --env-file-if-exists=../../.env scripts/verify-screen.mjs"
   }
 }

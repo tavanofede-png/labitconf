@@ -14,17 +14,17 @@ Este guion usa datos producidos por la aplicación y respuestas del MCP oficial.
 
 **Problema y propuesta.** «Muchas personas necesitan que alguien les explique dónde tocar. NIETO acompaña el aprendizaje en el teléfono: explica un paso, señala el control y espera a que la persona lo haga».
 
-**Teléfono.** Registrá una instalación con nombre de prueba; Android usa CABA como territorio en esta versión. Abrí la guía para compartir ubicación por WhatsApp. Mostrá la explicación de voz y el resaltado en una pantalla que la guía reconozca. Avanzá manualmente. Señalá que el usuario mantiene el control y que NIETO no envía la ubicación por él. Si la versión de WhatsApp no coincide, mostrale al jurado la detención y explicá que ampliar cobertura sigue pendiente.
+**Teléfono.** Registrá una instalación con nombre y jurisdicción declarada. Autorizá la asistencia remota de pantalla desde Ajustes. Abrí una app compatible de prueba, tocá la burbuja y pedí ayuda por voz. Mostrá el control señalado y realizá el toque manualmente; el cambio debe invalidar la indicación anterior antes del siguiente paso. Repetí un pedido por escrito con respuesta escrita, sin activar micrófono. NIETO mantiene el contexto de esa tarea, sin guardar historial. No muestres contraseñas ni información personal. Si no encuentra controles suficientes, mostrale al jurado el límite real.
 
-**Conversación.** Tocá Hablar con NIETO, formulá una consulta breve y tocá Terminar de hablar. La respuesta usa `gpt-realtime-2.1-mini` y se reproduce con su transcripción visible. Podés pedir que ofrezca la guía de ubicación; la persona debe iniciarla explícitamente. El modelo no recibe la pantalla ni ejecuta acciones. Antes de la demo, probá el micrófono, la reproducción y la cancelación en ese teléfono; la evidencia del relay real está en [REALTIME_VALIDATION.md](REALTIME_VALIDATION.md).
+**Conversación.** La respuesta usa `gpt-realtime-2.1-mini` y puede reproducirse por voz o leerse. Con permiso remoto, el modelo recibe controles saneados y una captura efímera disponible desde Android 11; nunca ejecuta acciones. Antes de la demo, probá voz, captura, redacción, cambios de pantalla y cancelación en ese teléfono. La prueba real con imagen artificial y los límites están en [MVP_FUNCTIONAL_SCOPE.md](MVP_FUNCTIONAL_SCOPE.md).
 
-**Familia.** En el portal, creá un grupo y mostrale el código al teléfono. Aceptá desde Android los permisos elegidos. Solicitá ayuda desde la app; actualizá el portal y mostrá la alerta. Si hay permiso de progreso, mostrale al jurado los eventos generados por esa sesión. Revocá el vínculo si querés demostrar el control de la persona.
+**Familia.** En otro teléfono, abrí Familia nativa y creá o recuperá el grupo. Generá una invitación y aceptala desde el teléfono asistido con sus permisos elegidos. Solicitá ayuda y abrí Familia en el otro teléfono para consultar inmediatamente y marcar el pedido atendido. Mostrá la activación de notificaciones; la comprobación en segundo plano es periódica desde 15 minutos y puede retrasarse por Android. No prometas una notificación instantánea en una demo de pocos minutos. Revocá el vínculo para demostrar el control de la persona.
 
 **Institución.** Ingresá con el token institucional local. Mostrá el territorio, las fuentes públicas y la fecha o período que entregue OpenArg. Formulá una consulta pública y abrí una fuente. Explicá que OpenArg se integra mediante su MCP y que la clave permanece en el backend.
 
-**Cohorte.** Con menos de cinco instalaciones reales de prueba en el territorio, el resultado esperado es «datos insuficientes» o agregado suprimido. Esa es la demostración del límite de privacidad. No reduzcas el umbral ni cargues identidades ficticias para conseguir un gráfico. Con cinco o más instalaciones consentidas, mostrá las métricas que hayan producido sus sesiones.
+**Cohorte.** El consentimiento institucional es independiente y está desactivado por defecto. Cada indicador necesita al menos cinco contribuyentes efectivos que lo hayan autorizado en ese territorio y período. Mostrá las métricas disponibles y los valores suprimidos; no reduzcas el umbral ni cargues identidades ficticias para obtener un gráfico. Uso y dificultades sirven para planificar acompañamientos, sin afirmar autonomía demostrada.
 
-La auditoría detectó que este umbral cuenta instalaciones registradas y no contribuyentes efectivos. No lo presentes como una garantía de anonimato hasta corregir ese hallazgo. También está pendiente reforzar la evidencia de finalización de la guía; revisá [AUDIT.md](AUDIT.md) antes de afirmar que una tarea quedó completada.
+Se corrigió el umbral de instalaciones vacías señalado en la auditoría. El mínimo de cohorte sigue sin constituir una garantía de anonimato frente a todas las comparaciones. La guía local opcional mantiene limitaciones en la evidencia de finalización; revisá [AUDIT.md](AUDIT.md) antes de afirmar que una tarea quedó completada.
 
 **Cierre.** «La guía genera eventos de aprendizaje. La familia ve lo que la persona autoriza. La institución puede combinar agregados permitidos con contexto público trazable de OpenArg».
 
@@ -38,7 +38,7 @@ La auditoría detectó que este umbral cuenta instalaciones registradas y no con
 | «La guía acompaña esta versión de WhatsApp» | Ejecución en el teléfono concreto, con controles identificados. |
 | «La familia recibió una solicitud de ayuda» | Acción explícita desde Android y alerta visible con permiso vigente. |
 | «El portal muestra progreso» | Sesiones reales completadas y permiso de progreso aceptado. |
-| «El portal aplica un mínimo de instalaciones» | Respuesta institucional suprimida bajo el mínimo; aclarar la limitación de contribuyentes efectivos del informe de auditoría. |
+| «El portal aplica cohortes de contribuyentes efectivos» | Consentimiento institucional vigente y al menos cinco personas por métrica; valores y subgrupos insuficientes permanecen suprimidos. |
 
 ## Recuperación durante la demo
 

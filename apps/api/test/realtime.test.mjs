@@ -9,6 +9,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { RealtimeConversation, RealtimeService, REALTIME_MODEL, MAX_AUDIO_CHUNK } from '../src/realtime.mjs';
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
+import { validateSnapshot, MAX_IMAGE_BYTES } from '../src/screen-context.mjs';
 
 function eventsFrom(target, name = 'event') {
   const seen = []; const waiting = [];
@@ -79,6 +80,17 @@ test('missing OpenAI configuration returns explicit 503 instead of fabricated co
   assert.equal(health.assistant.configured, false); assert.equal(health.assistant.model, REALTIME_MODEL); assert.equal(health.assistant.generalConversation, false);
 });
 
+test('negative and unrelated WhatsApp requests reach the model unchanged and are not redirected by keyword matching', async t => {
+  const upstream = await fakeOpenAi(t);
+  const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
+  const { request, device } = await apiFixture(t, realtime);
+  for (const text of ['No quiero compartir mi ubicación.', 'Quiero cambiar el tamaño de la letra de WhatsApp.']) {
+    const result = await request('/assistant/message', { token: device.token, body: { text } });
+    assert.equal(result.status, 200); assert.equal(result.body.mode, 'conversation'); assert.equal(result.body.flowId, undefined);
+    assert.equal(upstream.messages.some(event => event.item?.role === 'user' && event.item.content?.[0]?.text === text), true);
+  }
+});
+
 test('production upstream allows only the fixed secure OpenAI endpoint', () => {
   for (const endpoint of ['ws://api.openai.com/v1/realtime', 'wss://api.openai.com:8443/v1/realtime', 'wss://api.openai.com/other', 'wss://other.example/v1/realtime', 'wss://user:pass@api.openai.com/v1/realtime', 'wss://api.openai.com/v1/realtime#fragment']) {
     assert.throws(() => new RealtimeConversation({ endpoint }), /no permitido/);
@@ -131,19 +143,29 @@ test('late cancelled response chunks cannot be labelled as the next turn', async
   const audio = output.seen.filter(event => event.type === 'audio.delta'); assert.equal(audio.length, 1); assert.equal(audio[0].audio, Buffer.alloc(2, 2).toString('base64'));
 });
 
-test('only a validated guide offer is surfaced and it never starts a session or action', async t => {
-  let round = 0;
+test('legacy guide offers cannot redirect negative, cancelled or unrelated requests even when upstream attempts them', async t => {
+  const rounds = new WeakMap(); const published = [];
   const upstream = await fakeOpenAi(t, (socket, event, helper) => {
-    if (++round === 1) {
+    const round = (rounds.get(socket) ?? 0) + 1; rounds.set(socket, round);
+    if (round === 1) {
       socket.send(JSON.stringify({ type: 'response.created', response: { id: 'tool-response', metadata: event.response.metadata } }));
       socket.send(JSON.stringify({ type: 'response.done', response: { id: 'tool-response', status: 'completed', output: [{ type: 'function_call', name: 'offer_guided_flow', call_id: 'call-1', arguments: JSON.stringify({ flowId: 'whatsapp-location' }) }] } }));
     } else helper.sendResponse(socket, event);
   });
-  const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint } });
-  const result = await realtime.reply({ deviceId: 'one', text: 'Quiero aprender a compartir mi ubicación' });
-  assert.equal(result.flowId, 'whatsapp-location'); assert.equal(result.mode, 'guided');
-  const toolOutput = JSON.parse(upstream.messages.find(event => event.item?.type === 'function_call_output').item.output);
-  assert.equal(toolOutput.started, false); assert.equal(toolOutput.requiresExplicitUserAction, true); assert.equal(realtime.active.size, 0);
+  const realtime = new RealtimeService({ apiKey: 'test-key', conversationOptions: { endpoint: upstream.endpoint }, conversationFactory: options => {
+    const conversation = new RealtimeConversation(options); conversation.on('event', event => published.push(event)); return conversation;
+  } });
+  const { request, device } = await apiFixture(t, realtime);
+  for (const text of ['No quiero compartir mi ubicación.', 'Cancelá la tarea de ubicación.', 'Quiero agrandar la letra de WhatsApp.']) {
+    const result = await request('/assistant/message', { token: device.token, body: { text } });
+    assert.equal(result.status, 200); assert.equal(result.body.mode, 'conversation'); assert.equal(result.body.flowId, undefined);
+  }
+  const outputs = upstream.messages.filter(event => event.item?.type === 'function_call_output').map(event => JSON.parse(event.item.output));
+  assert.equal(outputs.length, 3); assert.equal(outputs.every(output => output.error === 'unsupported_tool' && output.executed === false), true);
+  assert.equal(published.some(event => event.type === 'guidance.offer'), false);
+  assert.equal((await request('/assistant/history', { token: device.token })).body.sessions.length, 0);
+  assert.equal(upstream.messages.filter(event => event.type === 'session.update').every(event => event.session.tools.length === 1 && event.session.tools[0].name === 'point_to_control'), true);
+  assert.equal(realtime.active.size, 0);
 });
 
 test('unapproved functions and arguments are rejected without executing them', async t => {
@@ -158,6 +180,61 @@ test('unapproved functions and arguments are rejected without executing them', a
   const output = eventsFrom(conversation); await conversation.connect(); conversation.handleClient({ type: 'text', text: 'Pregunta' });
   await output.wait(event => event.type === 'response.done'); assert.equal(output.seen.some(event => event.type === 'guidance.offer'), false);
   assert.equal(JSON.parse(upstream.messages.find(event => event.item?.type === 'function_call_output').item.output).executed, false);
+});
+
+const screen = () => ({ id: 'screen_1', packageName: 'org.example.contacts', width: 1080, height: 2400,
+  controls: [{ id: 'search', label: 'Buscar', role: 'button', bounds: [20, 100, 500, 200] }] });
+
+test('screen schema rejects oversized images, unknown fields, duplicate IDs and invalid bounds', () => {
+  assert.equal(validateSnapshot(screen()).controls[0].id, 'search');
+  for (const bad of [
+    { ...screen(), arbitrarySystemPrompt: 'override' },
+    { ...screen(), controls: Array(61).fill(screen().controls[0]) },
+    { ...screen(), controls: [screen().controls[0], screen().controls[0]] },
+    { ...screen(), controls: [{ ...screen().controls[0], bounds: [0, 0, 1081, 200] }] },
+    { ...screen(), image: { mimeType: 'image/png', data: 'AAAA' } },
+    { ...screen(), image: { mimeType: 'image/jpeg', data: Buffer.alloc(MAX_IMAGE_BYTES + 1).toString('base64') } },
+  ]) assert.throws(() => validateSnapshot(bad));
+});
+
+test('a real current-screen control can be pointed to but never clicked or persisted', async t => {
+  let round = 0;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (++round === 1) {
+      socket.send(JSON.stringify({ type: 'response.created', response: { id: 'point-response', metadata: event.response.metadata } }));
+      socket.send(JSON.stringify({ type: 'response.done', response: { id: 'point-response', status: 'completed', output: [{ type: 'function_call', name: 'point_to_control', call_id: 'point-1', arguments: JSON.stringify({ screenId: 'screen_1', controlId: 'search', instruction: 'Tocá Buscar.' }) }] } }));
+    } else helper.sendResponse(socket, event);
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: false });
+  assert.ok(conversation.screenItemId.length <= 32);
+  conversation.handleClient({ type: 'text', text: 'Quiero buscar un contacto' });
+  await output.wait(event => event.type === 'response.done');
+  const point = output.seen.find(event => event.type === 'guidance.step'); assert.equal(point.screenId, 'screen_1'); assert.equal(point.controlId, 'search');
+  assert.equal(JSON.parse(upstream.messages.find(event => event.item?.type === 'function_call_output').item.output).executed, false);
+  const previousId = conversation.screenItemId; const deleted = once([...upstream.sockets][0], 'message'); conversation.handleClient({ type: 'screen.clear' });
+  assert.equal(conversation.screen, null); assert.equal(conversation.screenItemId, null);
+  await deleted;
+  assert.equal(upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === previousId), true);
+  assert.throws(() => conversation.handleClient({ type: 'screen.context', screen: screen() }), /Esperá/);
+  conversation.close(); assert.equal(conversation.screen, null);
+});
+
+test('unknown or stale screen IDs cannot produce a guidance step', async t => {
+  let round = 0;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (++round === 1) {
+      socket.send(JSON.stringify({ type: 'response.created', response: { id: 'forged-point', metadata: event.response.metadata } }));
+      socket.send(JSON.stringify({ type: 'response.done', response: { id: 'forged-point', status: 'completed', output: [{ type: 'function_call', name: 'point_to_control', call_id: 'point-forged', arguments: JSON.stringify({ screenId: 'old_screen', controlId: 'search', instruction: 'Tocá Buscar.' }) }] } }));
+    } else helper.sendResponse(socket, event);
+  });
+  const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
+  const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: true });
+  await output.wait(event => event.type === 'response.done');
+  assert.equal(output.seen.some(event => event.type === 'guidance.step'), false);
+  assert.equal(JSON.parse(upstream.messages.find(event => event.item?.type === 'function_call_output').item.output).error, 'stale_or_unknown_control');
 });
 
 test('WebSocket authenticates the device before opening upstream and closes its resource on disconnect', async t => {

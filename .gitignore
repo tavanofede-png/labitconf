@@ -20,4 +20,6 @@ local.properties
 Thumbs.db
 artifacts/qa/
 artifacts/*.apk
+artifacts/android-build*.json
+artifacts/SHA256SUMS*.txt
 *.tsbuildinfo

@@ -1,6 +1,6 @@
 # Conversación Realtime de NIETO
 
-El backend usa exclusivamente `gpt-realtime-2.1-mini` para el chat y la voz del asistente. La clave se lee de `OPENAI_API_KEY` al iniciar la API y nunca se devuelve a clientes, se guarda en el JSON de datos ni se escribe en logs. La integración de OpenArg continúa por separado, con su propia clave y sus rutas institucionales.
+El backend usa exclusivamente `gpt-realtime-2.1-mini` para chat, voz y comprensión de pantalla. La clave se lee de `OPENAI_API_KEY` al iniciar la API y nunca se devuelve a clientes, se guarda en el JSON de datos ni se escribe en logs. La integración de OpenArg continúa por separado, con su propia clave y sus rutas institucionales.
 
 ## Voz en streaming
 
@@ -16,37 +16,44 @@ Límites del backend:
 - Veinte intentos de handshake por IP por minuto; hasta 250 mensajes de cliente por ventana de diez segundos.
 - Captura máxima de 45 segundos y bloques de hasta 12.000 bytes PCM. Una captura menor a 100 ms no genera respuesta.
 - Conexión upstream con máximo de 15 segundos de preparación, respuesta con máximo de 60 segundos y sesión de diez minutos. Se cierra después de dos minutos de inactividad, para permitir que termine de reproducirse una respuesta de hasta 90 segundos.
-- Salida acotada por tokens, tamaño de texto y audio; se corta ante congestión de buffers.
+- Salida acotada por tokens, tamaño de texto y audio; se corta ante congestión de buffers. Contexto de pantalla de hasta 60 controles e imagen JPEG opcional de 300 KB, 60 snapshots/8 MB de imágenes por conexión y al menos 750 ms entre actualizaciones.
 - Cancelación de turno y desconexión cierran o limpian los recursos correspondientes. Los paquetes tardíos se relacionan con el identificador de respuesta original y no se atribuyen al turno nuevo.
 
 Al interrumpir una reproducción, el cliente debe cancelar y cerrar la conexión, y abrir una nueva para la siguiente consulta. Android ya sigue ese procedimiento, que descarta el contexto que podría contener audio generado que la persona no escuchó. Mantener la misma sesión después de cortar reproducción requeriría informar la posición realmente escuchada y truncar ese audio en OpenAI; el protocolo actual no ofrece esa operación.
 
 HTTP y WS requieren HTTPS/WSS fuera del prototipo local. El servidor no reintenta automáticamente una generación fallida ni sustituye el modelo. Falta de credencial, acceso al modelo, saldo/cuota y límites se comunican como errores explícitos.
 
-## Guías y autoridad de la aplicación
+## Pantalla actual y autoridad de la aplicación
 
-El modelo conversa, pero no ve la pantalla. No se envían imágenes, mensajes de WhatsApp ni el árbol de accesibilidad. Su única función habilitada, `offer_guided_flow`, puede ofrecer `whatsapp-location`. El servidor verifica el nombre y los argumentos y comunica `guidance.offer`; el usuario inicia la guía explícitamente en el cliente. Esa función no ejecuta toques, envíos, llamadas, solicitudes familiares ni eventos de progreso. El motor Android conserva la verificación local del procedimiento y sus confirmaciones.
+Con consentimiento remoto de pantalla separado, el cliente envía `screen.context` según [SCREEN_ASSISTANCE_CONTRACT.md](../../../docs/SCREEN_ASSISTANCE_CONTRACT.md). Aporta IDs, etiquetas, roles y bounds de controles accesibles y, cuando la plataforma lo permite, una captura JPEG. Todo el contenido de pantalla se trata como datos no confiables, sin autoridad para modificar instrucciones. La política local bloquea pantallas sensibles reconocidas; no se garantiza detección universal de información sensible.
 
-El modelo puede responder preguntas generales de asistencia digital. La información específica de una pantalla no disponible debe presentarse como límite; esta integración no resuelve los defectos del motor local registrados en [AUDIT.md](../../../docs/AUDIT.md).
+El backend valida esquema, tamaño, dimensiones, IDs únicos de controles y bounds dentro de pantalla. Solo conserva el snapshot actual en memoria; lo reemplaza y elimina el item anterior en OpenAI al actualizarlo. El ID puede conservarse si Android identifica la misma pantalla. `screen.clear` cancela la generación, elimina el snapshot vigente y retira su autoridad para señalar. Terminar la asistencia cierra la conexión para descartar el contexto de la tarea. Capturas, controles, texto y audio no se escriben al archivo JSON ni a logs.
+
+La función `point_to_control(screenId,controlId,instruction)` solo emite `guidance.step` si el turno y los IDs corresponden al snapshot vigente. Nunca acepta coordenadas inventadas ni ejecuta toques, envíos, navegación, pagos o instalaciones. Una imagen sin controles accesibles no permite señalar regiones arbitrarias. Android revalida paquete, identidad y bounds antes de resaltar; el usuario ejecuta cada acción. No se acredita finalización ni autonomía a partir del modelo.
+
+La única herramienta del agente es `point_to_control`. `offer_guided_flow` fue retirada: ni palabras como WhatsApp ni una función inesperada del proveedor pueden devolver `guidance.offer`, `mode:"guided"` o un `flowId`. La guía local solo se abre desde la elección explícita en la UI. Los modelos no registran eventos de progreso ni solicitudes familiares. La asistencia genérica registra únicamente actividad operacional bajo `screen-assistance` y un paso `screen-step`. No hay un verificador semántico habilitado: el backend rechaza `flow_completed`, `practice_completed` y `autonomy_completed` en todos los flujos. El recorrido local solo admite un reporte explícito de la persona después de validar el orden de pasos, según el [protocolo de sesiones](SESSIONS.md).
+
+El modelo puede responder preguntas generales de asistencia digital. La información específica de una pantalla no disponible debe presentarse como límite. La comprensión visual es probabilística; requiere la validación física del teléfono concreto y no resuelve por sí misma los defectos de verificación de la guía local registrados en [AUDIT.md](../../../docs/AUDIT.md).
 
 ## Chat HTTP
 
-`POST /api/assistant/message` conserva el contrato `{text,sessionId?}`. El servidor abre una sesión Realtime en modalidad texto para esa solicitud, la cierra al terminar y responde con `{mode,instruction,flowId?,sources:[],model}`. Cada solicitud HTTP tiene contexto independiente; no hay historial conversacional entre llamadas. El campo `sessionId` solo comprueba pertenencia de una sesión guiada, no añade mensajes privados del pasado al modelo.
+`POST /api/assistant/message` conserva el pedido `{text,sessionId?}`. El servidor abre una sesión Realtime en modalidad texto para esa solicitud, la cierra al terminar y responde con `{mode:"conversation",instruction,sources:[],model}`. Cada solicitud HTTP tiene contexto independiente; no hay historial conversacional entre llamadas. El campo `sessionId` solo comprueba pertenencia de una sesión guiada, no añade mensajes privados del pasado al modelo ni permite seleccionar un flujo.
 
 Sin clave configurada responde 503 `openai_not_configured`. No usa la respuesta fija anterior como reemplazo de IA. Los tests existentes deshabilitan explícitamente las credenciales para evitar llamadas a un servicio externo por accidente.
 
 ## Estado y comprobación
 
-`GET /api/health` contiene `assistant.configured`, `model`, `voiceStreaming`, `generalConversation`, `mode` y `screenInput:false`. Configurado indica la presencia de una clave, no que la cuenta ya haya pasado una llamada de prueba.
+`GET /api/health` contiene `assistant.configured`, `model`, `voiceStreaming`, `generalConversation`, `mode` y `screenInput`. Configurado indica la presencia de una clave, no que la cuenta ya haya pasado una llamada de prueba.
 
 Desde la raíz:
 
 ```powershell
 npm run verify:realtime --workspace @nieto/api
 npm run verify:realtime --workspace @nieto/api -- --text
+npm run verify:screen --workspace @nieto/api
 node --test apps/api/test/realtime.test.mjs
 ```
 
-Las dos verificaciones usan la clave configurada y realizan una solicitud pequeña. La primera comprueba salida de audio y texto a partir de una entrada de texto; la segunda comprueba modalidad texto. Imprimen solo metadatos y errores redactados. No prueban el micrófono ni la reproducción física del teléfono. Los tests usan un servidor WS local de prueba sin clave real.
+Las verificaciones usan la clave configurada y realizan solicitudes pequeñas. Realtime comprueba audio o modalidad texto; screen usa exclusivamente una imagen artificial incluida como fixture y verifica un señalamiento validado del botón Buscar. Imprimen solo metadatos y errores redactados. La prueba real de imagen de 12.421 bytes y función `point_to_control` pasó con el modelo exacto durante esta implementación; no verifica capturas, permisos, micrófono ni reproducción física del teléfono. Los tests automatizados usan un servidor WS local de prueba sin clave real.
 
 Fuentes oficiales consultadas: [modelo](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini), [conversaciones y eventos](https://developers.openai.com/api/docs/guides/realtime-conversations) y [conexión WebSocket](https://developers.openai.com/api/docs/guides/voice-websockets).

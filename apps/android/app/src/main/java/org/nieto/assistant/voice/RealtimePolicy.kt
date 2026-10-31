@@ -14,7 +14,7 @@ object RealtimePolicy {
     const val MIN_INPUT_BYTES = 4_800
     const val MAX_INPUT_BYTES = BYTES_PER_SECOND * MAX_INPUT_SECONDS
     const val MAX_OUTPUT_BYTES = BYTES_PER_SECOND * 90
-    const val MAX_SOCKET_QUEUE_BYTES = BYTES_PER_SECOND * 4L
+    const val MAX_SOCKET_QUEUE_BYTES = 1_000_000L // One bounded JPEG context plus PCM; never an unbounded audio backlog.
 
     fun socketUrl(baseUrl: String, debug: Boolean): String {
         val uri = URI(baseUrl.trim().trimEnd('/'))

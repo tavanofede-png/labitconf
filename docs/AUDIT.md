@@ -1,6 +1,10 @@
 # Auditoría funcional de NIETO para LABITCONF
 
+**Estado vigente, 31/10/2026:** los once hallazgos A01–A11 tienen corrección de código y pruebas. El listado completo, evidencia, descarga y límites pendientes está en [AUDIT_CLOSURE.md](AUDIT_CLOSURE.md). El texto siguiente conserva el diagnóstico original; no es una lista actual de defectos abiertos. El original sin modificaciones también está en [AUDIT-2026-10-30.md](AUDIT-2026-10-30.md).
+
 Fecha: 30 de octubre de 2026, hora de Argentina. Código auditado: `059e0cc`, rama `main`.
+
+Este informe conserva esa fotografía. La evolución posterior y las correcciones verificadas de cohorte efectiva, invitaciones tardías y actualización institucional están documentadas en [MVP_FUNCTIONAL_SCOPE.md](MVP_FUNCTIONAL_SCOPE.md); no implican que todos los hallazgos estén cerrados.
 
 La implementación es un MVP local con integración real a OpenArg. No está listo para declarar completado el recorrido Android → WhatsApp → familia → institución: faltan validaciones físicas y hay fallos funcionales que las pruebas existentes no cubren. Este informe registra la auditoría; no aplica correcciones ni publica cambios en GitHub.
 
@@ -17,7 +21,7 @@ Se revisaron las fuentes Android, API, portales, scripts, pruebas y documentaci�
 
 Los probes locales web se pueden repetir con `node .cache/audit-web/family-race.mjs` y `node .cache/audit-web/overview-stale.mjs`. El probe JVM del motor está en `.cache/audit-android/FlowAudit.java`. Son artefactos locales ignorados, no pruebas de regresión incorporadas al repositorio.
 
-## Hallazgos que requieren corrección
+## Hallazgos del diagnóstico original
 
 P1 significa corregir antes de confiar en el resultado o usar datos reales. P2 significa un fallo de funcionamiento o entrega que debe resolverse antes de cerrar la experiencia correspondiente.
 

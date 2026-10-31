@@ -32,12 +32,21 @@ class LocalSettings(context: Context) {
     var deviceId: String
         get() = preferences.getString("device_id", "")!!
         set(value) { preferences.edit().putString("device_id", value).apply() }
+    var territoryId: String
+        get() = preferences.getString("territory_id", "AR-C")!!
+        set(value) { require(Territories.names.containsKey(value)); preferences.edit().putString("territory_id", value).apply() }
     var screenConsent: Boolean
         get() = preferences.getBoolean("screen_consent_v1", false)
         set(value) { preferences.edit().putBoolean("screen_consent_v1", value).apply() }
     var openAiConsent: Boolean
         get() = preferences.getBoolean("openai_voice_and_text_consent_v1", false)
         set(value) { preferences.edit().putBoolean("openai_voice_and_text_consent_v1", value).apply() }
+    var remoteScreenConsent: Boolean
+        get() = preferences.getBoolean("openai_remote_screen_consent_v2", false)
+        set(value) { preferences.edit().putBoolean("openai_remote_screen_consent_v2", value).apply() }
+    var screenImagesConsent: Boolean
+        get() = preferences.getBoolean("openai_screen_images_consent_v2", false)
+        set(value) { preferences.edit().putBoolean("openai_screen_images_consent_v2", value).apply() }
     var token: String
         get() = runCatching {
             val encrypted = preferences.getString("token", null) ?: return@runCatching ""
