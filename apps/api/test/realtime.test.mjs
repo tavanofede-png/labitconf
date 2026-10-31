@@ -348,3 +348,37 @@ test('visual assistance advances from launcher to WhatsApp using a fresh control
  const acknowledgements=upstream.messages.filter(e=>e.item?.type==='function_call_output').map(e=>JSON.parse(e.item.output));
  assert.equal(acknowledgements.length,2);assert.ok(acknowledgements.every(e=>e.pointed===true&&e.executed===false));
 });
+
+test('mail visual protocol preserves explicit review before pointing to Send and never executes it',async t=>{
+ let round=0;
+ const upstream=await fakeOpenAi(t,(socket,event,helper)=>{
+  ++round;
+  if(round%2===0){helper.sendResponse(socket,event);return;}
+  const compose=round===1;
+  const args={screenId:compose?'mail_inbox':'mail_draft',controlId:compose?'compose':'send',instruction:compose?'Tocá Redactar.':'Como confirmaste que revisaste todo, podés tocar Enviar cuando quieras.'};
+  const id=`mail-${round}`;
+  socket.send(JSON.stringify({type:'response.created',response:{id,metadata:event.response.metadata}}));
+  socket.send(JSON.stringify({type:'response.done',response:{id,status:'completed',output:[{type:'function_call',name:'point_to_control',call_id:id,arguments:JSON.stringify(args)}]}}));
+ });
+ const conversation=new RealtimeConversation({apiKey:'test-key',endpoint:upstream.endpoint,mode:'text'});t.after(()=>conversation.close());
+ const output=eventsFrom(conversation);await conversation.connect();
+ const instructions=upstream.messages.find(e=>e.type==='session.update').session.instructions;
+ assert.match(instructions,/Antes de señalar Enviar.*confirmación explícita/);
+ assert.match(instructions,/campos editables llegan ocultos/);
+ assert.match(instructions,/borrador.*sin duplicar pasos/);
+ conversation.handleClient({type:'screen.context',screen:{id:'mail_inbox',packageName:'com.google.android.gm',width:360,height:640,controls:[{id:'compose',label:'Redactar',role:'button',bounds:[180,500,350,560]}]}});
+ conversation.handleClient({type:'text',text:'Ayudame a mandar un mail paso por paso.'});
+ const first=await output.wait(e=>e.type==='response.done');
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>e.controlId),['compose']);
+ await new Promise(resolve=>setTimeout(resolve,800));
+ conversation.handleClient({type:'screen.context',screen:{id:'mail_draft',packageName:'com.google.android.gm',width:360,height:640,controls:[{id:'recipient',label:'Campo de texto',role:'input',bounds:[20,100,340,150]},{id:'subject',label:'Campo de texto',role:'input',bounds:[20,180,340,230]},{id:'body',label:'Campo de texto',role:'input',bounds:[20,250,340,450]},{id:'send',label:'Enviar',role:'button',bounds:[280,20,340,70]}]}});
+ // A screen alone does not create a turn or certify any editable value.
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>e.controlId),['compose']);
+ const confirmation='Ya revisé destinatario, asunto y mensaje. No lleva adjuntos. Quiero enviarlo.';
+ conversation.handleClient({type:'text',text:confirmation});
+ await output.wait(e=>e.type==='response.done'&&e.turnId!==first.turnId);
+ assert.deepEqual(output.seen.filter(e=>e.type==='guidance.step').map(e=>[e.screenId,e.controlId]),[['mail_inbox','compose'],['mail_draft','send']]);
+ assert.ok(upstream.messages.some(e=>e.item?.role==='user'&&e.item.content?.[0]?.text===confirmation));
+ const acknowledgements=upstream.messages.filter(e=>e.item?.type==='function_call_output').map(e=>JSON.parse(e.item.output));
+ assert.ok(acknowledgements.every(e=>e.executed===false));
+});

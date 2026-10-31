@@ -33,3 +33,12 @@ Las imágenes se procesan para la asistencia activa y no se guardan como histori
 - La consulta real de diagnóstico a OpenAI falla con `invalid_api_key`. Accesibilidad está desactivada y WhatsApp no está instalado en el emulador actual. **El recorrido completo con IA real y WhatsApp no está validado.**
 
 Referencia de plataforma: [AccessibilityService de Android](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService).
+
+## Dos recorridos prioritarios de demostración
+
+1. **Crear un grupo de WhatsApp:** abrir la app, encontrar Nuevo grupo, seleccionar participantes, continuar, escribir nombre, revisar y confirmar personalmente su creación.
+2. **Enviar un mail:** abrir correo, Redactar, Para, Asunto, Mensaje, adjunto sólo si se pide, revisión explícita y toque personal en Enviar. Si se abre un borrador ya preparado, retomar sin duplicar datos ni pasos. Después se puede orientar para consultar Enviados, sin certificar entrega.
+
+Son etapas orientativas, no un contador que avance solo. En campos ocultos se espera la confirmación de la persona; no se interpreta un cambio de pantalla ni el silencio como dato escrito o revisado. Si varios controles son «Campo de texto», TINO debe pedir aclaración antes de señalar uno ambiguo. La revisión antes de Enviar se incluye en las instrucciones del modelo; no existe un verificador independiente de esa revisión.
+
+La prueba adicional de correo comprueba el protocolo con proveedor simulado: bandeja → Redactar → borrador → confirmación textual de revisión → marco en Enviar, siempre `executed: false`. No evalúa la capacidad de un modelo real de interpretar Gmail ni prueba un envío real. Se mantienen los bloqueos de validación real descritos arriba.
