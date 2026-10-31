@@ -1,0 +1,24 @@
+{
+  "verification": "isolated midnight fixture, Argentina timezone",
+  "reportedDay": "2026-10-31",
+  "members": [
+    {
+      "name": "Marta",
+      "screenMinutes": 46,
+      "totalEventMinutes": 46,
+      "minutesFromPreviousDay": 46
+    },
+    {
+      "name": "Ricardo",
+      "screenMinutes": 68,
+      "totalEventMinutes": 68,
+      "minutesFromPreviousDay": 68
+    },
+    {
+      "name": "Lucía",
+      "screenMinutes": 112,
+      "totalEventMinutes": 112,
+      "minutesFromPreviousDay": 112
+    }
+  ]
+}

@@ -50,6 +50,7 @@ internal fun familyMinutes(n: Int): String = if (n < 60) "$n min" else "${n / 60
             fun path(vararg points: Pair<Float, Float>, close: Boolean = false) = Path().apply { points.forEachIndexed { i,p -> if (i == 0) moveTo(p.first,p.second) else lineTo(p.first,p.second) }; if (close) close() }
             when (kind) {
                 "clock" -> { drawCircle(tint,9f,Offset(12f,12f),style=stroke); line(12f,7f,12f,12f); line(12f,12f,16f,14f) }
+                "age" -> { drawRoundRect(tint,Offset(3f,5f),Size(18f,16f),CornerRadius(3f),style=stroke);line(3f,10f,21f,10f);line(8f,2f,8f,7f);line(16f,2f,16f,7f);drawCircle(tint,1f,Offset(8f,15f));line(12f,15f,16f,15f) }
                 "screen", "phone" -> { drawRoundRect(tint,Offset(6f,2f),Size(12f,20f),CornerRadius(3f),style=stroke); line(10f,18.5f,14f,18.5f) }
                 "web" -> { drawCircle(tint,9f,Offset(12f,12f),style=stroke); drawOval(tint,Offset(8f,3f),Size(8f,18f),style=stroke); line(3f,12f,21f,12f); line(5f,7f,19f,7f); line(5f,17f,19f,17f) }
                 "pin" -> { val p=Path().apply{moveTo(12f,22f);cubicTo(7f,16f,4f,13f,4f,9f);cubicTo(4f,-1f,20f,-1f,20f,9f);cubicTo(20f,13f,17f,16f,12f,22f);close()};drawPath(p,tint,style=stroke);drawCircle(tint,2.5f,Offset(12f,9f),style=stroke) }

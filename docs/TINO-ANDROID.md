@@ -1,5 +1,7 @@
 # TINO Android: estado y continuidad
 
+Estado auditado y faltantes: [Auditoría de funcionalidades del 31 de octubre](TINO-FEATURE-AUDIT.md). Esta revisión distingue datos reales, datos demo y recorridos todavía incompletos.
+
 La app real está en `apps/android`, Kotlin + Jetpack Compose, paquete `org.nieto.assistant`. La landing y el frontend React son otros clientes; no se usan como contenedor de la app ni se abren desde su bienvenida.
 
 ## Implementación nativa

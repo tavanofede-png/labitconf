@@ -19,7 +19,17 @@ import java.time.Instant
 @Composable internal fun FamilyMemberPicker(members: List<JSONObject>, selected: String, compact: Boolean, choose: (String)->Unit, invite: ()->Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(if(compact) 10.dp else 18.dp),verticalAlignment=Alignment.Top) {
         members.forEach{person->Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)){
-            FamilyPortrait(person,Modifier.size(if(compact) 38.dp else 56.dp),person.optString("id")==selected){choose(person.optString("id"))}
+            Box(Modifier.size(if(compact) 38.dp else 56.dp)) {
+                FamilyPortrait(person,Modifier.fillMaxSize(),person.optString("id")==selected){choose(person.optString("id"))}
+                if(person.has("age") && !person.isNull("age")) Surface(
+                    modifier=Modifier.align(Alignment.BottomEnd).offset(x=5.dp,y=4.dp).semantics{contentDescription="Edad: ${person.optInt("age")} años"},
+                    color=Color.White,shape=CircleShape,border=BorderStroke(1.dp,FamilyLine)) {
+                    Row(Modifier.padding(horizontal=4.dp,vertical=2.dp),horizontalArrangement=Arrangement.spacedBy(2.dp),verticalAlignment=Alignment.CenterVertically) {
+                        FamilyGlyph("age",Modifier.size(10.dp))
+                        Text("${person.optInt("age")}",fontSize=10.sp,lineHeight=12.sp,fontWeight=FontWeight.Bold,color=DashTeal)
+                    }
+                }
+            }
             Text(person.optString("name"),fontSize=if(compact) 10.sp else 12.sp,color=if(person.optString("id")==selected) DashTeal else DashMuted,fontWeight=if(person.optString("id")==selected) FontWeight.Bold else FontWeight.Medium)
         }}
         Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)) {
