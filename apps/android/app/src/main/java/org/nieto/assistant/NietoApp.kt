@@ -509,7 +509,9 @@ class NietoApp : Application() {
     }
     fun foreground(visible: Boolean) { mutable.value = mutable.value.copy(foreground = visible) }
 
-    fun openChat() { mutable.value = mutable.value.copy(openChatEpoch = mutable.value.openChatEpoch + 1) }
+    private var chatOpenPending = false
+    fun openChat() { chatOpenPending = true; mutable.value = mutable.value.copy(openChatEpoch = mutable.value.openChatEpoch + 1) }
+    fun consumeChatOpen(): Boolean = chatOpenPending.also { chatOpenPending = false }
 
     fun pauseWakeForRecording() { mutable.value = mutable.value.copy(recordingVoiceNote = true) }
 

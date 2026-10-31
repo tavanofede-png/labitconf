@@ -59,14 +59,21 @@ class WakeVoiceService : Service() {
         catch (_: Exception) { fail("No pude activar el micrófono. Abrí TINO y revisá sus permisos."); return START_NOT_STICKY }
         loading = true; app.wakeState("starting")
         scope.launch {
+            var prepared: Model? = null
             try {
                 val path = withContext(Dispatchers.IO) { unpackModel() }
-                // Creation is kept in this coroutine so cancellation cannot abandon a native Model.
                 if (stopped) return@launch
-                model = Model(path)
+                // Native model loading must not freeze the menu or switch animation.
+                // Retain ownership locally so cancellation closes the result even before publication.
+                withContext(Dispatchers.IO) { prepared = Model(path) }
+                if (stopped) return@launch
+                model = prepared
+                prepared = null
                 loading = false
                 if (app.state.value.busy || app.state.value.speaking) app.wakeState("paused") else startRecognition(false)
-            } catch (_: Exception) { if (!stopped) fail("No pude iniciar «Hola TINO». Podés volver a activarlo desde el menú.") }
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { if (!stopped) fail("No pude iniciar «Hola TINO». Podés volver a activarlo desde el menú.") }
+            finally { prepared?.close() }
         }
         return START_NOT_STICKY
     }

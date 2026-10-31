@@ -347,7 +347,7 @@ private class GuideOverlay(private val service: NietoAccessibilityService, priva
         }
         val controls = LinearLayout(service).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("Abrir TINO" to {
-            service.startActivity(Intent(service, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            service.startActivity(Intent(service, MainActivity::class.java).putExtra("destination","chat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
         }, "Cerrar guía" to { app.cancel(); expanded = false; render(app.state.value.guide, true) }).forEach { (title, action) ->
             controls.addView(Button(service).apply { text = title; isAllCaps = false; minHeight = dp(48); setOnClickListener { action() } }, LinearLayout.LayoutParams(0, -2, 1f))
         }

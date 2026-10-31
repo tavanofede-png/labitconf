@@ -10,7 +10,7 @@ import org.nieto.assistant.R
 internal fun Service.presenceNotification(id: Int, title: String, text: String): Notification {
     val manager = getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(NotificationChannel("tino_presence", "TINO a mano", NotificationManager.IMPORTANCE_LOW))
-    val open = PendingIntent.getActivity(this, id, Intent(this, MainActivity::class.java)
+    val open = PendingIntent.getActivity(this, id, Intent(this, MainActivity::class.java).putExtra("destination","chat")
         .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     val stop = PendingIntent.getService(this, id, Intent(this, javaClass).setAction("stop"), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     return Notification.Builder(this, "tino_presence").setSmallIcon(R.drawable.ic_nieto)

@@ -321,7 +321,7 @@ class EntryViewModel(application: Application, private val saved: SavedStateHand
         org.nieto.assistant.family.FamilyBackground.closeAccess(app)
         app.resetConversation()
         app.revokeOpenAiConsent()
-        listOf("accountSession", "caregiverToken", "institutionToken", "onboardingComplete", "installation", "profile").forEach { app.settings.write(it, "") }
+        listOf("accountSession", "caregiverToken", "institutionToken", "onboardingComplete", "installation", "profile", "wakeDisclosurePolicy").forEach { app.settings.write(it, "") }
         mutable.value = EntryState(); saved.remove<String>("entryDraft")
     }
 }

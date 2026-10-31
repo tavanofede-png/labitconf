@@ -120,8 +120,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        app.openChat()
-        if (app.consumeVoiceRequest()) toggleVoice()
+        val voice = app.consumeVoiceRequest()
+        if (intent.getStringExtra("destination") == "chat" || voice) app.openChat()
+        if (voice) toggleVoice()
     }
     override fun onStop() { recognizer?.cancel(); listening = false; app.foreground(false);app.surfaceVisible("main",false); super.onStop() }
     override fun onDestroy() { recognizer?.destroy(); recognizer = null; super.onDestroy() }

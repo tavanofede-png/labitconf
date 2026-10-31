@@ -9,6 +9,8 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.toggleable
@@ -43,6 +45,7 @@ import org.nieto.assistant.presence.WakeVoiceService
     val lifecycle = LocalLifecycleOwner.current
     var pendingBubble by rememberSaveable { mutableStateOf(false) }
     var wakeDisclosure by rememberSaveable { mutableStateOf(false) }
+    var bubbleDisclosure by rememberSaveable { mutableStateOf(false) }
     fun startBubble() {
         if (Settings.canDrawOverlays(context)) runCatching {
             context.startForegroundService(Intent(context, FloatingBubbleService::class.java)); app.presenceNotice(null)
@@ -59,6 +62,13 @@ import org.nieto.assistant.presence.WakeVoiceService
         val notifications = Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         if (mic && notifications) startWake()
         else app.presenceNotice(if (!mic) "Permití el micrófono para activar «Hola TINO»." else "Permití las notificaciones para ver y detener la escucha de TINO.")
+    }
+    fun requestWakePermissions() {
+        val needed = buildList {
+            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (needed.isEmpty()) startWake() else voicePermissions.launch(needed.toTypedArray())
     }
     val bubbleNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startBubble() }
     fun finishBubblePermission() {
@@ -90,11 +100,7 @@ import org.nieto.assistant.presence.WakeVoiceService
             PermissionToggle("Burbuja flotante", "La mascota a mano sobre otras apps.", state.bubbleEnabled) { enabled ->
                 if (!enabled) context.stopService(Intent(context, FloatingBubbleService::class.java))
                 else if (Settings.canDrawOverlays(context)) finishBubblePermission()
-                else {
-                    pendingBubble = true
-                    runCatching { overlayPermission.launch(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))) }
-                        .onFailure { pendingBubble = false; app.presenceNotice("Abrí los ajustes de Android y permití mostrar TINO sobre otras apps.") }
-                }
+                else bubbleDisclosure = true
             }
             HorizontalDivider(Modifier.padding(horizontal = 14.dp), color = Color(0xFFE6EEED))
             PermissionToggle("Hola TINO", when (state.wakePhase) {
@@ -104,21 +110,29 @@ import org.nieto.assistant.presence.WakeVoiceService
                 "paused" -> "En pausa mientras TINO responde."
                 else -> "Escuchar en segundo plano."
             }, state.wakePhase != "off") { enabled ->
-                if (!enabled) context.stopService(Intent(context, WakeVoiceService::class.java)) else wakeDisclosure = true
+                if (!enabled) context.stopService(Intent(context, WakeVoiceService::class.java))
+                else if (app.settings.read("wakeDisclosurePolicy") == "1") requestWakePermissions()
+                else wakeDisclosure = true
             }
         }
     }
     state.presenceNotice?.let { Text(it, color = Color(0xFF4C5B61), fontSize = 13.sp, lineHeight = 18.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) }
+    if (bubbleDisclosure) AlertDialog(onDismissRequest = { bubbleDisclosure = false },
+        title = { Text("Permitir la burbuja") },
+        text = { Text("Android necesita tu autorización para mostrar la mascota sobre otras apps. Se abrirán sus ajustes; activá el permiso para TINO y volvé. Vas a regresar a este mismo menú. Este paso solo hace falta mientras ese permiso no esté autorizado.") },
+        confirmButton = { TextButton(onClick = {
+            bubbleDisclosure = false; pendingBubble = true
+            runCatching { overlayPermission.launch(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))) }
+                .onFailure { pendingBubble = false; app.presenceNotice("No pude abrir el permiso de Android. La burbuja sigue apagada.") }
+        }) { Text("Abrir permiso de Android") } },
+        dismissButton = { TextButton(onClick = { bubbleDisclosure = false }) { Text("Ahora no") } })
     if (wakeDisclosure) AlertDialog(onDismissRequest = { wakeDisclosure = false },
         title = { Text("Activar «Hola TINO»") },
         text = { Text("TINO usará el micrófono en segundo plano para reconocer «Hola TINO» en este dispositivo. Al oír el sonido, decí tu consulta.\n\nEl audio no se guarda ni se envía. Solo tu consulta, después de la activación, se envía al chat. Android mostrará el micrófono activo y una notificación para detenerlo. Podés apagarlo cuando quieras.") },
         confirmButton = { TextButton(onClick = {
             wakeDisclosure = false
-            val needed = buildList {
-                if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.RECORD_AUDIO)
-                if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-            if (needed.isEmpty()) startWake() else voicePermissions.launch(needed.toTypedArray())
+            app.settings.write("wakeDisclosurePolicy", "1")
+            requestWakePermissions()
         }) { Text("Activar") } }, dismissButton = { TextButton(onClick = { wakeDisclosure = false }) { Text("Ahora no") } })
 }
 
@@ -130,9 +144,9 @@ import org.nieto.assistant.presence.WakeVoiceService
             Text(title, color = Color(0xFF101416), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             Text(subtitle, color = Color(0xFF4C5B61), fontSize = 13.sp, lineHeight = 18.sp)
         }
-        val progress by animateFloatAsState(if (checked) 1f else 0f, label = "Permiso")
+        val progress by animateFloatAsState(if (checked) 1f else 0f, animationSpec = tween(280), label = "Permiso")
+        val track by animateColorAsState(if (checked) Color(0xFF00D6C9) else Color(0xFFD6DCDE), animationSpec = tween(280), label = "Color del permiso")
         Canvas(Modifier.size(52.dp, 32.dp)) {
-            val track = if (checked) Color(0xFF00D6C9) else Color(0xFFD6DCDE)
             drawRoundRect(track, cornerRadius = CornerRadius(size.height / 2))
             if (checked) drawLine(Color(0xFF006B64), Offset(11.dp.toPx(), 12.dp.toPx()), Offset(11.dp.toPx(), 20.dp.toPx()), strokeWidth = 1.8.dp.toPx(), cap = StrokeCap.Round)
             else drawCircle(Color(0xFF4C5B61), radius = 3.5.dp.toPx(), center = Offset(40.dp.toPx(), size.height / 2), style = Stroke(1.5.dp.toPx()))

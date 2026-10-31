@@ -71,8 +71,8 @@ private val Background = Color(0xFFF3F6F6)
 @Composable fun TinoEntryRoot(app: NietoApp, beforeWakeStart: () -> Unit, vm: EntryViewModel = viewModel(), assistant: @Composable (onMenu: () -> Unit, section: Int, onSection: (Int) -> Unit) -> Unit) {
     val s by vm.state.collectAsState()
     val device by app.state.collectAsState()
-    LaunchedEffect(device.openChatEpoch,s.page) {
-        if (device.openChatEpoch > 0 && s.page == EntryPage.HOME) vm.openSpace(AccountRole.USER)
+    LaunchedEffect(device.openChatEpoch,s.page,s.busy) {
+        if (s.page == EntryPage.HOME && !s.busy && app.consumeChatOpen()) vm.openSpace(AccountRole.USER)
     }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
