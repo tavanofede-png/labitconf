@@ -10,6 +10,13 @@ NIETO acompaña a personas con poca experiencia digital para que puedan aprender
 
 El usuario hace cada acción. Desde la burbuja, pide ayuda por voz o texto; OpenAI Realtime analiza la pantalla actual autorizada y propone un paso vinculado a un control real. Android lo señala sin pulsarlo. La tarea conserva contexto efímero, sin historial guardado. El mismo APK incluye acceso familiar nativo y avisos periódicos fuera del navegador. OpenArg aporta contexto público para instituciones con fuentes y períodos verificables.
 
+## Probar la demostración en el navegador
+
+- [Celular interactivo](https://labitconf-demo.vercel.app/emulador): pantalla Android de práctica con marco de teléfono o tablet.
+- [Vista web normal](https://labitconf-demo.vercel.app/demo): los mismos recorridos sin el marco.
+
+Ambas vistas permiten practicar crear un grupo de WhatsApp, compartir una ubicación de muestra y crear una cuenta Gmail ficticia. Funcionan desde el enlace, sin instalar nada ni mantener una computadora local encendida. La guía señala el próximo control y puede leer los pasos con la voz del navegador. Son mockups interactivos con datos de prueba: esta demo estática no usa el agente OpenAI ni OpenArg y no realiza operaciones en WhatsApp o Google. El APK conserva la integración real descrita arriba. Ver [alcance, publicación y comprobaciones](docs/WEB_DEMO.md).
+
 ## Inicio rápido
 
 Requisitos: Node.js **24 LTS** recomendado, mínimo **22.15**, y npm. Desde la raíz:
@@ -26,7 +33,7 @@ Si todavía no hay una credencial institucional, pegá el resultado del último 
 npm run dev
 ```
 
-Abrí [el portal local](http://localhost:5173). La API escucha en [localhost:8787/api/health](http://localhost:8787/api/health). `Ctrl+C` cierra ambos servicios. También podés usar `./scripts/start-local.ps1`. Desde Bash, el equivalente a copiar la configuración es `cp .env.example .env`.
+Abrí [la demo local](http://localhost:5173) o [el portal local](http://localhost:5173/portal#instituciones). La API escucha en [localhost:8787/api/health](http://localhost:8787/api/health). `Ctrl+C` cierra ambos servicios. También podés usar `./scripts/start-local.ps1`. Desde Bash, el equivalente a copiar la configuración es `cp .env.example .env`.
 
 Ingresá el token institucional en **Conexión**. El portal conserva por separado las credenciales institucional y familiar en `sessionStorage`, hasta cerrar la pestaña o cerrar sesión; no forman parte del bundle. Un familiar crea su propio grupo y recibe una credencial distinta, un código de invitación y su vencimiento. Guardá la credencial familiar desde el botón explícito de respaldo: permite restaurar el acceso a ese grupo.
 
