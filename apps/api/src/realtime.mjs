@@ -307,8 +307,6 @@ export class RealtimeConversation extends EventEmitter {
     }
     if (event.type === 'screen.clear') {
       if (!exactKeys(event, ['type'])) throw invalid('La limpieza de pantalla no admite parámetros.');
-      if (this.activeTurn || this.playbackTurn) this.cancel(!this.recording, undefined, this.recording);
-      if (this.closed) return;
       this.clearScreen(); this.completionProbe.observe(); return;
     }
     if (event.type === 'screen.context') {
@@ -316,8 +314,8 @@ export class RealtimeConversation extends EventEmitter {
       let screen; try { screen = validateSnapshot(event.screen); } catch (error) { throw invalid(error.message); }
       if (this.now() - this.lastSnapshotAt < 750) throw invalid('Esperá un momento antes de actualizar la pantalla.');
       if (!this.continuous && (this.snapshotCount >= 60 || this.imageBytes + (screen.image?.bytes ?? 0) > 8_000_000)) throw new RealtimeError('screen_session_limit', 'La asistencia llegó a su límite de pantallas. Cerrala e iniciá otra.', 429);
-      if (this.activeTurn || this.playbackTurn) this.cancel(!this.recording, undefined, this.recording);
-      if (this.closed) return;
+      const requestGuidance = event.requestGuidance === true && !this.recording;
+      if (requestGuidance) { this.touch(); if (this.activeTurn || this.playbackTurn) this.cancel(); }
       this.clearScreen(); this.lastSnapshotAt = this.now(); this.snapshotCount++; this.imageBytes += screen.image?.bytes ?? 0;
       const { image, ...snapshot } = screen; this.screen = snapshot;
       this.screenItemId = `scr_${randomUUID().replaceAll('-', '').slice(0, 24)}`;
@@ -326,7 +324,7 @@ export class RealtimeConversation extends EventEmitter {
         ...(image ? [{ type: 'input_image', image_url: `data:image/jpeg;base64,${image.data}` }] : []),
       ] } });
       this.completionProbe.observe();
-      if (event.requestGuidance && !this.recording) this.beginResponse(); return;
+      if (requestGuidance) this.beginResponse(); return;
     }
     if (event.type === 'close') { if (!exactKeys(event, ['type'])) throw invalid('El cierre no admite parámetros.'); this.endConversation('user_end'); return; }
     if (event.type === 'cancel') { if (!exactKeys(event, ['type', 'playback'])) throw invalid('La cancelación contiene campos no permitidos.'); this.cancel(true, event.playback); return; }

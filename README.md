@@ -1,137 +1,72 @@
-# TINO
+<img src="apps/web/public/brand/tino-logo.webp" width="160" alt="TINO">
 
-TINO es un asistente de voz para todo el teléfono Android. La persona dice «Hola Tino», pide la tarea que necesita y realiza cada acción; TINO explica cómo llegar a la aplicación adecuada, observa sus controles autorizados y puede encerrarlos con un señalador. WhatsApp, Gmail, Mi Argentina y ARCA son ejemplos de uso, no un catálogo de aplicaciones admitidas.
+# Con TINO, la tecnología es de todos.
 
-La configuración inicial permite elegir TINO como asistente predeterminado, autorizar micrófono y accesibilidad y conectar el dispositivo al servicio. La frase de activación se reconoce localmente con Vosk; las consultas posteriores usan OpenAI Realtime, modelo exacto gpt-realtime-2.1-mini. La restauración tras reiniciar depende del enlace del asistente por Android y del primer desbloqueo. La validación específica se registra en el [informe de Galaxy Tab S10+](docs/TINO-PRODUCTION-TAB-S10.md).
+TINO acompaña a las personas que encuentran barreras al usar la tecnología: por voz y chat, entiende lo que necesitan y las guía paso a paso para ganar autonomía.
 
-## Instalación Android y servicio
+## Abrí la demo
 
-- [Instalar TINO para Android](https://labitconf-demo.vercel.app/).
-- [APK firmado v0.7.0-tino](https://github.com/tavanofede-png/labitconf/releases/download/v0.7.0-tino/tino-release.apk).
-- [Estado HTTPS del servicio](https://tino-api-labitconf.vercel.app/api/health).
-- [Portal institucional](https://labitconf-demo.vercel.app/portal#instituciones) y [familia](https://labitconf-demo.vercel.app/portal#familia).
+### [▶ PROBAR TINO — demo interactiva](https://tino-web.vercel.app)
 
-La entrada pública ya no monta el tutorial del navegador. La aplicación real se instala en Android; la web sirve la descarga, el estado y los portales. La versión release usa HTTPS y almacenamiento privado persistente en Vercel. No depende de un servidor local. Las claves del proveedor quedan en el servidor y el acceso de cada tablet se autoriza con un código de un solo uso.
+Abrí el enlace en **Chrome**, desde desktop o tablet. La app se presenta en una Samsung Tab S10+ vertical, con las instrucciones de prueba al costado. No hace falta instalar nada para evaluar la demo web.
 
-El proyecto conserva los nombres internos de paquete NIETO y los módulos del equipo para familia, instituciones y OpenArg. El APK release usa org.nieto.assistant.tino y no reemplaza la instalación anterior de desarrollo durante la validación.
+1. Tocá **DEMO** para entrar al usuario de prueba.
+2. Usá el micrófono del chat o el ícono de salida para volver al inicio de Android.
+3. Permití el micrófono en el aviso de Chrome. Desde Android, WhatsApp o Gmail, decí **«Hola TINO»** y después tu consulta. Se abre el chat flotante, aparece la escucha, se transcribe la consulta y TINO responde.
+4. Seguí las indicaciones y confirmá cada acción. También podés escribir en el chat.
 
-## Desarrollo local
+### Tareas para probar por voz
 
+- «Hola TINO, quiero mandar un mensaje por WhatsApp».
+- «Hola TINO, ayudame a crear un grupo de WhatsApp».
+- «Hola TINO, quiero compartir mi ubicación».
+- «Hola TINO, quiero mandar un correo por Gmail».
 
+La burbuja aparece **fuera de TINO** y se puede arrastrar a los márgenes. **−** minimiza y conserva la conversación; **×** la cierra y la borra. Al volver a TINO, la burbuja se oculta.
 
-Requisitos: Node.js **24 LTS** recomendado, mínimo **22.15**, y npm. Desde la raíz:
+## Tres interfaces, una misma app
 
-```powershell
-npm install
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
-```
+Abrí el menú **☰** dentro de TINO para cambiar de interfaz.
 
-Si todavía no hay una credencial institucional, pegá el resultado del último comando en `INSTITUTION_TOKEN` dentro de `.env`. La entrega local ya incluye una credencial aleatoria en ese archivo. Completá `OPENARG_API_KEY` con una clave de OpenArg para consultar datos públicos y `OPENAI_API_KEY` con la clave para conversar con NIETO. No pegues ninguna clave en archivos web, Android, capturas o commits. Conservá un `.env` ya configurado.
-
-```powershell
-npm run dev
-```
-
-Abrí [la página de instalación local](http://localhost:5173) o [el portal local](http://localhost:5173/portal#instituciones). La API escucha en [localhost:8787/api/health](http://localhost:8787/api/health). `Ctrl+C` cierra ambos servicios. También podés usar `./scripts/start-local.ps1`. Desde Bash, el equivalente a copiar la configuración es `cp .env.example .env`.
-
-Ingresá el token institucional en **Conexión**. El portal conserva por separado las credenciales institucional y familiar en `sessionStorage`, hasta cerrar la pestaña o cerrar sesión; no forman parte del bundle. Un familiar crea su propio grupo y recibe una credencial distinta, un código de invitación y su vencimiento. Guardá la credencial familiar desde el botón explícito de respaldo: permite restaurar el acceso a ese grupo.
-
-## Conectar Android
-
-El proyecto nativo está en `apps/android`. Abrilo con Android Studio y esperá la sincronización de Gradle. La aplicación permite editar la dirección de la API:
-
-En Windows también podés ejecutar `./scripts/android-build.ps1` si tenés JDK y Android SDK instalados. Compila las pruebas unitarias y el APK de depuración. El paquete es `org.nieto.assistant`, requiere Android 8.0/API 26 o posterior y se compila con SDK 36. El resultado esperado está en `apps/android/app/build/outputs/apk/debug/app-debug.apk`.
-
-Para producción, usá el [APK firmado v0.7.0-tino](https://github.com/tavanofede-png/labitconf/releases/download/v0.7.0-tino/tino-release.apk). `./scripts/android-release.ps1` verifica las pruebas unitarias y genera la variante HTTPS con el identificador `org.nieto.assistant.tino`. La firma requiere la clave privada y su configuración, ambas fuera de Git. Las versiones anteriores de depuración se conservan como entregas históricas.
-
-La copia local está en `artifacts/nieto-debug.apk`; los binarios no se incluyen en Git. Para recompilar, el script actualiza atómicamente el APK, `android-build.json` y `SHA256SUMS.txt`. La API solo sirve esa salida canónica si su versión, tamaño y hash coinciden; no recurre a otra copia de Gradle.
-
-| Entorno | Dirección en Android |
+| Interfaz | Qué podés probar |
 | --- | --- |
-| Emulador Android Studio | `http://10.0.2.2:8787` |
-| Teléfono por USB, luego de `adb reverse tcp:8787 tcp:8787` | `http://127.0.0.1:8787` |
-| Teléfono en la misma red Wi-Fi | `http://IP-LAN-DE-TU-PC:8787` |
+| **Usuario** | Voz y chat, transcripción, burbuja flotante y acompañamiento en WhatsApp y Gmail. |
+| **Grupo familiar** | Actividad por integrante, pedidos de ayuda, avisos y seguimiento. |
+| **Instituciones** | Métricas de uso y autonomía, mapa y top de provincias, ranking por app o workflow, filtros por localidad y fechas, contexto territorial de OpenARG y exportación PDF/CSV. |
 
-Con Wi-Fi, la computadora y el teléfono deben poder comunicarse y el firewall debe permitir el puerto 8787 en esa red. La API usa `HOST=0.0.0.0` para aceptar esa conexión. HTTP está habilitado para depuración local; una distribución necesita HTTPS y configuración de red de producción.
+Desde la pantalla inicial también podés recorrer los **tres onboardings**, con un recorrido específico para instituciones.
 
-Para abrir también el portal desde otra computadora, agregá su origen exacto, por ejemplo `http://IP-LAN-DE-TU-PC:5173`, a `CORS_ORIGINS` y reiniciá la API. La conexión nativa de Android no necesita ese origen web.
+## Android para la demostración presencial
 
-En el portal, abrí Conexión con la credencial institucional y generá un código de conexión de teléfono. Es de un solo uso y vence a los 15 minutos. En Ajustes de Android ingresá la URL, el código, un nombre y la jurisdicción declarada, sin GPS. Una instalación anterior conserva su credencial y necesita activar el acceso al asistente con un código nuevo. El código del teléfono es independiente de la invitación familiar; el token institucional y las claves de proveedores permanecen en el equipo del operador.
+El mismo repositorio incluye la aplicación nativa en [apps/android](apps/android). El diseño para la tablet usa orientación **vertical**, con referencia **1752 × 2800 px** en Samsung Galaxy Tab S10+ de **12,4 pulgadas**.
 
-Android conserva su credencial de dispositivo; el portal permite consultar contexto público de las 24 jurisdicciones. Habilitá accesibilidad y elegí por separado si autorizás enviar la pantalla al agente. La persona decide si comparte progreso y solicitudes de ayuda con su familiar, puede revocar el vínculo y puede aceptar o revocar por separado el uso de métricas institucionales. El equipo puede revocar el acceso a IA de un teléfono sin modificar sus permisos familiares.
+La [versión Android firmada 0.7.0](https://github.com/tavanofede-png/labitconf/releases/tag/v0.7.0-tino) está en Releases. Para compilar el código actual de esta entrega, consultá [las instrucciones Android](apps/android/README.md). La demo web para evaluar el proyecto está en el botón **PROBAR TINO** de arriba.
 
-Para enlazar una familia: creá el grupo desde el acceso familiar nativo de Android o desde el portal, ingresá su código de un solo uso en el teléfono asistido y aceptá los permisos elegidos. La familia recibe progreso solo con consentimiento y una alerta únicamente si la persona solicita ayuda. No accede al contenido de la pantalla. En el teléfono familiar, activá los avisos y el permiso de notificaciones. Android comprueba pedidos con WorkManager desde intervalos de 15 minutos, sujetos a batería y red; al abrir Familia actualiza de inmediato. No es push instantáneo ni un servicio de emergencias. Cerrar el acceso borra la credencial local y cancela comprobaciones y avisos, sin borrar el grupo del servidor.
+## Código del equipo
 
-## OpenAI Realtime
-
-La conversación usa exactamente `gpt-realtime-2.1-mini`, con la clave únicamente en el backend. La conexión de voz pasa por `/api/assistant/realtime`, autenticada con la credencial de instalación NIETO. El APK no recibe la clave OpenAI. El modo texto usa el mismo modelo mediante Realtime.
-
-Después de la configuración inicial, «Hola Tino» se reconoce localmente en segundo plano. La consulta posterior se envía al proveedor y una pausa al hablar finaliza el turno. Cada nueva consulta se activa con «Hola Tino» o con el control de voz; no se abre una captura automática para escuchar conversaciones cercanas. Cambiar de aplicación actualiza la observación en silencio. «Terminar conversación» corta la consulta y vuelve a esperar la frase de activación. «Apagar TINO» desactiva el micrófono por completo. La detección local no guarda ni transmite audio ambiental.
-
-La asistencia recibe los controles accesibles autorizados. Los valores de campos editables, contraseñas, códigos y nodos privados se ocultan sin bloquear los demás controles de la aplicación. Una captura opcional exige consentimiento y saneamiento; si Android protege la ventana o la imagen no puede sanearse, se usan los controles permitidos y la orientación verbal. La protección es silenciosa. El servidor valida que el control elegido exista y Android lo revalida antes de señalar. Cambiar de pantalla invalida la indicación anterior. TINO no pulsa controles ni completa trámites por cuenta de la persona.
-
-La pantalla principal configura permisos y vinculación; la asistencia normal funciona en segundo plano con voz, burbuja opcional y señalador. Los fallos de clave, acceso al modelo o cuota se comunican al solicitar una consulta; no se cambia a otro modelo silenciosamente. Los recorridos locales y las simulaciones anteriores permanecen como código histórico y no determinan la asistencia de producción.
-
-Producción tiene `CONTINUOUS_ASSISTANCE=1`, con autorización explícita del titular para el consumo continuo. TINO no aplica un tope diario propio ni un contador máximo de mensajes o pantallas. La tarea solo existe durante la conversación activa, incluso si rota una conexión técnica. Cada pedido de voz y cada acción real en pantalla reinician el plazo de 30 segundos: toques, escritura, desplazamientos y navegación. Las actualizaciones pasivas no lo prolongan. Al vencer el plazo, completar la tarea o pedir que termine, se cierra la conexión y se borra todo su contexto: la siguiente activación empieza de cero. No hay historial persistido. Siguen vigentes la autenticación, la concurrencia, los límites de cada captura y las condiciones, saldo y límites del proveedor. El [contrato de admisión](apps/api/docs/ADMISSION.md) describe esos controles.
-
-El [contrato Realtime](docs/REALTIME_CONTRACT.md) describe el protocolo y sus límites. Configurar una clave no acredita que la cuenta tenga acceso al modelo: la verificación requiere una consulta real.
-
-## OpenArg real
-
-El backend habla con `https://mcp.openarg.org/mcp` mediante MCP Streamable HTTP: inicializa la sesión, descubre herramientas y realiza la consulta. La clave se lee únicamente del entorno del servidor.
-
-```powershell
-npm run verify:openarg
-```
-
-Sin clave válida, el portal comunica que falta la configuración. No muestra indicadores de reemplazo. El descubrimiento de herramientas puede verificarse sin credenciales; la consulta de datasets requiere una clave. La evidencia inicial está en `apps/api/docs/OPENARG-VERIFICATION.md`.
-
-Los datos de NIETO provienen de sus sesiones registradas. Los datos públicos se presentan con fuente y período disponible. La fecha de consulta no equivale a la fecha del dato. Un resultado sin indicador verificable permanece sin cifra; el centro del mapa representa el territorio seleccionado y no la posición de una persona.
-
-El endpoint territorial obtiene por MCP población de 65 años o más del Censo 2022 e indicadores provinciales ENACOM de accesos fijos cada 100 hogares y velocidad media, según disponibilidad verificada. Cada agregado conserva fuente, período, método y fecha de lectura. Los accesos cada 100 hogares pueden superar 100: no son un porcentaje de personas conectadas ni miden la conectividad específica de personas mayores. Una fuente no disponible o que no pase la validación queda sin valor.
-
-Las instituciones reciben métricas de los últimos 30 días para organizar acompañamientos: personas activas, sesiones, tiempo acompañado, dificultades reportadas, pedidos de ayuda y tiempo hasta que la familia los marca atendidos. Cada cifra y desglose exige cinco contribuyentes efectivos con consentimiento institucional vigente, independiente del familiar. Un valor suprimido nunca equivale a cero. Estos registros operativos no prueban autonomía ni impacto causal.
-
-## Configuración
-
-| Variable | Uso |
+| Directorio | Contenido |
 | --- | --- |
-| `HOST` | Interfaz API; por defecto `0.0.0.0`. |
-| `PORT` | Puerto API; por defecto `8787`. `API_PORT` tiene prioridad si se define. |
-| `INSTITUTION_TOKEN` | Secreto de acceso institucional, obligatorio para sus rutas. |
-| `OPENARG_API_KEY` | Clave del servicio OpenArg, solo en backend. |
-| `OPENAI_API_KEY` | Clave para `gpt-realtime-2.1-mini`, solo en backend. |
-| `CONTINUOUS_ASSISTANCE` | `1` habilita uso continuo sin topes diarios o de mensajes propios; requiere autorizar sus costos. Producción lo tiene habilitado. |
-| `MINIMUM_COHORT` | Mínimo de contribuyentes efectivos consentidos por indicador; nunca menor que 5. |
-| `CORS_ORIGINS` | Orígenes permitidos separados por coma; localhost:5173 por defecto. |
-| `OPENARG_TIMEOUT_MS` | Tiempo máximo de consulta; por defecto 25000 ms. |
-| `DATA_FILE` | Ruta alternativa para el JSON privado; por defecto `apps/api/data/nieto.json`. |
+| [apps/web](apps/web) | App del jurado, marco de tablet y las tres interfaces. |
+| [apps/android](apps/android) | Aplicación Android nativa y pruebas. |
+| [apps/api](apps/api) | Backend compartido, Realtime, cuentas, familia, instituciones y OpenARG. |
+| [api](api) | Adaptadores HTTP de la demo y del backend en Vercel. |
+| [brand/animation](brand/animation) | Fuente Blender y animación transparente de finalización de onboarding. |
 
-El proxy de desarrollo lee `API_PORT` o `PORT` de `.env` en la raíz, con 8787 como valor predeterminado. Si cambiás el puerto, reiniciá ambos servicios y ajustá la dirección configurada en Android.
+Las claves de OpenAI y OpenARG permanecen en el servidor, fuera del código público y del APK.
 
-Usá una ruta absoluta para `DATA_FILE` si alternás entre comandos desde la raíz y desde `apps/api`. El archivo guarda identidades seudónimas, vínculos, consentimientos, sesiones y alertas. El directorio de datos y `.env` están excluidos de Git; siguen siendo datos privados locales y requieren cuidado y respaldo.
+## Desarrollo
 
-## Verificación y comandos
+Requiere Node.js 24, npm y las variables privadas de servidor configuradas en `.env`.
 
-```powershell
-npm run check           # TypeScript, pruebas del backend, build web
-npm test                # Pruebas API con estado temporal
-npm run test:web        # Regresiones de identidad, sondeo y exportación con React DOM
-npm run build           # Compilación del portal
-npm run api             # Solo API
-npm run web             # Solo portal
-npm run verify:openarg  # Verificación del MCP oficial
-npm run verify:realtime # Verificación breve de texto y audio de salida OpenAI
-npm run verify:screen   # Pantalla artificial y señalamiento validado con OpenAI real
+```sh
+npm ci
+node --env-file-if-exists=.env scripts/jury-local.mjs
 ```
 
-La comprobación de software no reemplaza la prueba en un teléfono: permisos, versión de WhatsApp, voz y servicio de accesibilidad necesitan validación real. El [guion de demo](docs/DEMO.md) distingue lo verificable localmente de los pasos que dependen del dispositivo y de OpenArg.
+En otra terminal:
 
-## Alcance de esta entrega
+```sh
+npm run web
+```
 
-La entrega actual comprende la aplicación Android firmada, el servicio desplegado con almacenamiento privado persistente, el acceso familiar nativo y el portal institucional con contexto público de OpenArg. La validación física de voz, señalador y reinicio se registra para el equipo concreto en el [informe de Galaxy Tab S10+](docs/TINO-PRODUCTION-TAB-S10.md). La duración registrada mide sesiones acompañadas, no tiempo total de uso del teléfono.
-
-La observación depende de lo que Android y cada aplicación exponen mediante Accesibilidad. Una ventana protegida puede impedir leer o señalar controles; en ese caso TINO conserva la conversación y orienta verbalmente sin eludir la protección del sistema. No se acredita disponibilidad antes del primer desbloqueo tras reiniciar. Los informes [MVP_FUNCTIONAL_SCOPE](docs/MVP_FUNCTIONAL_SCOPE.md) y [AUDIT](docs/AUDIT.md) conservan la fotografía de versiones anteriores; el informe de Galaxy Tab S10+ describe esta entrega.
-
-La correspondencia con el documento de arquitectura original y los pendientes están en [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md). El contrato está en [docs/API_CONTRACT.md](docs/API_CONTRACT.md). Nada se publica ni se despliega al ejecutar estos comandos.
+Para Android, abrí [apps/android](apps/android) en Android Studio. Los contratos, la configuración del backend y los comandos de verificación están en la [documentación técnica](docs/DEVELOPMENT.md).

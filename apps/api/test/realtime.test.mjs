@@ -452,7 +452,7 @@ test('fully drained playback remains in task context when the next turn starts',
   assert.equal(upstream.messages.some(event => event.type === 'conversation.item.truncate'), false);
 });
 
-test('a screen change after generation safely removes unheard audio when the client has no playback checkpoint', async t => {
+test('quiet screen changes after generation retain pending playback and never delete or truncate its audio', async t => {
   const upstream = await fakeOpenAi(t, (socket, event) => {
     socket.send(JSON.stringify({ type: 'response.created', response: { id: 'screen-change-response', metadata: event.response.metadata } }));
     socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: 'screen-change-response', item_id: 'screen-change-audio', content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
@@ -460,9 +460,76 @@ test('a screen change after generation safely removes unheard audio when the cli
   });
   const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint }); t.after(() => conversation.close());
   const output = eventsFrom(conversation); await conversation.connect(); conversation.handleClient({ type: 'text', text: 'Actualizar.' });
-  await output.wait(event => event.type === 'response.done');
+  const done = await output.wait(event => event.type === 'response.done');
   conversation.handleClient({ type: 'screen.clear' });
-  await eventually(() => upstream.messages.some(event => event.type === 'conversation.item.delete' && event.item_id === 'screen-change-audio'));
+  conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: false });
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(conversation.playbackTurn, done.turnId); assert.equal(conversation.turnState.get(done.turnId).cancelled, false);
+  assert.equal(upstream.messages.some(event => event.type === 'response.cancel' || event.type === 'conversation.item.truncate' || event.type === 'conversation.item.delete' && event.item_id === 'screen-change-audio'), false);
+  assert.equal(output.seen.some(event => event.type === 'cancelled'), false);
+  conversation.handleClient({ type: 'playback.complete', turnId: done.turnId }); assert.equal(conversation.playbackTurn, null);
+});
+
+test('a requested general answer continues generating voice across passive snapshots and screen clearing', async t => {
+  let finish;
+  const upstream = await fakeOpenAi(t, (socket, event) => {
+    const id = 'free-conversation'; socket.send(JSON.stringify({ type: 'response.created', response: { id, metadata: event.response.metadata } }));
+    socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'free-audio', content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
+    finish = () => {
+      socket.send(JSON.stringify({ type: 'response.output_audio.delta', response_id: id, item_id: 'free-audio', content_index: 0, delta: Buffer.alloc(4800).toString('base64') }));
+      socket.send(JSON.stringify({ type: 'response.output_audio_transcript.done', response_id: id, transcript: 'Sí, te escucho.' }));
+      socket.send(JSON.stringify({ type: 'response.done', response: { id, status: 'completed', output: [] } }));
+    };
+  });
+  let clock = Date.now(); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, now: () => clock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: false });
+  conversation.handleClient({ type: 'text', text: '¿Estás ahí?' }); await output.wait(event => event.type === 'audio.delta');
+  const turn = conversation.activeTurn; clock += 751;
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'incoming_notification', packageName: 'org.example.notifications' }, requestGuidance: false });
+  conversation.handleClient({ type: 'screen.clear' });
+  assert.equal(conversation.activeTurn, turn); assert.equal(conversation.playbackTurn, turn); assert.equal(conversation.turnState.get(turn).cancelled, false);
+  finish(); const done = await output.wait(event => event.type === 'response.done');
+  assert.equal(done.status, 'completed'); assert.equal(done.turnId, turn); assert.equal(output.seen.filter(event => event.type === 'audio.delta').length, 2);
+  assert.equal(output.seen.find(event => event.type === 'text.done').text, 'Sí, te escucho.');
+  assert.equal(upstream.messages.some(event => event.type === 'response.cancel' || event.type === 'conversation.item.truncate' || event.type === 'conversation.item.delete' && event.item_id === 'free-audio'), false);
+  assert.equal(upstream.messages.filter(event => event.type === 'response.create').length, 1); assert.equal(output.seen.some(event => event.type === 'cancelled'), false);
+});
+
+test('a quietly replaced snapshot invalidates an old pointer without cancelling its active response', async t => {
+  let finishFirst; let requests = 0;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (++requests > 1) { helper.sendResponse(socket, event); return; }
+    socket.send(JSON.stringify({ type: 'response.created', response: { id: 'old-pointer-response', metadata: event.response.metadata } }));
+    finishFirst = () => socket.send(JSON.stringify({ type: 'response.done', response: { id: 'old-pointer-response', status: 'completed', output: [
+      { type: 'function_call', name: 'point_to_control', call_id: 'old-pointer', arguments: JSON.stringify({ screenId: 'screen_1', controlId: 'search', instruction: 'Tocá Buscar.' }) },
+    ] } }));
+  });
+  let clock = Date.now(); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', now: () => clock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: false }); conversation.handleClient({ type: 'text', text: 'Ayudame a encontrar la opción.' });
+  await eventually(() => Boolean(finishFirst)); const turn = conversation.activeTurn; clock += 751;
+  conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'fresh_screen' }, requestGuidance: false });
+  assert.equal(conversation.activeTurn, turn); finishFirst(); await output.wait(event => event.type === 'response.done');
+  assert.equal(output.seen.some(event => event.type === 'guidance.step' || event.type === 'cancelled'), false);
+  const toolResult = upstream.messages.find(event => event.item?.type === 'function_call_output'); assert.equal(JSON.parse(toolResult.item.output).error, 'stale_or_unknown_control');
+  assert.equal(upstream.messages.some(event => event.type === 'response.cancel'), false); assert.equal(conversation.turnState.get(turn).cancelled, false);
+});
+
+test('an explicit guidance request can replace a response while quiet observations cannot', async t => {
+  let requests = 0;
+  const upstream = await fakeOpenAi(t, (socket, event, helper) => {
+    if (++requests === 1) socket.send(JSON.stringify({ type: 'response.created', response: { id: 'replaced-response', metadata: event.response.metadata } }));
+    else helper.sendResponse(socket, event);
+  });
+  let clock = Date.now(); const conversation = new RealtimeConversation({ apiKey: 'test-key', endpoint: upstream.endpoint, mode: 'text', now: () => clock });
+  t.after(() => conversation.close()); const output = eventsFrom(conversation); await conversation.connect();
+  conversation.handleClient({ type: 'text', text: 'Ayudame con esta tarea.' }); await eventually(() => requests === 1); const original = conversation.activeTurn;
+  conversation.handleClient({ type: 'screen.context', screen: screen(), requestGuidance: false }); assert.equal(conversation.activeTurn, original);
+  clock += 751; conversation.handleClient({ type: 'screen.context', screen: { ...screen(), id: 'explicit_step' }, requestGuidance: true });
+  assert.notEqual(conversation.activeTurn, original); assert.equal(conversation.turnState.get(original).cancelled, true);
+  const done = await output.wait(event => event.type === 'response.done'); assert.equal(done.status, 'completed');
+  assert.ok(upstream.messages.some(event => event.type === 'response.cancel')); assert.equal(output.seen.filter(event => event.type === 'cancelled').length, 1);
 });
 
 test('operator continuous assistance accepts more than twenty turns and sixty snapshots with bounded turn memory', async t => {

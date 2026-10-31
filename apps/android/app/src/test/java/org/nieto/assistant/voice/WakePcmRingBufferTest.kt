@@ -82,6 +82,75 @@ class WakePcmRingBufferTest {
         }
     }
 
+    @Test fun `independent aligned wake proof preserves the complete weak-confidence free query`() {
+        val ring = WakePcmRingBuffer()
+        ring.append(ShortArray(38_240) { if (it < 1440) (-12_345).toShort() else 4321 }, 38_240)
+        // The two unmodified decoder outputs observed with the native no-pause fixture.
+        val free = listOf(WakeTimedWord("hola", .731363, .09, .322889), WakeTimedWord("tino", .528272, .33, .599387),
+            WakeTimedWord("estás", .4, .599387, .87), WakeTimedWord("ahí", null, .87, 1.08))
+        val constrained = listOf(WakeTimedWord("hola", 1.0, .082115, .33), WakeTimedWord("tino", 1.0, .33, .6))
+        assertNull(ring.extractInvocation(true, "hola tino estás ahí", free))
+        val proof = ring.verifyWakePrefix(true, "hola tino", constrained)!!
+        val invocation = ring.extractInvocation(true, "hola tino estás ahí", free, proof)!!
+        assertEquals(1440L, invocation.startSample16k)
+        assertEquals(17_280L + WakePcmRingBuffer.POST_PADDING_SAMPLES, invocation.endSample16k)
+        assertTrue(shorts(invocation.pcm24k).all { it == 4321 })
+        assertEquals(.731363, free.first().confidence!!, 0.0)
+        assertEquals(.528272, free[1].confidence!!, 0.0)
+    }
+
+    @Test fun `wake proof never exports audio before the independently verified Hola start`() {
+        val ring = WakePcmRingBuffer()
+        ring.append(ShortArray(48_000) { if (it < 17_600) (-123).toShort() else 456 }, 48_000)
+        val weak = words().map { it.copy(confidence = .5) }
+        val verified = words(1.1, 2.1).take(2)
+        val proof = ring.verifyWakePrefix(true, "hola tino", verified)!!
+        val result = ring.extractInvocation(true, "hola tino estas ahi", weak, proof)!!
+        assertEquals(17_600L, result.startSample16k)
+        assertTrue(shorts(result.pcm24k).all { it == 456 })
+        assertEquals(32_000L + WakePcmRingBuffer.POST_PADDING_SAMPLES, result.endSample16k)
+    }
+
+    @Test fun `stale foreign and misaligned proof cannot authorize a weak free prefix`() {
+        val ring = WakePcmRingBuffer()
+        ring.append(ShortArray(64_000), 64_000)
+        val weak = words().map { it.copy(confidence = .5) }
+        val proof = ring.verifyWakePrefix(true, "hola tino", words().take(2))!!
+        assertNull(ring.extractInvocation(true, "hola tino estas ahi", words(1.201, 2.201).map { it.copy(confidence = .5) }, proof))
+        val other = WakePcmRingBuffer().apply { append(ShortArray(64_000), 64_000) }
+        assertNull(other.extractInvocation(true, "hola tino estas ahi", weak, proof))
+        ring.clear()
+        ring.append(ShortArray(64_000), 64_000)
+        assertNull(ring.extractInvocation(true, "hola tino estas ahi", weak, proof))
+        assertNull(ring.extractInvocation(true, "hola otro estas ahi", weak, ring.verifyWakePrefix(true, "hola tino", words().take(2))))
+    }
+
+    @Test fun `wake prefix proof requires real final strong coherent timed evidence`() {
+        val ring = WakePcmRingBuffer().apply { append(ShortArray(48_000), 48_000) }
+        val prefix = words().take(2)
+        assertNull(ring.verifyWakePrefix(false, "hola tino", prefix))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(confidence = .849) }))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(confidence = null) }))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(confidence = Double.NaN) }))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(confidence = Double.POSITIVE_INFINITY) }))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(confidence = -1.0) }))
+        assertNull(ring.verifyWakePrefix(true, "hola otro", prefix))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(startSeconds = null) }))
+        assertNull(ring.verifyWakePrefix(true, "hola tino", prefix.map { it.copy(endSeconds = 4.0) }))
+        val proof = ring.verifyWakePrefix(true, "hola tino", prefix)!!
+        val invalidFree = words().mapIndexed { index, word -> if (index == 2) word.copy(startSeconds = .1) else word }
+        assertNull(ring.extractInvocation(true, "hola tino estas ahi", invalidFree, proof))
+    }
+
+    @Test fun `proof cannot hide a wake start that has already left the ring`() {
+        val ring = WakePcmRingBuffer()
+        ring.append(ShortArray(32_000), 32_000)
+        val proof = ring.verifyWakePrefix(true, "hola tino", words(.9, 1.9).take(2))!!
+        ring.append(ShortArray(144_000), 144_000)
+        assertEquals(16_000L, ring.oldestSample)
+        assertNull(ring.extractInvocation(true, "hola tino estas ahi", words(1.0, 2.0).map { it.copy(confidence = .5) }, proof))
+    }
+
     @Test fun `post-padding is bounded by captured samples and does not invent audio at the end`() {
         val ring = WakePcmRingBuffer()
         ring.append(ShortArray(32_000) { 320 }, 32_000)

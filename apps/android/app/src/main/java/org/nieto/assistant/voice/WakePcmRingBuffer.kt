@@ -2,11 +2,15 @@ package org.nieto.assistant.voice
 
 import java.text.Normalizer
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 data class WakeTimedWord(val word: String, val confidence: Double?, val startSeconds: Double?, val endSeconds: Double?)
 data class WakeInvocationPCM(val pcm24k: ByteArray, val startSample16k: Long, val endSample16k: Long)
+
+/** Independent constrained-decoder evidence; valid only for the ring generation that observed it. */
+class WakePrefixProof internal constructor(internal val generation: Any, internal val ranges: List<Pair<Long, Long>>)
 
 /** A bounded local buffer sharing the recognizer's sample clock. Nothing before a verified wake is exported. */
 class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
@@ -14,6 +18,7 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
     private var stored = 0
     private var writeAt = 0
     private var deliveredSpeechEnd: Long? = null
+    private var generation = Any()
     var totalSamples = 0L; private set
     val oldestSample: Long get() = totalSamples - stored
 
@@ -50,31 +55,34 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
         return true
     }
 
-    /** Vosk times must belong to the same recognizer generation and use its cumulative input clock. */
-    @Synchronized fun extractInvocation(isFinal: Boolean, text: String, words: List<WakeTimedWord>?): WakeInvocationPCM? {
+    /** Call only with an actual FINAL from the independent constrained wake recognizer. */
+    @Synchronized fun verifyWakePrefix(isFinal: Boolean, text: String, words: List<WakeTimedWord>?): WakePrefixProof? {
         if (!isFinal || words == null || words.size !in 2..64 || text.length > 1024 || stored == 0) return null
-        val decoded = words.map { normalized(it.word) }
-        if (decoded.any { it.size != 1 }) return null
-        val tokens = decoded.map { it.single() }
-        if (tokens.take(2) != listOf("hola", "tino") || normalized(text) != tokens) return null
-        if (words.take(2).any { word -> word.confidence?.let { !it.isFinite() || it < WakeActivationPolicy.MIN_CONFIDENCE || it > 1.0 } != false }) return null
+        val tokens = wordTokens(text, words) ?: return null
+        if (tokens.take(2) != listOf("hola", "tino") || !strongPrefix(words)) return null
+        val ranges = timedRanges(words) ?: return null
+        if (ranges.first().first < oldestSample) return null
+        return WakePrefixProof(generation, ranges.take(2))
+    }
 
-        fun sampleTime(seconds: Double?): Long? {
-            if (seconds == null || !seconds.isFinite() || seconds < 0) return null
-            val value = seconds * SAMPLE_RATE
-            if (!value.isFinite() || value > totalSamples.toDouble()) return null
-            // Rounding forward never includes a sample before the reported start of Hola.
-            return ceil(value).toLong().takeIf { it in 0..totalSamples }
-        }
-        val ranges = words.map { word ->
-            val start = sampleTime(word.startSeconds) ?: return null
-            val end = sampleTime(word.endSeconds) ?: return null
-            if (end <= start) return null
-            start to end
-        }
-        if (ranges.zipWithNext().any { (first, second) -> second.first < first.second }) return null
-        val start = ranges.first().first
+    /** Both recognizers must receive identical PCM and share the ring's cumulative sample clock. */
+    @Synchronized fun extractInvocation(isFinal: Boolean, text: String, words: List<WakeTimedWord>?, wakeProof: WakePrefixProof? = null): WakeInvocationPCM? {
+        if (!isFinal || words == null || words.size !in 2..64 || text.length > 1024 || stored == 0) return null
+        val tokens = wordTokens(text, words) ?: return null
+        if (tokens.take(2) != listOf("hola", "tino")) return null
+        val ranges = timedRanges(words) ?: return null
+        if (wakeProof != null) {
+            if (wakeProof.generation !== generation || wakeProof.ranges.size != 2) return null
+            if (ranges.take(2).zip(wakeProof.ranges).any { (free, verified) ->
+                abs(free.first - verified.first) > PREFIX_ALIGNMENT_SAMPLES || abs(free.second - verified.second) > PREFIX_ALIGNMENT_SAMPLES
+            }) return null
+        } else if (!strongPrefix(words)) return null
+        if (ranges.first().first < oldestSample || wakeProof?.ranges?.first()?.first?.let { it < oldestSample } == true) return null
+        // Independent evidence never rewrites free-decoder confidence or truncates its following query.
+        // Round forward and respect both starts, so no sample precedes either reported Hola.
+        val start = maxOf(ranges.first().first, wakeProof?.ranges?.first()?.first ?: 0L)
         val speechEnd = ranges.last().second
+        if (speechEnd <= start) return null
         if (start < oldestSample || speechEnd - start > capacitySamples) return null
         if (deliveredSpeechEnd?.let { start < it || speechEnd <= it } == true) return null
         val end = minOf(totalSamples, speechEnd + POST_PADDING_SAMPLES)
@@ -97,6 +105,34 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
     @Synchronized fun clear() {
         samples.fill(0)
         stored = 0; writeAt = 0; totalSamples = 0; deliveredSpeechEnd = null
+        generation = Any()
+    }
+
+    private fun strongPrefix(words: List<WakeTimedWord>) = words.take(2).all { word ->
+        word.confidence?.let { it.isFinite() && it >= WakeActivationPolicy.MIN_CONFIDENCE && it <= 1.0 } == true
+    }
+
+    private fun wordTokens(text: String, words: List<WakeTimedWord>): List<String>? {
+        val decoded = words.map { normalized(it.word) }
+        if (decoded.any { it.size != 1 }) return null
+        val tokens = decoded.map { it.single() }
+        return tokens.takeIf { normalized(text) == it }
+    }
+
+    private fun timedRanges(words: List<WakeTimedWord>): List<Pair<Long, Long>>? {
+        fun sampleTime(seconds: Double?): Long? {
+            if (seconds == null || !seconds.isFinite() || seconds < 0) return null
+            val value = seconds * SAMPLE_RATE
+            if (!value.isFinite() || value > totalSamples.toDouble()) return null
+            return ceil(value).toLong().takeIf { it in 0..totalSamples }
+        }
+        val ranges = words.map { word ->
+            val start = sampleTime(word.startSeconds) ?: return null
+            val end = sampleTime(word.endSeconds) ?: return null
+            if (end <= start) return null
+            start to end
+        }
+        return ranges.takeIf { it.zipWithNext().none { (first, second) -> second.first < first.second } }
     }
 
     private fun normalized(value: String): List<String> = Normalizer.normalize(value, Normalizer.Form.NFD)
@@ -107,6 +143,7 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
         const val SAMPLE_RATE = 16_000
         const val MAX_SAMPLES = SAMPLE_RATE * 10
         const val POST_PADDING_SAMPLES = SAMPLE_RATE * 120 / 1000
+        const val PREFIX_ALIGNMENT_SAMPLES = SAMPLE_RATE * 200 / 1000
     }
 }
 

@@ -49,8 +49,8 @@ import java.io.IOException
 
 /**
  * Opt-in microphone foreground service. Vosk processes wake audio on the device;
- * only the subsequent, separately authorized assistant turn can send audio remotely.
- * No PCM, recognized ambient speech, or wake transcripts are stored.
+ * a verified invocation exports only its bounded PCM from the wake phrase onward.
+ * PCM stays in memory and is cleared after handoff/cancellation; nothing is saved to disk.
  */
 class WakeWordService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -65,7 +65,7 @@ class WakeWordService : Service() {
     private var model: Model? = null
     private var captureGeneration = 0L
     private enum class CaptureMode { WAKE, WAKE_AND_END, END_ONLY }
-    private data class CaptureResult(val text: String, val end: Boolean)
+    private data class CaptureResult(val text: String, val end: Boolean, val invocation: WakeInvocationPCM? = null)
     private var captureMode: CaptureMode? = null
     private var foreground = false
     private var destroyed = false
@@ -76,7 +76,7 @@ class WakeWordService : Service() {
         data object Talk : Event
         data class Control(val action: WakeControlAction) : Event
         data class Healthy(val generation: Long) : Event
-        data class Captured(val generation: Long, val phrase: String, val end: Boolean) : Event
+        data class Captured(val generation: Long, val phrase: String, val end: Boolean, val invocation: WakeInvocationPCM?) : Event
         data class Failed(val generation: Long) : Event
     }
 
@@ -232,7 +232,8 @@ class WakeWordService : Service() {
                 try {
                     val phrase = captureWake(currentModel, generation, desiredMode)
                     // captureWake has released AudioRecord before a handoff event is sent.
-                    events.trySend(Event.Captured(generation, phrase.text, phrase.end))
+                    if (events.trySend(Event.Captured(generation, phrase.text, phrase.end, phrase.invocation)).isFailure)
+                        phrase.invocation?.pcm24k?.fill(0)
                 } catch (_: CancellationException) { }
                 catch (_: Exception) { events.trySend(Event.Failed(generation)) }
             }
@@ -241,7 +242,7 @@ class WakeWordService : Service() {
     }
 
     private suspend fun handleWake(event: Event.Captured) {
-        if (event.generation != captureGeneration) return
+        if (event.generation != captureGeneration) { event.invocation?.pcm24k?.fill(0); return }
         // Join also makes the microphone ownership boundary explicit to RealtimeVoice.
         recorderJob?.join()
         recorderJob = null
@@ -250,10 +251,10 @@ class WakeWordService : Service() {
             return
         }
         val now = SystemClock.elapsedRealtime()
-        if (!microphoneGranted() || !policy.accept(event.phrase, conditions(app.state.value), now)) return
-        publishStatus("Te escucho. Contame qué querés hacer.")
-        try { app.startVoiceFromWake() }
-        catch (_: RuntimeException) { publishStatus("No pude empezar la consulta. Podés volver a decir Hola Tino.") }
+        if (!microphoneGranted() || !policy.accept(event.phrase, conditions(app.state.value), now)) { event.invocation?.pcm24k?.fill(0); return }
+        publishStatus("Preparando la consulta…")
+        try { app.startVoiceFromWake(event.invocation) }
+        catch (_: RuntimeException) { event.invocation?.pcm24k?.fill(0); publishStatus("No pude empezar la consulta. Podés volver a decir Hola Tino.") }
         scheduleCheck(now)
     }
 
@@ -316,7 +317,10 @@ class WakeWordService : Service() {
         val minimum = AudioRecord.getMinBufferSize(SAMPLE_RATE.toInt(), AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minimum <= 0) throw IOException("Unsupported microphone format")
         val wake = if (mode != CaptureMode.END_ONLY) Recognizer(currentModel, SAMPLE_RATE, "[\"hola tino\", \"[unk]\"]") else null
-        val ending = if (mode != CaptureMode.WAKE) Recognizer(currentModel, SAMPLE_RATE) else null
+        val ending = Recognizer(currentModel, SAMPLE_RATE)
+        val ring = WakePcmRingBuffer()
+        var wakeProof: WakePrefixProof? = null
+        var pendingFreeFinal: Pair<String, List<WakeTimedWord>?>? = null
         var recorder: AudioRecord? = null
         var echo: AcousticEchoCanceler? = null
         val wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TINO:LocalWakeRecognition")
@@ -329,8 +333,17 @@ class WakeWordService : Service() {
                 WakeRecognitionWord(item?.optString("word").orEmpty(), (item?.opt("conf") as? Number)?.toDouble())
             }
         }
+        fun timed(source: JSONObject): List<WakeTimedWord>? {
+            val items = source.optJSONArray("result") ?: return null
+            if (items.length() !in 2..64) return null
+            return (0 until items.length()).map { index ->
+                val item = items.optJSONObject(index)
+                WakeTimedWord(item?.optString("word").orEmpty(), (item?.opt("conf") as? Number)?.toDouble(),
+                    (item?.opt("start") as? Number)?.toDouble(), (item?.opt("end") as? Number)?.toDouble())
+            }
+        }
         try {
-            wake?.setWords(true); ending?.setWords(true)
+            wake?.setWords(true); ending.setWords(true)
             recorder = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE.toInt(),
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, 6_400))
             if (recorder.state != AudioRecord.STATE_INITIALIZED) throw IOException("Microphone unavailable")
@@ -352,26 +365,40 @@ class WakeWordService : Service() {
                     reportedHealthy = true; events.trySend(Event.Healthy(generation))
                 }
                 if (count == 0) { delay(20); continue }
+                if (!ring.append(buffer, count)) throw IOException("Invalid local audio buffer")
                 val wakeFinal = wake?.acceptWaveForm(buffer, count) == true
-                val endFinal = ending?.acceptWaveForm(buffer, count) == true
-                if (endFinal) {
-                    val json = JSONObject(ending!!.result)
-                    val text = json.optString("text", "")
-                    val state = app.state.value
-                    if (LocalEndPolicy.accepts(true, text, finalWords(json), app.hasActiveConversation,
-                        state.voice.phase == VoicePhase.SPEAKING, state.voice.partialText.ifBlank { state.answer })) return CaptureResult(text, true)
-                }
+                val endFinal = ending.acceptWaveForm(buffer, count)
                 if (wakeFinal) {
                     val json = JSONObject(wake!!.result)
+                    // The constrained decoder proves only the wake prefix; never export its shorter audio.
+                    ring.verifyWakePrefix(true, json.optString("text"), timed(json))?.let { wakeProof = it }
+                }
+                if (endFinal) {
+                    val json = JSONObject(ending.result)
                     val text = json.optString("text", "")
-                    if (WakeActivationPolicy.accepts(true, text, finalWords(json))) return CaptureResult(text, false)
+                    val state = app.state.value
+                    val words = finalWords(json)
+                    if (LocalEndPolicy.accepts(true, text, words, app.hasActiveConversation,
+                        state.voice.phase == VoicePhase.SPEAKING, state.voice.partialText.ifBlank { state.answer })) return CaptureResult(text, true)
+                    if (mode != CaptureMode.END_ONLY) {
+                        // Either decoder can finalize first; replace metadata with the latest free utterance.
+                        pendingFreeFinal = text to timed(json)
+                    }
+                }
+                if (mode != CaptureMode.END_ONLY && (wakeFinal || endFinal)) {
+                    pendingFreeFinal?.let { (text, words) ->
+                        // Retry the complete free utterance after either final, never the shorter wake prefix.
+                        val invocation = ring.extractInvocation(true, text, words, wakeProof)
+                        if (invocation != null) return CaptureResult(text, false, invocation)
+                    }
                 }
             }
             throw CancellationException("Wake recording stopped")
         } finally {
             runCatching { echo?.release() }
             runCatching { recorder?.stop() }; runCatching { recorder?.release() }
-            runCatching { wake?.close() }; runCatching { ending?.close() }
+            ring.clear()
+            runCatching { wake?.close() }; runCatching { ending.close() }
             if (wakeLock.isHeld) wakeLock.release()
         }
     }
@@ -420,6 +447,10 @@ class WakeWordService : Service() {
         scope.launch(NonCancellable) {
             controller?.join()
             recorderJob?.join()
+            while (true) {
+                val pending = events.tryReceive().getOrNull() ?: break
+                if (pending is Event.Captured) pending.invocation?.pcm24k?.fill(0)
+            }
             withContext(Dispatchers.IO) { model?.close(); model = null }
             scope.cancel()
         }

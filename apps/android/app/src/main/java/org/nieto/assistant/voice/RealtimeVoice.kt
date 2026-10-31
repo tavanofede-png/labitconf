@@ -117,7 +117,12 @@ class RealtimeVoice(
 
     fun start(baseUrl: String, installationToken: String, screen: JSONObject? = null, text: String? = null,
         textOnly: Boolean = false, followUp: Boolean = false, inputAudio: ByteArray? = null) {
-        request(baseUrl to installationToken, screen, text, if (textOnly) "text" else "audio", guidance = false, followUp = followUp, inputAudio = inputAudio)
+        try {
+            request(baseUrl to installationToken, screen, text, if (textOnly) "text" else "audio", guidance = false, followUp = followUp, inputAudio = inputAudio)
+        } catch (error: Exception) {
+            inputAudio?.fill(0)
+            throw error
+        }
     }
 
     private fun request(identity: Pair<String, String>, screen: JSONObject?, text: String?, mode: String, guidance: Boolean, followUp: Boolean = false, inputAudio: ByteArray? = null) {
@@ -487,6 +492,7 @@ class RealtimeVoice(
         }
         val text = pendingText; pendingText = null
         if (text != null) {
+            pendingInputAudio?.fill(0); pendingInputAudio = null
             pendingCapture = false
             emit(VoiceState())
             sendText(text)
@@ -508,6 +514,7 @@ class RealtimeVoice(
         val ws = socket
         captureJob = scope.launch(Dispatchers.IO) {
             var problem = false
+            var uploaded = false
             try {
                 var offset = 0
                 val startedAt = SystemClock.elapsedRealtime()
@@ -524,6 +531,7 @@ class RealtimeVoice(
                     if (ws == null || !ws.send(payload.toString())) throw IllegalStateException("Audio upload stopped")
                     offset = end
                 }
+                uploaded = offset == audio.size
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { problem = true }
             finally {
@@ -531,7 +539,7 @@ class RealtimeVoice(
                 withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main.immediate) {
                     if (generation == connectionGeneration) {
                         if (problem) fail("No pude enviar el audio de la consulta.")
-                        else {
+                        else if (uploaded) {
                             while (snapshotFlush?.isActive == true) snapshotFlush?.join()
                             if (generation == connectionGeneration && isActive) {
                                 awaitingResponse = true
@@ -544,7 +552,7 @@ class RealtimeVoice(
         }
     }
     fun updateScreen(screen: JSONObject, requestGuidance: Boolean): Boolean {
-        if (current.active) return false
+        if (current.active && requestGuidance) return false
         if (!requestGuidance && !ready && (observationRequested || observing)) { resumeObservation(screen); return true }
         if (requestGuidance) noteUserRequest()
         if (requestGuidance && (!ready || continuity.shouldRenewBeforeTurn(SystemClock.elapsedRealtime()))) {
@@ -599,7 +607,9 @@ class RealtimeVoice(
         emit(VoiceState(message = "Pantalla actualizada."))
     }
     fun clearScreen() {
-        cancelResponseForScreenChange()
+        // Observation may disappear while audio continues (navigation, overlays, unavailable frame).
+        // Only explicit user cancellation/new input interrupts the answer or recording.
+        pendingScreen = null
         sendScreenUpdate(JSONObject().put("type", "screen.clear"))
     }
     private fun handle(event: JSONObject, generation: Long) {
@@ -643,6 +653,12 @@ class RealtimeVoice(
             }
             "task.context" -> {
                 val context = event.optJSONObject("context") ?: return
+                // Empty goal is the server's end signal; lease release/ACK may follow later.
+                // Clear visible/RAM state now and reserve the closing owner before another wake.
+                if (context.optString("goal").isBlank()) {
+                    cancel(clearTaskContext = true)
+                    return
+                }
                 taskContext = TaskContext.bounded(context.optString("goal"), context.optString("targetApp"), context.optString("progress"))
                 onTaskContext(taskContext)
             }

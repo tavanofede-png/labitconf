@@ -114,19 +114,19 @@ test('A08 a delayed poll cannot overwrite the newer exported view; unmount abort
   await act(async () => root.unmount()); assert.equal(timers.size, 0); assert.equal(signal.aborted, true);
 });
 
-test('B07 skip to content keeps the family section, draft and DOM while moving keyboard focus', async t => {
-  captureIntervals(t);
-  window.history.replaceState(null, '', '/#familia');
-  t.mock.method(globalThis, 'fetch', async path => { assert.equal(path, '/api/health'); return response(health); });
+test('B07 the jury entry point opens the microphone-enabled app and exposes all three interfaces', async t => {
+  window.history.replaceState(null, '', '/');
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  t.after(() => { delete globalThis.ResizeObserver; });
   const { container } = await mount(t, createElement(App));
-  const editor = container.querySelector('#family-name'); assert.ok(editor);
-  editor.value = 'Borrador de familia';
-  await act(async () => container.querySelector('.skip-link').click());
-  assert.equal(window.location.hash, '#familia');
-  assert.equal(document.activeElement, container.querySelector('main'));
-  assert.equal(container.querySelector('#family-name'), editor);
-  assert.equal(editor.value, 'Borrador de familia');
-  assert.equal(container.querySelector('[aria-current="page"]').getAttribute('href'), '#familia');
+  const app = container.querySelector('iframe');
+  assert.equal(app?.getAttribute('src'), '/app');
+  assert.equal(app?.getAttribute('title'), 'App TINO para el jurado');
+  assert.match(app?.getAttribute('allow'), /microphone/);
+  assert.equal(container.querySelector('.js-fullscreen')?.getAttribute('href'), '/app');
+  assert.deepEqual([...container.querySelectorAll('.js-interfaces h2')].map(node => node.textContent), ['Usuario', 'Grupo familiar', 'Instituciones']);
+  assert.equal(container.querySelectorAll('.js-prompts li').length, 4);
+  assert.match(container.querySelector('.js-start').textContent, /Hola TINO/);
 });
 
 test('B06 a territory changed before MapLibre loads initializes the center, marker and zoom from the current selection', async t => {
