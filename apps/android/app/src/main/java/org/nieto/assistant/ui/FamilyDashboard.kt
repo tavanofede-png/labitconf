@@ -75,7 +75,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                                     Text(member.optString("device","Dispositivo vinculado"),color=DashMuted,fontSize=9.sp,lineHeight=14.sp)
                                 }
                             }
-                            FamilyStatus(member.optBoolean("online"),relativeFamilyTime(member.optString("lastActiveAt"),now))
+                            FamilyMemberStatus(member,allowed,now)
                             FamilyActionButtons(s.busy,allowed.optBoolean("help"),true,{vm.familyAction(id,"ping")},{recording=true})
                             HorizontalDivider(color=FamilyLine)
                             FamilyNavigation(tab,activeAlerts,true){tab=it}
@@ -92,7 +92,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                                 Text(member.optString("name")+member.optString("relationship").takeIf{it.isNotBlank()}?.let{" · $it"}.orEmpty(),fontSize=22.sp,color=DashInk,fontWeight=FontWeight.Bold)
                                 Text(if(member.has("age")) "${member.optInt("age")} años · ${member.optString("device","Dispositivo vinculado")}" else "Comparte lo que elige, a su ritmo.",fontSize=11.sp,color=DashMuted)
                             }
-                            FamilyStatus(member.optBoolean("online"),relativeFamilyTime(member.optString("lastActiveAt"),now))
+                            FamilyMemberStatus(member,allowed,now)
                         }
                         FamilyActionButtons(s.busy,allowed.optBoolean("help"),false,{vm.familyAction(id,"ping")},{recording=true})
                         FamilyNavigation(tab,activeAlerts,false){tab=it}
@@ -113,14 +113,13 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
                         when(tab) {
                             0 -> {
                                 Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-                                    FamilyStat("Última actividad",relativeFamilyTime(member.optString("lastActiveAt"),now),if(allowed.optBoolean("progress")) member.optString("lastActivity","Sin actividad compartida") else "Su actividad es privada","clock",Modifier.weight(1f))
-                                    FamilyStat("Pantalla hoy",if(allowed.optBoolean("usage")) familyMinutes(member.optInt("screenMinutes")) else "Privado",if(allowed.optBoolean("progress")) "${member.optInt("tinoMinutes")} min con acompañamiento" else "Progreso privado","screen",Modifier.weight(1f))
+                                    FamilyStat("Última actividad",if(allowed.optBoolean("progress")) relativeFamilyTime(member.optString("lastActiveAt"),now) else "Bloqueado",if(allowed.optBoolean("progress")) member.optString("lastActivity","Sin actividad compartida") else "${member.optString("name")} elige qué compartir.",if(allowed.optBoolean("progress")) "clock" else "lock",Modifier.weight(1f))
+                                    FamilyStat("Pantalla hoy",if(allowed.optBoolean("usage")) familyMinutes(member.optInt("screenMinutes")) else "Bloqueado",if(allowed.optBoolean("progress")) "${member.optInt("tinoMinutes")} min con acompañamiento" else "Tiempo y uso no compartidos",if(allowed.optBoolean("usage")) "screen" else "lock",Modifier.weight(1f))
                                 }
-                                FamilyHelpRequestPreview(member,allowed.optBoolean("progress"))
+                                FamilyActivityTable(member,allowed){detail=it}
                                 FamilyRecentSites(member,allowed,detail={detail=it},activity={tab=1})
                                 FamilyResponsivePair({FamilyLocationPreview(member,allowed,now){tab=2}},{FamilySafetyPreview(alerts,allowed){tab=3}})
                                 FamilyWeeklyChart(member,allowed.optBoolean("usage"),allowed.optBoolean("progress"))
-                                if(allowed.optBoolean("progress")) FamilyHelpSummary(member)
                             }
                             1 -> FamilyActivityPanel(member,allowed,now,alerts,{detail=it},{tab=3})
                             2 -> FamilyLocationPanel(member,allowed,now,s.busy,s.demoAccount){vm.familyAction(id,"location_request")}
@@ -158,7 +157,7 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
     } }, confirmButton = { TextButton(onClick = { invitation = false }) { Text("Listo") } })
     if (permissions && member != null) AlertDialog(onDismissRequest = { permissions = false }, title = { Text("${member.optString("name")} decide") }, text = { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         listOf("progress" to "Progreso y prácticas", "help" to "Acompañamiento y avisos", "usage" to "Tiempo de pantalla", "safety" to "Señales de seguridad", "location" to "Ubicación temporal", "websites" to "Sitios visitados").forEach { (key, label) ->
-            Row { Text(label, Modifier.weight(1f)); Text(if (allowed.optBoolean(key)) "Compartido" else "Privado", color = if (allowed.optBoolean(key)) DashTeal else DashMuted, fontSize = 13.sp) }
+            Row { Text(label, Modifier.weight(1f)); Text(if (allowed.optBoolean(key)) "Compartido" else "Bloqueado", color = if (allowed.optBoolean(key)) DashTeal else DashMuted, fontSize = 13.sp) }
         }
         Text("Estos permisos se eligen desde el dispositivo de esa persona. Ser parte de la familia no habilita a ver su pantalla ni sus mensajes.", color = DashMuted, fontSize = 14.sp, lineHeight = 21.sp)
     } }, confirmButton = { TextButton(onClick = { permissions = false }) { Text("Entendido") } })
@@ -168,7 +167,8 @@ internal fun timeLabel(value: String): String = runCatching { Instant.parse(valu
         Text("${familyClock(event.optString("at"))} · ${event.optString("app")} · ${event.optInt("durationMinutes")} min",fontSize=14.sp,color=DashMuted)
         event.optString("domain").takeIf{it.isNotBlank()}?.let{Text(it,color=DashTeal,fontSize=17.sp,fontWeight=FontWeight.SemiBold)}
         Text(event.optString("detail"),fontSize=16.sp,lineHeight=24.sp)
-        Text(if(event.optBoolean("helpRequested")) "Solicitó ayuda de TINO" else "Registro de uso compartido",color=DashTeal,fontSize=14.sp)
+        FamilyAssistanceBadge(event)
+        if(event.optString("outcome")=="reported_complete") Text("Resultado confirmado por la persona" + if(event.optString("resultSource")=="simulated_self_report") " · ejemplo simulado" else "",fontSize=12.sp,color=DashMuted)
         Text("El resumen no incluye mensajes, correos ni contenido de conversaciones.",fontSize=12.sp,lineHeight=18.sp,color=DashMuted)
     }},confirmButton={TextButton(onClick={detail=null}){Text("Listo",color=DashTeal)}}) }
 

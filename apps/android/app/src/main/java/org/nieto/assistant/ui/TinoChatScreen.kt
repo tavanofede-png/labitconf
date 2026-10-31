@@ -127,6 +127,7 @@ private val Paper = Color(0xFFF3F6F6)
                         }
                     }
                 }
+                if(state.assistanceEnabled) item { TextButton(onClick=app::continueWithoutTino) { Text("Seguir por mi cuenta",color=DashTeal) } }
                 state.task?.let { task -> item { TaskGuideCard(task, state.busy, app::advanceTask, onOpenTask, app::repeatTask, app::cancelTask, app::dismissTask, !state.accessibilityConnected || !app.settings.screenConsent, onSettings) } }
             }
         }

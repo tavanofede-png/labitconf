@@ -16,7 +16,7 @@ import { SessionError, createSession, applySessionEvent, publicSession, operatio
 import { institutionOverview } from './institution.mjs';
 import { generateReply } from './model-adapter.mjs';
 import { validateAttachments, CHAT_BODY_BYTES, AttachmentError } from './chat-attachments.mjs';
-import { demoInstitution, demoFamily, DEMO_TERRITORIES } from './dashboard-demo.mjs';
+import { demoInstitution, demoFamily, DEMO_FAMILY_VERSION, DEMO_TERRITORIES } from './dashboard-demo.mjs';
 import { createDashboardContext, crossPublicContext } from './dashboard-context.mjs';
 
 const API_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -152,14 +152,14 @@ export function createApp({
           const scenarioAt = await store.update(s => {
             const group = s.groups.find(g => g.id === account.groupId);
             const date = value => new Date(value).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
-            if (!group.demoScenarioAt || date(group.demoScenarioAt) !== date(current)) group.demoScenarioAt = current;
+            if (!group.demoScenarioAt || date(group.demoScenarioAt) !== date(current) || group.demoScenarioVersion !== DEMO_FAMILY_VERSION) { group.demoScenarioAt = current; group.demoScenarioVersion = DEMO_FAMILY_VERSION; }
             return group.demoScenarioAt;
           });
           const s = await store.read(); const actions = (s.demoFamilyActions ?? []).filter(a => a.groupId === account.groupId);
           const dashboard = demoFamily(current, scenarioAt);
           dashboard.group.id = account.groupId;
           dashboard.alerts = dashboard.alerts.map(a => ({ ...a, resolvedAt: actions.find(x => x.type === 'resolve' && Date.parse(x.createdAt) >= scenarioAt && x.memberId === a.memberId && (!x.alertId || x.alertId === a.id))?.createdAt ?? null }));
-          respond(200, { ...dashboard, messages: actions.filter(a => ['ping', 'voice', 'location_request'].includes(a.type) && Date.parse(a.createdAt) > current - 86_400_000).slice(-5).reverse() }); return;
+          respond(200, { ...dashboard, messages: actions.filter(a => ['ping', 'voice', 'location_request'].includes(a.type) && dashboard.members.find(m => m.id === a.memberId)?.permissions.help && Date.parse(a.createdAt) > current - 86_400_000).slice(-5).reverse() }); return;
         }
         if (method === 'POST' && route === '/demo/family/actions') {
           required(account.role === 'family' && account.groupId, 403, 'wrong_role', 'Ingresá al grupo familiar.');
@@ -167,6 +167,7 @@ export function createApp({
           required(['marta', 'ricardo', 'lucia'].includes(body.memberId) && ['ping', 'voice', 'resolve', 'location_request'].includes(body.type), 400, 'invalid_action', 'Elegí una persona y una acción válida.');
           required(typeof body.id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(body.id), 400, 'invalid_id', 'Identificador inválido.');
           if (body.alertId !== undefined) required(body.type === 'resolve' && demoFamily(current).alerts.some(a => a.id === body.alertId && a.memberId === body.memberId), 400, 'invalid_alert', 'Elegí un aviso de esta persona.');
+          required(demoFamily(current).members.find(m => m.id === body.memberId)?.permissions.help, 403, 'help_not_consented', 'Esta persona solo comparte su ubicación; no habilitó avisos ni acompañamiento familiar.');
           if (body.type === 'voice') validateVoice(body.audioBase64);
           await store.update(s => {
             s.demoFamilyActions ??= []; s.demoFamilyActions = s.demoFamilyActions.filter(a => Date.parse(a.createdAt) > current - 86_400_000);
@@ -469,7 +470,7 @@ export function createApp({
             ...(!r.paused && r.permissions.progress ? { ...metricsFor(sessions), tinoMinutes: Math.round(sessions.filter(s => day(s.createdAt) === dates[6]).reduce((n, s) => n + s.durationSeconds, 0) / 60),
               weeklyTino: dates.map(d => Math.round(sessions.filter(s => day(s.createdAt) === d).reduce((n, s) => n + s.durationSeconds, 0) / 60)),
               helpRequests: sessions.filter(s => (s.eventCounts?.flow_started ?? 0) > 0).length,
-              activities: sessions.filter(s => (s.eventCounts?.flow_started ?? 0) > 0).slice(-10).reverse().map(s => ({ id: s.id, kind: 'task', title: 'Ayuda para ' + (TASK_FLOWS[s.flowId]?.title ?? (s.flowId === 'screen-assistance' ? 'usar la pantalla' : 'compartir ubicación')).toLowerCase(), detail: 'Solicitó ayuda de TINO. No se verificó el resultado en otra aplicación.', app: TASK_FLOWS[s.flowId]?.app === 'whatsapp' || s.flowId === 'whatsapp-location' ? 'WhatsApp' : TASK_FLOWS[s.flowId]?.app === 'email' ? 'Correo' : 'TINO', helpRequested: true, resultSource: 'help_requested', at: s.startedAt ?? s.createdAt })),
+              activities: sessions.filter(s => (s.eventCounts?.flow_started ?? 0) > 0).slice(-10).reverse().map(s => ({ id: s.id, kind: 'task', title: 'Ayuda para ' + (TASK_FLOWS[s.flowId]?.title ?? (s.flowId === 'screen-assistance' ? 'usar la pantalla' : 'compartir ubicación')).toLowerCase(), detail: 'Solicitó ayuda de TINO. No se verificó el resultado en otra aplicación.', app: TASK_FLOWS[s.flowId]?.app === 'whatsapp' || s.flowId === 'whatsapp-location' ? 'WhatsApp' : TASK_FLOWS[s.flowId]?.app === 'email' ? 'Correo' : 'TINO', helpRequested: true, resultSource: 'help_requested', assistanceLevel: s.assistanceEndReason === 'user_continued_alone' ? 'partial' : 'full', assistanceEndedAt: s.assistanceEndedAt, assistanceEndReason: s.assistanceEndReason, outcome: 'not_reported', at: s.startedAt ?? s.createdAt })),
               lastHelpRequest: sessions.some(s => (s.eventCounts?.flow_started ?? 0) > 0) ? 'Solicitó ayuda de TINO.' : null } : {}),
             ...(!r.paused && r.permissions.usage ? { screenMinutes: Math.round(usage.filter(e => day(e.startedAt) === dates[6]).reduce((n, e) => n + e.durationSeconds, 0) / 60), appUsage:[...new Set(usage.map(e=>e.appName??e.category))].map(name=>({name,minutes:Math.round(usage.filter(e=>(e.appName??e.category)===name&&day(e.startedAt)===dates[6]).reduce((n,e)=>n+e.durationSeconds,0)/60)})).filter(e=>e.minutes>0), weeklyScreen: dates.map(d => Math.round(usage.filter(e => day(e.startedAt) === d).reduce((n, e) => n + e.durationSeconds, 0) / 60)) } : {}) };
         });

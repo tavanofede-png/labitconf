@@ -24,6 +24,12 @@ test('a real family link supports granular opt-in, pause, expiring approximate l
  const reported=(await call('/family/summary','GET',undefined,group.caregiverToken)).data.members[0];
  assert.equal(reported.helpRequests,1);assert.equal(reported.activities[0].helpRequested,true);assert.equal(reported.activities[0].resultSource,'help_requested');
  assert.match(reported.activities[0].title,/^Ayuda para crear un grupo/);assert.doesNotMatch(reported.activities[0].title,/creó|completó|por su cuenta/i);
+ const visual=(await call('/assistant/sessions','POST',{flowId:'screen-assistance',clientSessionId:randomUUID()},user.token)).data;
+ for(const type of ['flow_started','assistance_ended','cancelled']) assert.equal((await call(`/assistant/sessions/${visual.id}/events`,'POST',{eventId:randomUUID(),type},user.token)).status,200);
+ const partial=(await call('/family/summary','GET',undefined,group.caregiverToken)).data.members[0].activities[0];
+ assert.equal(partial.assistanceLevel,'partial');assert.equal(partial.assistanceEndReason,'user_continued_alone');
+ assert.equal(partial.outcome,'not_reported');assert.equal(partial.resultSource,'help_requested');
+ assert.doesNotMatch(partial.title,/creado|enviado|completado/i);
  assert.equal((await call('/family/location','POST',{latitude:-34.603722,longitude:-58.381592,minutes:120},user.token)).status,400);
  assert.equal((await call('/family/location','POST',{latitude:-34.603722,longitude:-58.381592,minutes:15},user.token)).status,200);
  let snapshot=(await call('/family/summary','GET',undefined,group.caregiverToken)).data;
@@ -54,5 +60,5 @@ test('institution routes exclude demo and opt-out activity even when the nominal
 test('today metrics do not count fictional activity from yesterday after Argentine midnight',()=>{
  const now=Date.parse('2026-10-31T03:05:00Z');const data=demoFamily(now,now);
  const day=t=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Argentina/Buenos_Aires'}).format(new Date(t));
- for(const person of data.members){const today=person.activities.filter(e=>day(e.at)===day(now));assert.equal(person.screenMinutes,today.reduce((n,e)=>n+e.durationMinutes,0));assert.equal(person.tinoMinutes,today.reduce((n,e)=>n+e.assistedMinutes,0));assert.equal(person.weeklyScreen.at(-1),person.screenMinutes);}
+ for(const person of data.members.filter(m=>m.permissions.progress)){const today=person.activities.filter(e=>day(e.at)===day(now));assert.equal(person.screenMinutes,today.reduce((n,e)=>n+e.durationMinutes,0));assert.equal(person.tinoMinutes,today.reduce((n,e)=>n+e.assistedMinutes,0));assert.equal(person.weeklyScreen.at(-1),person.screenMinutes);}
 });

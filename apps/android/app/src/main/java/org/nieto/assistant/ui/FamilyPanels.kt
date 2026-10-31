@@ -79,7 +79,7 @@ import java.time.Instant
 @Composable internal fun FamilyRecentSites(member: JSONObject, permissions: JSONObject, detail: (JSONObject)->Unit, activity: ()->Unit) {
     FamilySurface {
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text("Últimos sitios visitados",Modifier.weight(1f),fontSize=16.sp,color=DashInk,fontWeight=FontWeight.Bold);TextButton(onClick=activity,contentPadding=PaddingValues(0.dp)){Text("Ver actividad",fontSize=12.sp,color=DashTeal)}}
-        if(!permissions.optBoolean("websites")) Row(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically){FamilyGlyph("lock");Text("El detalle de los sitios es privado.",fontSize=13.sp,color=DashMuted,lineHeight=20.sp)}
+        if(!permissions.optBoolean("websites")) Row(horizontalArrangement=Arrangement.spacedBy(10.dp),verticalAlignment=Alignment.CenterVertically){FamilyGlyph("lock");Text("Bloqueado · no comparte sus sitios visitados.",fontSize=13.sp,color=DashMuted,lineHeight=20.sp)}
         else {
             val sites=member.optJSONArray("websites").objects().take(3)
             if(sites.isEmpty()) Text("Todavía no hay sitios compartidos.",color=DashMuted,fontSize=13.sp)
@@ -111,7 +111,7 @@ private fun activeFamilyLocation(member: JSONObject, permissions: JSONObject): J
     val canView=permissions.optBoolean("safety") || (permissions.optBoolean("help") && alerts.any{it.optString("type")=="help_requested"})
     val active=canView && pending.isNotEmpty()
     FamilySurface(tint=if(active) FamilyCream else Color.White,action=open) {
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){FamilyGlyph("shield",Modifier.size(22.dp),if(active) FamilyAmber else DashTeal);Text(if(active) "Para revisar juntos" else "Por ahora, todo tranquilo",fontSize=14.sp,fontWeight=FontWeight.Bold,color=DashInk)}
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically){FamilyGlyph(if(canView) "shield" else "lock",Modifier.size(22.dp),if(active) FamilyAmber else DashTeal);Text(if(!canView) "Alertas bloqueadas" else if(active) "Para revisar juntos" else "Por ahora, todo tranquilo",fontSize=14.sp,fontWeight=FontWeight.Bold,color=DashInk)}
         Text(if(!canView) "Sus señales de seguridad son privadas." else if(active) pending.first().optString("title",pending.first().optString("message")) else if(alerts.isNotEmpty()) "Los avisos compartidos ya fueron atendidos." else "No hay avisos de seguridad pendientes.",fontSize=14.sp,lineHeight=21.sp,color=if(active) FamilyAmber else DashMuted)
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(if(active) "Revisar aviso" else "Ver avisos",Modifier.weight(1f),color=if(active) FamilyAmber else DashTeal,fontSize=12.sp,fontWeight=FontWeight.Bold);FamilyGlyph("chevron",Modifier.size(16.dp),if(active) FamilyAmber else DashTeal)}
     }
@@ -125,42 +125,12 @@ private fun activeFamilyLocation(member: JSONObject, permissions: JSONObject): J
 }
 
 @Composable internal fun FamilyActivityPanel(member: JSONObject, permissions: JSONObject, now: String, alerts: List<JSONObject>, detail: (JSONObject)->Unit, safety: ()->Unit) {
-    var filter by remember(member.optString("id")){mutableIntStateOf(0)}
+    FamilyActivityTable(member,permissions,detail)
     if(permissions.optBoolean("usage")) FamilySurface {
-        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)){Text("Tiempo de pantalla",fontSize=16.sp,color=DashInk,fontWeight=FontWeight.Bold);Text(if(permissions.optBoolean("progress")) "${member.optInt("tinoMinutes")} min con TINO" else "Progreso privado",color=DashMuted,fontSize=12.sp)};Text(familyMinutes(member.optInt("screenMinutes")),fontSize=28.sp,color=DashInk,fontWeight=FontWeight.Bold)}
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text("Tiempo de pantalla",Modifier.weight(1f),fontSize=15.sp,color=DashInk,fontWeight=FontWeight.Bold);Text(familyMinutes(member.optInt("screenMinutes")),fontSize=22.sp,color=DashInk,fontWeight=FontWeight.Bold)}
         FamilyAppUsage(member)
-    }
-    if(!permissions.optBoolean("progress")) FamilySurface("Su actividad es privada","Solo aparece lo que esta persona eligió compartir."){FamilyGlyph("lock",Modifier.size(28.dp))}
-    else {
-        val activities=member.optJSONArray("activities").objects()
-            .filter{permissions.optBoolean("websites") || it.optString("kind")!="website"}
-            .filter{permissions.optBoolean("safety") || it.optString("kind")!="safety"}
-        val visible=activities.filter{when(filter){1->it.optString("kind")=="website";2->it.optBoolean("helpRequested");else->true}}
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(7.dp)) {
-            listOf("Todo","Sitios web","Solicitudes de ayuda").forEachIndexed{i,label->FilterChip(selected=filter==i,onClick={filter=i},enabled=i!=1||permissions.optBoolean("websites"),label={Text(label,fontSize=12.sp)},shape=CircleShape,colors=FilterChipDefaults.filterChipColors(selectedContainerColor=DashTeal,selectedLabelColor=Color.White,containerColor=Color.White,labelColor=DashMuted))}
-        }
-        FamilySurface {
-            Row(Modifier.fillMaxWidth()){Text("ACTIVIDAD RECIENTE",Modifier.weight(1f),fontSize=11.sp,color=DashMuted,fontWeight=FontWeight.Bold,letterSpacing=1.sp);Text("${visible.size} eventos",fontSize=11.sp,color=DashMuted)}
-            if(visible.isEmpty()) Text("No hay eventos compartidos con este filtro.",color=DashMuted,fontSize=14.sp)
-            visible.forEachIndexed{i,event->
-                val isSafety=event.optString("kind")=="safety"
-                val resolved=isSafety&&alerts.find{it.optString("id")==event.optString("alertId")}?.isNull("resolvedAt")==false
-                Row(Modifier.fillMaxWidth().clickable{if(isSafety) safety() else detail(event)}.padding(vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.Top) {
-                    Text(familyClock(event.optString("at")),color=DashMuted,fontSize=11.sp,modifier=Modifier.width(36.dp).padding(top=10.dp))
-                    Surface(color=if(isSafety) FamilyCream else FamilyMint,shape=RoundedCornerShape(12.dp)){Box(Modifier.size(36.dp),contentAlignment=Alignment.Center){FamilyGlyph(when{isSafety->"shield";event.optString("kind")=="website"->"web";else->"phone"},Modifier.size(18.dp),if(isSafety) FamilyAmber else DashTeal)}}
-                    Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                        Text(event.optString("title"),color=DashInk,fontWeight=FontWeight.SemiBold,fontSize=14.sp,lineHeight=20.sp)
-                        Text(if(isSafety) if(resolved) "Revisado en familia" else "Pendiente de revisión" else "${event.optString("app",event.optString("detail"))}${if(event.optInt("durationMinutes")>0) " · ${event.optInt("durationMinutes")} min" else ""}",color=if(isSafety&&!resolved) FamilyAmber else DashMuted,fontSize=12.sp,lineHeight=18.sp)
-                        if(event.optString("domain").isNotBlank()&&!isSafety) Text(event.optString("domain"),color=DashMuted,fontSize=11.sp)
-                        if(!isSafety&&event.optBoolean("helpRequested")) Surface(color=FamilyMint,shape=RoundedCornerShape(6.dp)){Text("Solicitó ayuda de TINO",Modifier.padding(horizontal=8.dp,vertical=4.dp),fontSize=10.sp,color=DashTeal,fontWeight=FontWeight.SemiBold)}
-                    }
-                    FamilyGlyph("chevron",Modifier.size(14.dp).padding(top=3.dp),DashMuted)
-                }
-                if(i<visible.lastIndex) HorizontalDivider(color=FamilyLine)
-            }
-        }
-        if(permissions.optBoolean("usage") || permissions.optBoolean("progress")) FamilyWeeklyChart(member,permissions.optBoolean("usage"),permissions.optBoolean("progress"))
-    }
+    } else FamilyLockedCard("Tiempo de pantalla")
+    FamilyWeeklyChart(member,permissions.optBoolean("usage"),permissions.optBoolean("progress"))
 }
 
 @Composable internal fun FamilyLocationPanel(member: JSONObject, permissions: JSONObject, now: String, busy: Boolean, demo: Boolean, request: ()->Unit) {
@@ -186,7 +156,7 @@ private fun activeFamilyLocation(member: JSONObject, permissions: JSONObject): J
 
 @Composable internal fun FamilyAlertsPanel(alerts: List<JSONObject>, permissions: JSONObject, busy: Boolean, now: String, resolve: (JSONObject)->Unit, activity: ()->Unit) {
     val canView=permissions.optBoolean("safety") || (permissions.optBoolean("help") && alerts.any{it.optString("type")=="help_requested"})
-    if(!canView) FamilySurface("Sus avisos son privados","Solo se muestran las señales que esa persona autoriza compartir."){FamilyGlyph("lock",Modifier.size(30.dp))}
+    if(!canView) FamilyLockedCard("Alertas y señales de seguridad")
     else if(alerts.isEmpty()) FamilySurface("Por ahora, todo tranquilo","No hay avisos de seguridad compartidos para esta persona."){FamilyGlyph("shield",Modifier.size(36.dp));TextButton(onClick=activity){Text("Ver su actividad",color=DashTeal,fontSize=14.sp)}}
     else alerts.forEach{alert->
         val pending=alert.isNull("resolvedAt")

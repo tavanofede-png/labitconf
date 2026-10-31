@@ -101,6 +101,7 @@ class AssistantOverlay(private val service: NietoAccessibilityService, private v
         button("Me perdí") { afterKeyboard { app.lostAssistance() } }
         button("Abrir Familia") { service.startActivity(Intent(service,FamilyActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         button("Abrir TINO") { service.startActivity(Intent(service,MainActivity::class.java).putExtra("destination","chat").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+        button("Seguir por mi cuenta") { hideKeyboard(); draft=""; app.continueWithoutTino() }
         button("Apagar asistencia y borrar tarea") { hideKeyboard(); draft=""; app.stopAssistance() }
         panel=ScrollView(service).apply { addView(layout) }
         val display=service.resources.displayMetrics

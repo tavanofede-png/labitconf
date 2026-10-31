@@ -256,6 +256,12 @@ class NietoApp : Application() {
         else if (state.value.voice.active) realtime.cancelResponseForScreenChange()
         stopSpeaking()
     }
+    fun continueWithoutTino() {
+        // An explicit decision is distinguishable from a lost connection or a closed popup.
+        assistantEvent("assistance_ended", withStep = false)
+        stopAssistance()
+        tellUser("Seguís por tu cuenta. Dejé de observar la pantalla; no voy a registrar un resultado que no confirmaste.")
+    }
     fun stopAssistance() {
         screenCaptureWait?.cancel(); screenCaptureWait = null
         mutable.value = mutable.value.copy(screenCapturePending = false)

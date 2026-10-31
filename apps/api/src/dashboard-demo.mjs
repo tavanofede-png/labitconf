@@ -88,65 +88,79 @@ export function demoInstitution({ now = Date.now(), territoryId = 'AR', months =
 }
 
 /** Fictional, internally reconciled household. No phone history or real location is read. */
+export const DEMO_FAMILY_VERSION = 2;
 export function demoFamily(now = Date.now(), startedAt = now) {
   const localDay=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Argentina/Buenos_Aires',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
   const iso=minutes=>new Date(startedAt-minutes*60000).toISOString();
   const profiles = [
     { id: 'marta', name: 'Marta', relationship: 'Mamá', age: 67, birthDate: '1959-05-22', territoryId: 'AR-C', device: 'Samsung Galaxy A15', online: true,
-      weeklyScreen: [38, 51, 42, 55, 40, 48, 46], weeklyTino: [16, 20, 14, 22, 12, 16, 18], helpRequests: 30,
-      helpTopic: 'Crear un grupo de WhatsApp', lastHelpRequest: 'Solicitó ayuda para crear un grupo de WhatsApp.', weeklyGoal: 5, weeklyRequests: 4,
+      weeklyScreen: [68, 81, 72, 85, 70, 78, 76], weeklyTino: [36, 40, 34, 42, 32, 36, 38],
       location: { label: 'En casa', area: 'Caballito, Ciudad de Buenos Aires', point: [-58.439, -34.618], sharedAt: iso(12), updatedAt: iso(2), expiresAt: iso(-18), approximate: true, radiusMeters: 120 },
       events: [
-        ['marta-link', 2, 'safety', 'Revisó un enlace con TINO', 'Navegador', 0, true, 'premios-envio.example', 'No continuó al formulario.', false],
-        ['marta-group', 9, 'task', 'Ayuda para crear un grupo de WhatsApp', 'WhatsApp', 8, false, '', 'Solicitó ayuda de TINO para crear un grupo. No se verificó su creación.', true],
-        ['marta-recipe', 24, 'website', 'Buscó una receta de cocina', 'Navegador', 10, true, 'paulinacocina.net', 'TINO la acompañó a encontrar una receta.', false],
-        ['marta-call', 36, 'app', 'Ayuda con una videollamada', 'WhatsApp', 10, true, '', 'Recibió 4 minutos de acompañamiento.', false],
-        ['marta-news', 51, 'website', 'Leyó las noticias', 'Navegador', 6, false, 'lanacion.com.ar', 'Registro ilustrativo de uso del navegador.', false],
-        ['marta-video', 64, 'app', 'Miró un video de jardinería', 'YouTube', 8, false, '', 'Registro ilustrativo de uso de la aplicación.', false],
-        ['marta-mail', 74, 'task', 'Ayuda para enviar un correo', 'TINO', 4, true, '', 'Solicitó orientación para enviar un correo.', false]
+        ['marta-link', 2, 'safety', 'Enlace revisado', 'Navegador', 3, 'full', 'premios-envio.example', false],
+        ['marta-group', 12, 'task', 'Grupo de WhatsApp creado', 'WhatsApp', 8, 'full', '', true],
+        ['marta-mail', 27, 'task', 'Email enviado', 'Gmail', 7, 'full', '', true],
+        ['marta-argentina', 44, 'task', 'Mi Argentina', 'Mi Argentina', 9, 'partial', '', true],
+        ['marta-recipe', 58, 'website', 'Receta encontrada', 'Navegador', 10, 'partial', 'paulinacocina.net', true],
+        ['marta-call', 72, 'task', 'Videollamada realizada', 'WhatsApp', 10, 'partial', '', true],
+        ['marta-photo', 88, 'task', 'Foto compartida', 'WhatsApp', 5, 'full', '', true],
+        ['marta-maps', 105, 'task', 'Ruta consultada', 'Google Maps', 6, 'partial', '', true],
+        ['marta-contact', 122, 'task', 'Contacto agregado', 'Contactos', 5, 'full', '', true],
+        ['marta-turno', 140, 'website', 'Turno médico solicitado', 'Navegador', 8, 'full', 'buenosaires.gob.ar', true],
+        ['marta-pdf', 159, 'task', 'Documento PDF abierto', 'Archivos', 4, 'partial', '', true],
+        ['marta-weather', 178, 'website', 'Pronóstico consultado', 'Navegador', 4, 'full', 'smn.gob.ar', true]
       ] },
     { id: 'ricardo', name: 'Ricardo', relationship: 'Papá', age: 61, birthDate: '1965-02-10', territoryId: 'AR-B', device: 'Motorola Moto G54', online: false,
-      weeklyScreen: [64, 72, 58, 80, 61, 74, 68], weeklyTino: [18, 22, 14, 25, 17, 20, 18], helpRequests: 24,
-      helpTopic: 'Enviar un correo con un adjunto', lastHelpRequest: 'Solicitó ayuda para enviar un correo con una foto.', weeklyGoal: 4, weeklyRequests: 3, location: null,
+      weeklyScreen: [74, 82, 78, 90, 81, 84, 88], weeklyTino: [38, 42, 34, 45, 37, 40, 38], location: null,
       events: [
-        ['ricardo-mail', 18, 'task', 'Ayuda para enviar un correo con una foto', 'Gmail', 12, false, '', 'Solicitó ayuda de TINO para preparar el correo. No se verificó su envío.', true],
-        ['ricardo-group', 35, 'task', 'Ayuda para crear un grupo', 'WhatsApp', 12, true, '', 'Siguió una guía de 12 minutos.', false],
-        ['ricardo-news', 52, 'website', 'Consultó noticias deportivas', 'Navegador', 12, false, 'tycsports.com', 'Registro ilustrativo de uso del navegador.', false],
-        ['ricardo-video', 75, 'app', 'Miró un video de cocina', 'YouTube', 16, false, '', 'Registro ilustrativo de uso de la aplicación.', false],
-        ['ricardo-weather', 96, 'website', 'Buscó el pronóstico', 'Navegador', 6, true, 'smn.gob.ar', 'TINO lo acompañó durante la búsqueda.', false],
-        ['ricardo-call', 115, 'app', 'Hizo una llamada familiar', 'WhatsApp', 10, false, '', 'Llamó desde la aplicación.', false]
+        ['ricardo-mail', 6, 'task', 'Email enviado', 'Gmail', 12, 'full', '', true],
+        ['ricardo-group', 25, 'task', 'Grupo de WhatsApp creado', 'WhatsApp', 12, 'full', '', true],
+        ['ricardo-argentina', 43, 'task', 'Mi Argentina', 'Mi Argentina', 8, 'partial', '', true],
+        ['ricardo-weather', 61, 'website', 'Pronóstico consultado', 'Navegador', 6, 'partial', 'smn.gob.ar', true],
+        ['ricardo-file', 76, 'task', 'Archivo adjuntado a un borrador', 'Gmail', 7, 'full', '', true],
+        ['ricardo-contact', 91, 'task', 'Contacto agregado', 'Contactos', 4, 'partial', '', true],
+        ['ricardo-photo', 108, 'task', 'Foto compartida', 'WhatsApp', 6, 'full', '', true],
+        ['ricardo-maps', 124, 'task', 'Ruta consultada', 'Google Maps', 9, 'partial', '', true],
+        ['ricardo-call', 142, 'task', 'Videollamada realizada', 'WhatsApp', 10, 'full', '', true],
+        ['ricardo-recipe', 162, 'website', 'Receta encontrada', 'Navegador', 8, 'partial', 'paulinacocina.net', true],
+        ['ricardo-pdf', 179, 'task', 'Documento PDF abierto', 'Archivos', 5, 'full', '', true],
+        ['ricardo-bookmark', 195, 'website', 'Sitio guardado', 'Navegador', 4, 'partial', 'argentina.gob.ar', true]
       ] },
-    { id: 'lucia', name: 'Lucía', relationship: 'Hermana', age: 32, birthDate: '1994-08-21', territoryId: 'AR-X', device: 'Samsung Galaxy S23', online: true,
-      weeklyScreen: [96, 124, 108, 131, 98, 116, 112], weeklyTino: [8, 10, 5, 9, 4, 7, 6], helpRequests: 18,
-      helpTopic: 'Revisar un enlace', lastHelpRequest: 'Solicitó ayuda para revisar un enlace.', weeklyGoal: 3, weeklyRequests: 3, location: null,
-      events: [
-        ['lucia-mail', 6, 'task', 'Ayuda para organizar sus correos', 'Gmail', 30, false, '', 'Solicitó ayuda de TINO para organizar sus correos.', true],
-        ['lucia-guide', 48, 'task', 'Ayuda para revisar un enlace', 'Navegador', 6, true, '', 'Revisó las señales con TINO.', false],
-        ['lucia-browser', 72, 'app', 'Usó el navegador', 'Navegador', 16, false, '', 'El detalle de los sitios es privado.', false],
-        ['lucia-social', 104, 'app', 'Usó Instagram', 'Instagram', 25, false, '', 'Actividad general de la aplicación.', false],
-        ['lucia-whatsapp', 146, 'app', 'Usó WhatsApp', 'WhatsApp', 35, false, '', 'Actividad general de la aplicación.', false]
-      ] }
+    { id: 'lucia', name: 'Lucía', relationship: 'Hermana', age: 32, birthDate: '1994-08-21', territoryId: 'AR-X', device: 'Samsung Galaxy S23',
+      location: { label: 'Ubicación compartida', area: 'Nueva Córdoba, Córdoba', point: [-64.187, -31.427], sharedAt: iso(10), updatedAt: iso(1), expiresAt: iso(-20), approximate: true, radiusMeters: 150 } }
   ];
-  const members = profiles.map(({ events, ...p }) => {
-    const activities = events.map(([id, minutesAgo, kind, title, app, durationMinutes, assisted, domain, detail]) =>
-      ({ id, kind, title, app, durationMinutes, assisted, assistedMinutes: assisted ? (id === 'marta-call' ? 4 : durationMinutes) : 0, domain, detail, helpRequested: kind === 'task' || assisted, resultSource: kind === 'task' || assisted ? 'help_requested' : 'simulated_usage', at: iso(minutesAgo), ...(kind === 'safety' ? { alertId: 'demo-link-1' } : {}) }));
+  const members = profiles.map(({ events = [], ...p }) => {
+    if(p.id === 'lucia') return { ...p, permissions: { progress: false, help: false, usage: false, safety: false, websites: false, location: true } };
+    const activities = events.map(([id, minutesAgo, kind, title, app, durationMinutes, assistanceLevel, domain, complete]) => {
+      const partial=assistanceLevel==='partial';
+      return { id, kind, title, app, durationMinutes, assisted: true, assistanceLevel,
+        assistedMinutes: partial ? Math.max(1,Math.round(durationMinutes*.4)) : durationMinutes, domain,
+        detail: complete ? (partial ? 'Escenario ficticio: la persona eligió seguir por su cuenta y después confirmó el resultado.' : 'Escenario ficticio: la persona confirmó el resultado tras recibir ayuda de TINO.') : 'Se registró acompañamiento de TINO, sin confirmar otro resultado.',
+        helpRequested: true, outcome: complete ? 'reported_complete' : 'not_reported',
+        resultSource: complete ? 'simulated_self_report' : 'help_requested',
+        assistanceEndReason: partial ? 'user_continued_alone' : 'guided_session_ended',
+        assistanceStartedAt: iso(minutesAgo + durationMinutes),
+        assistanceEndedAt: iso(minutesAgo + durationMinutes - (partial ? Math.max(1,Math.round(durationMinutes*.4)) : durationMinutes)),
+        ...(complete ? { outcomeReportedAt: iso(minutesAgo) } : {}),
+        at: iso(minutesAgo), ...(kind === 'safety' ? { alertId: 'demo-link-1' } : {}) };
+    });
     const todayActivities=activities.filter(e=>localDay(e.at)===localDay(now));
     const appUsage = [...new Set(todayActivities.map(e => e.app))].map(name => ({ name, minutes: todayActivities.filter(e => e.app === name).reduce((n, e) => n + e.durationMinutes, 0) })).filter(a => a.minutes).sort((a, b) => b.minutes - a.minutes);
     const screenMinutes = appUsage.reduce((n, a) => n + a.minutes, 0);
     const weeklyScreen = p.weeklyScreen.map((n, i) => i === 6 ? screenMinutes : n);
     const tinoMinutes = todayActivities.reduce((n, e) => n + e.assistedMinutes, 0);
     const weeklyTino = p.weeklyTino.map((n, i) => i === 6 ? tinoMinutes : n);
-    const latest = activities[0];
-    return { ...p, permissions: { progress: true, help: true, usage: true, safety: true, websites: p.id !== 'lucia', location: Boolean(p.location) },
+    return { ...p, permissions: { progress: true, help: true, usage: true, safety: true, websites: true, location: Boolean(p.location) },
       screenMinutes, tinoMinutes, weeklyScreen, weeklyTino, appUsage, activities,
-      lastActiveAt: latest.at, lastActivity: latest.title, requestsToday: todayActivities.filter(e => e.helpRequested).length,
+      helpRequests: activities.length, weeklyRequests: activities.length,
+      lastActiveAt: activities[0].at, lastActivity: activities[0].title, requestsToday: todayActivities.length,
       websites: activities.filter(e => e.kind === 'website'),
       weeklyDays: weeklyScreen.map((screenMinutes, i) => ({ date: new Date(now - (6 - i) * 86_400_000).toISOString(), screenMinutes, tinoMinutes: weeklyTino[i] })) };
   });
-  return { origin: 'tino_simulated', label: 'Familia de demostración', snapshotAt: new Date(now).toISOString(),
+  return { origin: 'tino_simulated', label: 'Familia de demostración', schemaVersion: DEMO_FAMILY_VERSION, snapshotAt: new Date(now).toISOString(),
     group: { id: 'demo-family', name: 'Familia Ríos' }, members,
     alerts: [{ id: 'demo-link-1', memberId: 'marta', eventId: 'marta-link', type: 'suspicious_link', title: 'Un enlace para revisar juntos',
-      message: 'Un enlace prometía un premio y pedía datos personales. Marta lo revisó con TINO y no continuó al formulario.',
+      message: 'Un enlace prometía un premio y pedía datos personales. Marta pidió ayuda a TINO para revisarlo.',
       domain: 'premios-envio.example', signals: ['Dominio no reconocido', 'Solicitud de datos personales', 'Promesa de un premio'],
       recommendation: 'Contactá a Marta y revisen juntos el origen del mensaje. No hace falta abrir el enlace.', createdAt: iso(2), resolvedAt: null }], joinRequests: [] };
 }

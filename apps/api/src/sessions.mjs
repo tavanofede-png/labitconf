@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const GUIDED_STEPS = ['open_chat', 'attach', 'location', 'confirm', 'share', 'verify'];
-const EVENTS = new Set(['flow_started', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_reported', 'practice_started', 'practice_reported', 'cancelled', 'flow_completed', 'practice_completed', 'autonomy_completed']);
+const EVENTS = new Set(['flow_started', 'assistance_ended', 'step_shown', 'step_completed', 'step_repeated', 'user_lost', 'flow_reported', 'practice_started', 'practice_reported', 'cancelled', 'flow_completed', 'practice_completed', 'autonomy_completed']);
 const VERIFIED_RESULTS = new Set(['flow_completed', 'practice_completed', 'autonomy_completed']);
 export class SessionError extends Error {
   constructor(status, code, message) { super(message); this.name = 'SessionError'; this.status = status; this.code = code; }
@@ -98,6 +98,11 @@ export function applySessionEvent(state, userId, sessionId, body, now) {
     session.state = 'active'; session.startedAt = timestamp;
   } else if (body.type !== 'practice_started') {
     requireThat(record.state === 'active', 409, 'flow_not_started', 'Iniciá el recorrido antes de registrar pasos o resultados.');
+    if (body.type === 'assistance_ended') {
+      requireThat(screenAssistance && !attemptId, 409, 'invalid_transition', 'Esta decisión corresponde a la asistencia visual activa.');
+      requireThat(!session.assistanceEndedAt, 409, 'assistance_already_ended', 'Ya registraste que vas a seguir por tu cuenta.');
+      session.assistanceEndedAt = timestamp; session.assistanceEndReason = 'user_continued_alone';
+    }
     if (['step_shown', 'step_completed', 'step_repeated', 'user_lost'].includes(body.type)) stepEvent(record, body, screenAssistance, TASK_FLOWS[session.flowId]?.steps.map(s=>s.id) ?? GUIDED_STEPS);
     if (body.type === 'flow_reported' || body.type === 'practice_reported') {
       requireThat(!screenAssistance, 409, 'verification_unavailable', 'La asistencia de pantalla no acredita tareas completadas.');
@@ -123,6 +128,8 @@ export function publicSession(session) {
     createdAt: session.createdAt, startedAt: session.startedAt, reportedAt: session.reportedAt ?? (legacy ? session.completedAt : undefined),
     durationSeconds: session.durationSeconds ?? 0, completedSteps: session.completedSteps ?? [], autonomyCompleted: false,
     resultSource: legacy ? 'legacy_unverified' : session.resultSource ?? null,
+    assistanceLevel: session.assistanceEndReason === 'user_continued_alone' ? 'partial' : 'full',
+    assistanceEndedAt: session.assistanceEndedAt, assistanceEndReason: session.assistanceEndReason,
     practiceAttempts: (session.practiceAttempts ?? []).map(({ id, state, startedAt, reportedAt, cancelledAt, durationSeconds, completedSteps, assisted, resultSource }) => ({ id, state, startedAt, reportedAt, cancelledAt, durationSeconds, completedSteps, assisted, resultSource })),
     legacyPracticeReported: legacy && session.autonomyCompleted === true };
 }

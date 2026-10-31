@@ -137,21 +137,6 @@ internal fun familyMinutes(n: Int): String = if (n < 60) "$n min" else "${n / 60
     }
 }
 
-@Composable internal fun FamilyHelpRequestPreview(member: JSONObject, allowed: Boolean) {
-    FamilySurface(tint=FamilyMint) {
-        Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)) {
-                Text("AYUDA SOLICITADA A TINO",color=DashTeal,fontSize=10.sp,fontWeight=FontWeight.Bold,letterSpacing=.8.sp)
-                Text(if(allowed) member.optString("lastHelpRequest",member.optString("helpTopic")).takeUnless{it.isBlank()||it=="null"}?:"Sus próximas solicitudes de ayuda aparecerán acá." else "Sus solicitudes de ayuda son privadas.",color=DashInk,fontSize=17.sp,lineHeight=24.sp,fontWeight=FontWeight.SemiBold)
-                if(allowed && member.has("weeklyRequests")) {
-                    Text("${member.optInt("weeklyRequests")} solicitudes de ayuda esta semana",color=DashTeal,fontSize=12.sp)
-                }
-            }
-            Image(painterResource(R.drawable.tino_mascot),"TINO acompaña",Modifier.size(72.dp))
-        }
-    }
-}
-
 @Composable internal fun FamilyAppUsage(member: JSONObject, compact: Boolean=false) {
     val total=member.optInt("screenMinutes").coerceAtLeast(1)
     val apps=member.optJSONArray("appUsage").objects()
@@ -168,6 +153,7 @@ internal fun familyMinutes(n: Int): String = if (n < 60) "$n min" else "${n / 60
 }
 
 @Composable internal fun FamilyWeeklyChart(member: JSONObject, usage: Boolean, progress: Boolean) {
+    if(!usage && !progress) { FamilyLockedCard("Métricas y acompañamiento semanal"); return }
     var selected by remember(member.optString("id")){mutableIntStateOf(6)}
     val days=member.optJSONArray("weeklyDays").objects()
     val screen=member.optJSONArray("weeklyScreen").numbers()

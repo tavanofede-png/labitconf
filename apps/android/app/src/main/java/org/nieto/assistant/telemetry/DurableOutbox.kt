@@ -119,7 +119,7 @@ class DurableOutbox(private val storage: OutboxStorage) {
             UUID.fromString(event.eventId); UUID.fromString(event.session.clientSessionId)
             event.attemptId?.let { UUID.fromString(it) }
             require(event.session.flowId in setOf("whatsapp-location", "screen-assistance", "whatsapp-group", "email-send"))
-            require(event.type in setOf("flow_started", "step_shown", "step_completed", "step_repeated", "user_lost", "flow_reported", "practice_started", "practice_reported", "cancelled"))
+            require(event.type in setOf("flow_started", "assistance_ended", "step_shown", "step_completed", "step_repeated", "user_lost", "flow_reported", "practice_started", "practice_reported", "cancelled"))
             require(event.stepId == null || event.stepId in setOf("open_chat", "attach", "location", "confirm", "share", "verify", "screen-step", "open_whatsapp", "new_group", "select_people", "name_group", "review_group", "check_group", "open_email", "compose_email", "add_recipient", "add_subject", "write_email", "review_email", "send_email", "check_email"))
             require(event.durationSeconds == null || event.durationSeconds in 0..14_400)
             require(event.session.origin.serverUrl.length in 1..2048 && event.session.origin.installationToken.length in 1..512)

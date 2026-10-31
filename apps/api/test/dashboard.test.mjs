@@ -12,9 +12,9 @@ import { parseCsvBlock, buildPublicSnapshot, POPULATION_TABLE, CONNECTIVITY_TABL
 import { createModelAdapter } from '../src/model-adapter.mjs';
 const now = Date.parse('2026-10-30T15:00:00Z');
 const publicData = JSON.parse(readFileSync(new URL('../src/public-data/openarg-national-verified.json', import.meta.url)));
-test('family scenario reconciles daily apps, event durations, assisted time, weekly totals and learning', () => {
+test('family scenario reconciles shared action durations and omits all private metrics', () => {
   const family = demoFamily(now);
-  for (const member of family.members) {
+  for (const member of family.members.filter(m=>m.permissions.progress)) {
     assert.equal(member.screenMinutes, member.appUsage.reduce((n, a) => n + a.minutes, 0));
     assert.equal(member.screenMinutes, member.activities.reduce((n, a) => n + a.durationMinutes, 0));
     assert.equal(member.tinoMinutes, member.activities.reduce((n, a) => n + a.assistedMinutes, 0));
@@ -31,12 +31,12 @@ test('family scenario reconciles daily apps, event durations, assisted time, wee
     }
   }
   const marta = family.members[0], alert = family.alerts[0];
-  assert.equal(marta.screenMinutes, 46); assert.equal(marta.tinoMinutes, 18);
+  assert.ok(marta.screenMinutes > 50); assert.ok(marta.tinoMinutes > 20);
   assert.equal(marta.activities.find(e => e.id === alert.eventId).alertId, alert.id);
   assert.equal(marta.activities.find(e => e.id === alert.eventId).at, alert.createdAt);
   assert.ok(Date.parse(marta.location.sharedAt) < Date.parse(marta.location.updatedAt));
   assert.ok(Date.parse(marta.location.expiresAt) > now);
-  assert.equal(family.members[2].permissions.websites, false); assert.deepEqual(family.members[2].websites, []);
+  assert.equal(family.members[2].permissions.websites, false); assert.equal(family.members[2].websites, undefined);
   const later = demoFamily(now + 3_600_000, now);
   assert.equal(later.members[0].lastActiveAt, marta.lastActiveAt, 'refresh does not invent new activity');
   assert.equal(later.alerts[0].createdAt, alert.createdAt);
@@ -111,6 +111,7 @@ test('demo dashboards are role-bound, actions are group-isolated, and demo insti
   assert.equal(after.alerts[0].createdAt, before.alerts[0].createdAt);
   assert.ok(Date.parse(after.alerts[0].resolvedAt) >= Date.parse(after.alerts[0].createdAt));
   assert.equal((await req('/demo/family/dashboard', other)).body.alerts[0].resolvedAt, null);
+  for(const type of ['ping','voice','location_request','resolve']) assert.equal((await req('/demo/family/actions', family, { id: 'blocked-lucia-'+type, memberId:'lucia',type })).status,403);
   assert.equal((await req('/demo/family/actions', family, { id: 'voice-demo-001', memberId: 'marta', type: 'voice', audioBase64: 'not-a-recording' })).status, 400);
   const device = (await req('/devices', null, { name: 'Prueba de entrega', territoryId: 'AR-C' })).body;
   const invite = (await req('/family/invitations', family, {})).body;
@@ -126,14 +127,28 @@ test('demo dashboards are role-bound, actions are group-isolated, and demo insti
 });
 
 
-test('family task activity records requests for help rather than inferred external outcomes',()=>{
+test('shared family demo has twelve TINO actions and distinguishes explicit partial help from reported outcomes',()=>{
  const family=demoFamily(now);
- for(const member of family.members){
-  assert.ok(member.helpRequests>0);
-  for(const event of member.activities.filter(e=>e.kind==='task')){
-   assert.equal(event.helpRequested,true);assert.equal(event.resultSource,'help_requested');assert.equal(event.independent,undefined);
-   assert.match(event.title,/^Ayuda para /);assert.doesNotMatch(event.title+' '+event.detail,/Creó|Envió|completó|por su cuenta|independiente/i);
+ for(const member of family.members.filter(m=>m.permissions.progress)){
+  assert.ok(member.activities.length>=10);
+  assert.ok(member.activities.every(e=>e.helpRequested===true));
+  assert.ok(member.activities.some(e=>e.assistanceLevel==='full'));
+  assert.ok(member.activities.some(e=>e.assistanceLevel==='partial'));
+  assert.ok(member.activities.some(e=>e.title==='Grupo de WhatsApp creado'));
+  assert.ok(member.activities.some(e=>e.title==='Email enviado'));
+  for(const event of member.activities){
+   assert.equal(event.independent,undefined);
+   assert.ok(event.assistedMinutes<=event.durationMinutes);
+   if(event.assistanceLevel==='partial')assert.equal(event.assistanceEndReason,'user_continued_alone');
+   if(event.outcome==='reported_complete')assert.equal(event.resultSource,'simulated_self_report');
+   else assert.equal(event.resultSource,'help_requested');
   }
-  assert.doesNotMatch(member.lastHelpRequest,/creó|envió|por su cuenta|sin ayuda/i);
  }
+});
+
+test('Lucia shares location only and no usage, activity, online status or derived metrics reach the client',()=>{
+ const lucia=demoFamily(now).members.find(m=>m.id==='lucia');
+ assert.deepEqual(lucia.permissions,{progress:false,help:false,usage:false,safety:false,websites:false,location:true});
+ assert.ok(lucia.location.point.length===2);
+ for(const key of ['activities','websites','screenMinutes','tinoMinutes','weeklyScreen','weeklyTino','weeklyDays','appUsage','requestsToday','helpRequests','weeklyRequests','lastActiveAt','lastActivity','online'])assert.equal(Object.hasOwn(lucia,key),false,key);
 });
