@@ -73,7 +73,7 @@ private val Paper = Color(0xFFF3F6F6)
                     ChatMenuAction("Ajustes") { closeMenu(onSettings) }
                     Spacer(Modifier.weight(1f))
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    ChatMenuAction("Cerrar sesión", enabled = !state.busy) { closeMenu { app.stopSpeaking(); onLogout() } }
+                    LogoutButton(enabled = !state.busy) { closeMenu { app.stopSpeaking(); onLogout() } }
                 }
             }
         }

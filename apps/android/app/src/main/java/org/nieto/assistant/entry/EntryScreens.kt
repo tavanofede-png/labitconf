@@ -53,6 +53,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.nieto.assistant.NietoApp
 import org.nieto.assistant.R
+import org.nieto.assistant.ui.LogoutButton
 
 private val Teal = Color(0xFF006B64)
 private val Mint = Color(0xFFE3F9F6)
@@ -210,7 +211,7 @@ private val Background = Color(0xFFF3F6F6)
         val warnings = context?.optJSONArray("warnings"); for (i in 0 until (warnings?.length() ?: 0)) Banner(warnings!!.getString(i))
         val indicators = context?.optJSONArray("indicators"); for (i in 0 until (indicators?.length() ?: 0)) { val item = indicators!!.getJSONObject(i); Stat(item.optString("label"), "${item.opt("value")} ${item.optString("unit")}"); Text("${item.optString("period")} · ${item.optString("sourceTitle")}", fontSize = 14.sp, color = Muted) }
     }
-    TextButton(onClick = vm::logout, enabled = !s.busy) { Text("Cerrar sesión") }
+    LogoutButton(enabled = !s.busy, onClick = vm::logout)
 }
 
 @Composable private fun ConnectionScreen(initial: String, busy: Boolean, connect: (String) -> Unit) {
