@@ -23,9 +23,10 @@ import org.json.JSONObject
 import org.nieto.assistant.BuildConfig
 import org.nieto.assistant.screen.ScreenStep
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class VoicePhase { IDLE, CONNECTING, LISTENING, WAITING, SPEAKING, ERROR }
-data class VoiceState(val phase: VoicePhase = VoicePhase.IDLE, val message: String = "Voz con OpenAI Realtime", val partialText: String = "") {
+data class VoiceState(val phase: VoicePhase = VoicePhase.IDLE, val message: String = "Voz con TINO", val partialText: String = "") {
     val active get() = phase in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING, VoicePhase.WAITING, VoicePhase.SPEAKING)
 }
 
@@ -45,6 +46,7 @@ class RealtimeVoice(
     private var pendingCapture = false
     private var pendingText: String? = null
     private var pendingScreen: JSONObject? = null
+    private var lastScreenContextAt = 0L
     private var ignoredCancelAcks = 0
     private var connectionKey: Pair<String, String>? = null
     private var watchdog: Job? = null
@@ -147,7 +149,7 @@ class RealtimeVoice(
         if (!ready || current.active || text.isBlank()) return false
         turns.cancel(); player.stop(); transcript = ""
         awaitingResponse = true
-        emit(VoiceState(VoicePhase.WAITING, "Consulta enviada. Esperando la respuesta de NIETO…"))
+        emit(VoiceState(VoicePhase.WAITING, "Consulta enviada. Esperando la respuesta de TINO…"))
         if (!send(JSONObject().put("type", "text").put("text", text.take(1000)))) return true
         armTimeout(110_000, connectionGeneration, "La respuesta de voz tardó demasiado. Podés intentar otra vez.")
         return true
@@ -163,6 +165,7 @@ class RealtimeVoice(
         ++connectionGeneration
         pendingCapture = false
         pendingText = null; pendingScreen = null; ignoredCancelAcks = 0
+        lastScreenContextAt = 0L
         ready = false
         awaitingResponse = false
         commitCapture = false
@@ -197,7 +200,10 @@ class RealtimeVoice(
     private fun beginRequested(generation: Long) {
         if (!send(JSONObject().put("type", "output.mode").put("mode", outputMode))) return
         val screen = pendingScreen; pendingScreen = null
-        if (screen != null && !send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", false))) return
+        if (screen != null) {
+            if (!send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", false))) return
+            lastScreenContextAt = SystemClock.elapsedRealtime()
+        }
         if (screen == null) send(JSONObject().put("type", "screen.clear"))
         val text = pendingText; pendingText = null
         if (text != null) {
@@ -210,10 +216,27 @@ class RealtimeVoice(
         if (!ready || current.active) return false
         if (requestGuidance) {
             turns.cancel(); player.stop(); transcript = ""; awaitingResponse = true
-            emit(VoiceState(VoicePhase.WAITING, "La pantalla cambió. NIETO prepara el próximo paso…"))
+            emit(VoiceState(VoicePhase.WAITING, "La pantalla cambió. TINO prepara el próximo paso…"))
         }
         val accepted = send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", requestGuidance))
+        if (accepted) lastScreenContextAt = SystemClock.elapsedRealtime()
         if (accepted && requestGuidance) armTimeout(110_000, connectionGeneration, "No pude preparar el siguiente paso. Tocá Actualizar pantalla para intentar otra vez.")
+        return accepted
+    }
+    /** Refresh the observation without ending this user's audio input or starting a model response. */
+    fun updateScreenWhileListening(screen: JSONObject?): Boolean {
+        if (current.phase !in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING)) return false
+        pendingScreen = screen
+        if (!ready) return current.phase == VoicePhase.CONNECTING
+        if (screen == null) return send(JSONObject().put("type", "screen.clear"))
+        val now = SystemClock.elapsedRealtime()
+        if (lastScreenContextAt > 0 && now - lastScreenContextAt < 750L) {
+            // Removing the previous snapshot is always safe; never keep an old target because of throttling.
+            send(JSONObject().put("type", "screen.clear"))
+            return false
+        }
+        val accepted = send(JSONObject().put("type", "screen.context").put("screen", screen).put("requestGuidance", false))
+        if (accepted) lastScreenContextAt = now
         return accepted
     }
     private fun interruptPlayback(ignoreAcknowledgement: Boolean) {
@@ -258,7 +281,7 @@ class RealtimeVoice(
                     transcript = ""
                     playback.start(turnId)
                     if (outputMode == "audio") player.start(turnId)
-                    emit(VoiceState(VoicePhase.WAITING, "NIETO está preparando la respuesta…"))
+                    emit(VoiceState(VoicePhase.WAITING, "TINO está preparando la respuesta…"))
                 }
             }
             "audio.delta" -> {
@@ -269,7 +292,7 @@ class RealtimeVoice(
                     fail("La respuesta de voz no identificó correctamente su audio. Podés usar una consulta escrita."); return
                 }
                 if (!player.append(turnId, bytes)) { fail("La respuesta de voz superó el límite de reproducción. Podés volver a preguntar."); return }
-                emit(current.copy(phase = VoicePhase.SPEAKING, message = "NIETO te está respondiendo. Podés cancelar cuando quieras."))
+                emit(current.copy(phase = VoicePhase.SPEAKING, message = "TINO te está respondiendo. Podés cancelar cuando quieras."))
             }
             "text.delta" -> {
                 if (!turns.accepts(event.optString("turnId"))) return
@@ -317,7 +340,7 @@ class RealtimeVoice(
         }
     }
 
-    @SuppressLint("MissingPermission") // MainActivity obtains RECORD_AUDIO before this explicit action.
+    @SuppressLint("MissingPermission") // The foreground voice owner obtains RECORD_AUDIO before starting this capture.
     private fun beginCapture(generation: Long) {
         if (!pendingCapture || generation != connectionGeneration || !ready) return
         pendingCapture = false
@@ -325,9 +348,19 @@ class RealtimeVoice(
         turns.cancel()
         if (!send(JSONObject().put("type", "audio.start"))) return
         recording = true
-        emit(VoiceState(VoicePhase.LISTENING, "Te escucho. Tocá Terminar de hablar. Máximo 45 segundos."))
+        val activity = VoiceActivityPolicy()
+        val silentTimeout = AtomicBoolean(false)
+        emit(VoiceState(VoicePhase.LISTENING, "Te escucho. Hablá con naturalidad; envío tu consulta cuando hacés una pausa."))
         captureDeadline = scope.launch {
-            delay(RealtimePolicy.MAX_INPUT_SECONDS * 1000L)
+            delay(VoiceActivityPolicy.NO_SPEECH_TIMEOUT_MS)
+            if (generation == connectionGeneration && recording && !activity.hasSpeech) {
+                silentTimeout.set(true)
+                commitCapture = false
+                recording = false
+                synchronized(captureLock) { runCatching { recorder?.stop() } }
+                return@launch
+            }
+            delay(RealtimePolicy.MAX_INPUT_SECONDS * 1000L - VoiceActivityPolicy.NO_SPEECH_TIMEOUT_MS)
             if (generation == connectionGeneration && recording) finishInput()
         }
         val captureSocket = socket
@@ -355,14 +388,27 @@ class RealtimeVoice(
                     if (read < 0) { if (recording) problem = "El teléfono no pudo capturar el audio."; break }
                     if (read == 0) continue
                     if (!recording || generation != connectionGeneration) break
-                    val aligned = read - read % 2
-                    if (aligned == 0) continue
+                    if (read % 2 != 0) { problem = "El micrófono entregó un bloque de audio incompleto. Volvé a hablar."; break }
+                    val aligned = read
                     val message = JSONObject().put("type", "audio.append").put("audio", RealtimePolicy.encodeInput(chunk, aligned))
                     val ws = captureSocket
                     if (ws == null || ws.queueSize() > RealtimePolicy.MAX_SOCKET_QUEUE_BYTES || !ws.send(message.toString())) {
                         problem = "La conexión es demasiado lenta para enviar el audio."; break
                     }
                     captured += aligned
+                    when (activity.observe(chunk, aligned)) {
+                        VoiceActivityPolicy.Decision.END_OF_SPEECH, VoiceActivityPolicy.Decision.MAX_DURATION -> {
+                            commitCapture = true
+                            recording = false
+                            break
+                        }
+                        VoiceActivityPolicy.Decision.NO_SPEECH -> {
+                            silentTimeout.set(true)
+                            recording = false
+                            break
+                        }
+                        VoiceActivityPolicy.Decision.CONTINUE -> Unit
+                    }
                 }
                 if (generation == connectionGeneration && captured >= RealtimePolicy.MAX_INPUT_BYTES) commitCapture = true
             } catch (_: Exception) { if (generation == connectionGeneration) problem = "No pude iniciar el micrófono. Revisá su permiso o usá texto." }
@@ -376,11 +422,20 @@ class RealtimeVoice(
                     if (generation != connectionGeneration) return@launch
                     captureDeadline?.cancel(); captureDeadline = null
                     if (problem != null) { fail(problem!!); return@launch }
+                    if (silentTimeout.get() || (commitCapture && !activity.hasSpeech)) {
+                        // Drop only this input: an empty attempt must not consume another connection reservation.
+                        if (send(JSONObject().put("type", "cancel"), failOnError = false)) ++ignoredCancelAcks
+                        commitCapture = false
+                        awaitingResponse = false
+                        turns.cancel()
+                        emit(VoiceState(VoicePhase.ERROR, "No escuché voz con claridad. Volvé a hablar o escribile a TINO."))
+                        return@launch
+                    }
                     if (!commitCapture) return@launch
                     commitCapture = false
-                    if (captured < RealtimePolicy.MIN_INPUT_BYTES) { fail("La grabación fue muy breve. Tocá Hablar e intentá de nuevo."); return@launch }
+                    if (captured < RealtimePolicy.MIN_INPUT_BYTES) { fail("La consulta fue muy breve. Volvé a hablar con TINO."); return@launch }
                     awaitingResponse = true
-                    emit(VoiceState(VoicePhase.WAITING, "Consulta enviada. Esperando la respuesta de NIETO…"))
+                    emit(VoiceState(VoicePhase.WAITING, "Consulta enviada. Esperando la respuesta de TINO…"))
                     if (send(JSONObject().put("type", "audio.commit"))) armTimeout(110_000, generation, "La respuesta de voz tardó demasiado. Podés intentar otra vez.")
                 }
             }

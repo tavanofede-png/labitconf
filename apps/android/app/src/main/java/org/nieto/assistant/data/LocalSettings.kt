@@ -15,7 +15,7 @@ import org.nieto.assistant.BuildConfig
 class LocalSettings(context: Context) {
     private val preferences = context.getSharedPreferences("nieto_private", Context.MODE_PRIVATE)
     var baseUrl: String
-        get() = preferences.getString("base_url", "http://10.0.2.2:8787")!!
+        get() = preferences.getString("base_url", BuildConfig.API_BASE_URL)!!
         set(value) {
             val normalized = value.trim().trimEnd('/')
             val uri = URI(normalized)
@@ -29,6 +29,9 @@ class LocalSettings(context: Context) {
     var deviceName: String
         get() = preferences.getString("device_name", "Mi teléfono")!!
         set(value) { preferences.edit().putString("device_name", value.take(60)).apply() }
+    var wakeOptIn: Boolean
+        get() = preferences.getBoolean("tino_wake_opt_in_v1", false)
+        set(value) { preferences.edit().putBoolean("tino_wake_opt_in_v1", value).apply() }
     var deviceId: String
         get() = preferences.getString("device_id", "")!!
         set(value) { preferences.edit().putString("device_id", value).apply() }

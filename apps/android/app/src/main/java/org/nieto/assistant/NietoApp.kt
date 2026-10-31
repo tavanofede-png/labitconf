@@ -1,6 +1,13 @@
 package org.nieto.assistant
 
 import android.app.Application
+import android.app.KeyguardManager
+import android.Manifest
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.service.voice.VoiceInteractionService
+import androidx.core.content.ContextCompat
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +28,8 @@ import org.nieto.assistant.voice.RealtimeVoice
 import org.nieto.assistant.voice.VoicePhase
 import org.nieto.assistant.voice.VoiceState
 import org.nieto.assistant.voice.GuideAnnouncementPolicy
+import org.nieto.assistant.voice.WakeWordService
+import org.nieto.assistant.voice.TinoVoiceInteractionService
 import org.nieto.assistant.telemetry.TelemetrySession
 import org.nieto.assistant.telemetry.TelemetrySync
 import org.nieto.assistant.screen.*
@@ -55,6 +64,10 @@ data class AppState(
     val voiceSurfaceVisible: Boolean = false,
     val textOnly: Boolean = false,
     val realtimeApproved: Boolean = false,
+    val wakeEnabled: Boolean = false,
+    val wakeStatus: String = "Activación por voz desactivada",
+    val ttsSpeaking: Boolean = false,
+    val assistantSelected: Boolean = false,
 )
 
 class NietoApp : Application() {
@@ -71,6 +84,7 @@ class NietoApp : Application() {
     private var ttsReady = false
     private var ttsInitialized = false
     private var pendingSpeech: String? = null
+    private var wakeGreetingJob: Job? = null
     private val guideAnnouncements = GuideAnnouncementPolicy()
     private var lastScreenNotice: String? = null
     private var voiceRequestedFromOverlay = false
@@ -106,8 +120,12 @@ class NietoApp : Application() {
         } }
         mutable.value = mutable.value.copy(territoryId = settings.territoryId)
         realtime = RealtimeVoice(scope,
-            onState = { voice -> mutable.value = mutable.value.copy(voice = voice); if (!voice.active) scheduleScreenFollowUp() },
-            onAnswer = { answer -> if (state.value.screen == null || state.value.screenValid) mutable.value = mutable.value.copy(answer = answer) },
+            onState = { voice ->
+                if (state.value.voice.phase == VoicePhase.LISTENING && voice.phase == VoicePhase.WAITING) hasTask = true
+                mutable.value = mutable.value.copy(voice = voice)
+                if (!voice.active && voice.phase != VoicePhase.ERROR) scheduleScreenFollowUp()
+            },
+            onAnswer = { answer -> mutable.value = mutable.value.copy(answer = answer) },
             onGuidanceOffer = {},
             onStep = { step ->
                 if (state.value.screenValid && ScreenPolicy.target(step, state.value.screen, android.os.SystemClock.elapsedRealtime()) != null) {
@@ -133,6 +151,57 @@ class NietoApp : Application() {
     }
 
     fun status(text: String) { mutable.value = mutable.value.copy(status = text) }
+    fun setWakeStatus(text: String) { mutable.value = mutable.value.copy(wakeStatus = text) }
+    fun refreshAssistantRole() { mutable.value = mutable.value.copy(assistantSelected = VoiceInteractionService.isActiveService(this, ComponentName(this, TinoVoiceInteractionService::class.java))) }
+    fun startWakeListening() {
+        if (!settings.openAiConsent || !settings.remoteScreenConsent || settings.token.isBlank()) {
+            status("Completá la conexión y los permisos iniciales de TINO."); return
+        }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            status("Falta autorizar el micrófono para decir Hola Tino."); return
+        }
+        if (!state.value.assistanceEnabled) enableAssistance()
+        if (!state.value.assistanceEnabled) return
+        settings.wakeOptIn = true
+        mutable.value = mutable.value.copy(wakeEnabled = true, textOnly = false)
+        runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, WakeWordService::class.java).setAction(WakeWordService.ACTION_START))
+        }.onFailure {
+            mutable.value = mutable.value.copy(wakeEnabled = false, wakeStatus = "Android no permitió iniciar la escucha. Revisá el asistente predeterminado y el permiso de micrófono.")
+        }
+    }
+    fun restoreWakeListening() {
+        if (settings.wakeOptIn && VoiceInteractionService.isActiveService(this, ComponentName(this, TinoVoiceInteractionService::class.java))) startWakeListening()
+    }
+    fun stopWakeListening(clearPreference: Boolean = true) {
+        if (clearPreference) settings.wakeOptIn = false
+        wakeGreetingJob?.cancel(); wakeGreetingJob = null
+        mutable.value = mutable.value.copy(wakeEnabled = false, wakeStatus = "Activación por voz desactivada")
+        stopService(Intent(this, WakeWordService::class.java))
+        cancelRealtimeVoice()
+    }
+    fun requestSystemVoice() {
+        if (!state.value.wakeEnabled) return
+        startService(Intent(this, WakeWordService::class.java).setAction(WakeWordService.ACTION_TALK))
+    }
+    /** Called only after the foreground service has released the local wake microphone. */
+    fun startVoiceFromWake() {
+        if (!state.value.wakeEnabled || !state.value.assistanceEnabled || state.value.voice.active || state.value.busy) return
+        if ((getSystemService(KEYGUARD_SERVICE) as KeyguardManager).isKeyguardLocked) {
+            speak("Hola, estoy acá. Desbloqueá la tablet para que pueda ayudarte con la pantalla."); return
+        }
+        wakeGreetingJob?.cancel()
+        val request = assistantRequest
+        wakeGreetingJob = scope.launch {
+            speak(if (hasTask) "Te escucho." else "Hola, estoy acá. ¿En qué te ayudo?")
+            // Release the local greeting before opening the remote microphone, without an Activity.
+            var waited = 0
+            delay(200)
+            while ((pendingSpeech != null || state.value.ttsSpeaking || tts?.isSpeaking == true) && waited < 6000) { delay(100); waited += 100 }
+            stopSpeaking()
+            if (request == assistantRequest && state.value.wakeEnabled && state.value.assistanceEnabled) prepareVoice { startRealtimeVoice() }
+        }
+    }
     fun speak(text: String = state.value.guide.notice ?: state.value.guide.instruction) {
         if (text.isBlank() || (state.value.assistanceEnabled && state.value.textOnly)) return
         if (!ttsReady) {
@@ -141,8 +210,9 @@ class NietoApp : Application() {
             return
         }
         pendingSpeech = null
+        mutable.value = mutable.value.copy(ttsSpeaking = true)
         if (runCatching { tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "nieto_instruction") ?: TextToSpeech.ERROR }.getOrDefault(TextToSpeech.ERROR) == TextToSpeech.ERROR)
-            speechNotice("Android no pudo iniciar la lectura. Revisá el motor de voz y el idioma español; la instrucción sigue en pantalla.")
+            { mutable.value = mutable.value.copy(ttsSpeaking = false); speechNotice("Android no pudo iniciar la lectura. Revisá el motor de voz y el idioma español; la instrucción sigue en pantalla.") }
     }
     private fun initializeSpeech(result: Int) {
         ttsInitialized = true
@@ -159,16 +229,16 @@ class NietoApp : Application() {
             return
         }
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { }
-            override fun onDone(utteranceId: String?) { }
-            @Deprecated("Android compatibility callback") override fun onError(utteranceId: String?) { scope.launch { speechNotice("La lectura por voz falló. Podés repetir el paso o leerlo en pantalla.") } }
+            override fun onStart(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = true) } }
+            override fun onDone(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = false) } }
+            @Deprecated("Android compatibility callback") override fun onError(utteranceId: String?) { scope.launch { mutable.value = mutable.value.copy(ttsSpeaking = false); speechNotice("La lectura por voz falló. Podés repetir el paso o leerlo en pantalla.") } }
             override fun onError(utteranceId: String?, errorCode: Int) { onError(utteranceId) }
         })
         ttsReady = true; speechNotice("")
         pendingSpeech?.let { speak(it) }
     }
     private fun speechNotice(message: String) { mutable.value = mutable.value.copy(ttsNotice = message) }
-    fun stopSpeaking() { pendingSpeech = null; runCatching { tts?.stop() } }
+    fun stopSpeaking() { pendingSpeech = null; runCatching { tts?.stop() }; mutable.value = mutable.value.copy(ttsSpeaking = false) }
     fun retryTelemetry() { TelemetrySync.retryRetained(this) }
     fun enableAssistance() {
         if (!settings.remoteScreenConsent || !settings.openAiConsent) { status("Aceptá el permiso nuevo de asistencia con OpenAI."); return }
@@ -180,8 +250,8 @@ class NietoApp : Application() {
         stopSpeaking()
         lastScreenNotice = null
         mutable.value = mutable.value.copy(guide = engine.state, assistanceEnabled = true, overlayEnabled = true,
-            answer = "Abrí la app que querés usar y tocá la burbuja N para contarme tu tarea.")
-        status("Asistencia activa. Vos hacés cada toque. El micrófono sigue apagado.")
+            answer = "Decí Hola Tino desde la aplicación donde necesitás ayuda.")
+        status("Asistencia activa. Vos hacés cada toque.")
     }
     fun prepareVoice(onReady: () -> Unit) {
         if (!state.value.assistanceEnabled || !settings.remoteScreenConsent) return
@@ -192,7 +262,8 @@ class NietoApp : Application() {
         val ready: (ScreenContext?) -> Unit = { screen ->
             if (request == assistantRequest && state.value.assistanceEnabled) {
                 preparedVoiceScreen = screen?.takeUnless { it.blocked }
-                if (screen?.blocked == true) status(screen.notice) else onReady()
+                if (screen?.blocked == true) status("Pantalla privada: puedo conversar sin verla. No digas contraseñas ni códigos.")
+                onReady()
             }
         }
         screenCapture?.capture(ready) ?: ready(null)
@@ -219,7 +290,7 @@ class NietoApp : Application() {
                 if (request != assistantRequest || !state.value.assistanceEnabled) return@launch
                 delay((1000L - (android.os.SystemClock.elapsedRealtime() - lastSnapshotSentAt)).coerceAtLeast(0))
                 if (request != assistantRequest || !state.value.assistanceEnabled || !settings.remoteScreenConsent) return@launch
-                hasTask = true
+                if (!text.isNullOrBlank()) hasTask = true
                 val currentScreen = screen?.takeIf { !it.blocked && state.value.screenValid && state.value.screen?.id == it.id &&
                     state.value.screenPackage == it.packageName && android.os.SystemClock.elapsedRealtime() - it.capturedAt in 0..15_000 }
                 lastScreenSent = currentScreen?.id
@@ -242,11 +313,13 @@ class NietoApp : Application() {
         mutable.value = mutable.value.copy(busy = false, screenStep = null)
     }
     fun onAssistantBackground() {
+        if (state.value.wakeEnabled) return
         if (voiceStartJob?.isActive == true || state.value.voice.phase in listOf(VoicePhase.CONNECTING, VoicePhase.LISTENING)) cancelRealtimeVoice()
         else if (state.value.voice.active) realtime.cancelResponseForScreenChange()
         stopSpeaking()
     }
     fun stopAssistance() {
+        if (state.value.wakeEnabled) stopWakeListening()
         assistantEvent("cancelled", withStep = false, duration = true)
         assistantSession = null
         ++assistantRequest; ++voiceStartRequest
@@ -277,7 +350,7 @@ class NietoApp : Application() {
         if (state.value.assistanceEnabled) {
             followUp?.cancel(); followUp = null
             mutable.value = mutable.value.copy(screen = null, screenValid = false, screenStep = null)
-            realtime.clearScreen()
+            if (state.value.voice.phase in listOf(VoicePhase.LISTENING, VoicePhase.CONNECTING)) realtime.updateScreenWhileListening(null) else realtime.clearScreen()
             status("No puedo observar esta pantalla. Volvé a una pantalla sin datos sensibles.")
             announceScreenNotice(state.value.status)
         }
@@ -289,13 +362,14 @@ class NietoApp : Application() {
             screenStep = if (changed || screen.blocked) null else state.value.screenStep)
         if (screen.blocked) {
             followUp?.cancel()
-            if (state.value.voice.phase in listOf(VoicePhase.LISTENING, VoicePhase.CONNECTING)) cancelRealtimeVoice()
-            realtime.clearScreen(); status(screen.notice); announceScreenNotice(screen.notice)
+            if (state.value.voice.phase in listOf(VoicePhase.LISTENING, VoicePhase.CONNECTING)) realtime.updateScreenWhileListening(null)
+            else realtime.clearScreen()
+            status(screen.notice)
+            if (!state.value.voice.active) announceScreenNotice(screen.notice)
         } else if (changed) {
             lastScreenNotice = null
             if (state.value.voice.phase in listOf(VoicePhase.LISTENING, VoicePhase.CONNECTING)) {
-                cancelRealtimeVoice()
-                status("La pantalla cambió durante la consulta. Apagué el micrófono; tocá Hablar de nuevo cuando estés listo.")
+                realtime.updateScreenWhileListening(screen.toWire())
             } else if (state.value.voice.active) realtime.cancelResponseForScreenChange()
             scheduleScreenFollowUp()
         }
