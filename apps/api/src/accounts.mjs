@@ -23,11 +23,13 @@ const init = s => { for (const key of ['accounts', 'authChallenges', 'authSessio
 
 /** Passwordless account identity, separate from anonymous installations and family consent. */
 export function createAccounts({ store, now = Date.now, sendCode, authSecret = process.env.AUTH_SECRET,
-  localDemo = process.env.TINO_LOCAL_DEMO === '1', resendKey = process.env.RESEND_API_KEY,
+  localDemo = process.env.TINO_LOCAL_DEMO === '1', judgesDemo = process.env.TINO_JUDGES_DEMO === '1', demoEmail = process.env.TINO_DEMO_EMAIL ?? 'test@labitconf.com', resendKey = process.env.RESEND_API_KEY,
   mailFrom = process.env.AUTH_EMAIL_FROM, institutionEmails = (process.env.INSTITUTION_EMAILS ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
   onOperatorCode = ({ email, code }) => console.log(`[TINO PRUEBA LOCAL — NO CORREO] ${email}: ${code}`),
 } = {}) {
   // In local operator mode codes expire on restart. Production delivery requires an explicit server secret.
+  const demoAddress = judgesDemo ? email(demoEmail) : '';
+  const demoAllowed = account => judgesDemo && account.demo === true && account.email === demoAddress && account.role === 'user';
   const pepper = authSecret || randomBytes(32).toString('hex');
   const codeHash = (id, code) => createHmac('sha256', pepper).update(`${id}:${code}`).digest('hex');
   async function principal(bearer) {
@@ -35,10 +37,11 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
     const state = await store.read();
     const session = (state.authSessions ?? []).find(s => s.tokenHash === digest(bearer) && s.expiresAt > now());
     const account = session && (state.accounts ?? []).find(a => a.id === session.accountId);
+    if (account?.demo && !demoAllowed(account)) return null;
     return account ? { ...account, institutionApproved: account.role === 'institution' && institutionEmails.includes(account.email), sessionId: session.id } : null;
   }
   function snapshot(account, bearer) {
-    return { role: account.role, profile: account.profile ?? {}, onboardingRequired: !account.onboarded,
+    return { role: account.role, profile: account.profile ?? {}, onboardingRequired: !account.onboarded, demo: account.demo === true,
       ...(account.deviceId ? { deviceId: account.deviceId, deviceToken: bearer } : {}),
       ...(account.groupId ? { caregiverToken: bearer } : {}),
       ...(account.role === 'institution' && institutionEmails.includes(account.email) ? { institutionToken: bearer } : {}),
@@ -46,6 +49,31 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
       ...(account.pendingGroupId ? { accessStatus: 'group_approval_required' } : {}) };
   }
   async function handle({ route, method, body, bearer, remoteAddress }) {
+    if (method === 'POST' && route === '/auth/demo/login') {
+      check(judgesDemo, 404, 'demo_unavailable', 'El acceso de demostración no está habilitado.');
+      check(body && typeof body === 'object' && Object.keys(body).every(key => ['email', 'password'].includes(key)), 400, 'invalid_demo_input', 'Ingresá el correo y la contraseña de prueba.');
+      const address = email(body.email);
+      check(address === demoAddress && typeof body.password === 'string' && body.password.length <= 64 && equal(digest(body.password), digest('0000')), 401, 'invalid_demo_credentials', 'El correo o la contraseña de prueba no son correctos.');
+      const bearerToken = token(), current = now();
+      const result = await store.update(s => {
+        init(s);
+        let account = s.accounts.find(a => a.demo === true && a.email === demoAddress && a.role === 'user');
+        if (!account) {
+          let username = 'labitconf.demo', suffix = 1;
+          while (!availableUsername(s, username)) username = `labitconf.demo${++suffix}`;
+          account = { id: randomUUID(), email: demoAddress, role: 'user', demo: true, onboarded: true, createdAt: new Date(current).toISOString(),
+            profile: { name: 'TINO Demo', email: demoAddress, username, phone: '+540000000000', territoryId: 'AR-C' },
+            answers: { purpose: 0, interaction: 3, pace: 0, priority: 3 },
+            preferences: { microphone: false, notifications: false, screen: false, support: false, aggregates: false }, deviceId: randomUUID() };
+          s.accounts.push(account);
+          s.users.push({ id: account.deviceId, accountId: account.id, name: account.profile.name, territoryId: 'AR-C', demo: true, tokenHash: digest(token()), createdAt: new Date(current).toISOString() });
+        }
+        s.authSessions = s.authSessions.filter(session => session.expiresAt > current);
+        s.authSessions.push({ id: randomUUID(), accountId: account.id, tokenHash: digest(bearerToken), expiresAt: current + 7 * 86_400_000 });
+        return snapshot(account, bearerToken);
+      });
+      return [200, { ...result, sessionToken: bearerToken }];
+    }
     if (method === 'POST' && ['/accounts/username/suggest', '/accounts/username/check'].includes(route)) {
       const account = await principal(bearer);
       const state = await store.read();
@@ -94,7 +122,7 @@ export function createAccounts({ store, now = Date.now, sendCode, authSecret = p
         c.attempts++;
         if (!equal(c.hash, codeHash(c.id, body.code))) return null;
         c.used = true;
-        let account = s.accounts.find(a => a.email === c.email && a.role === c.role);
+        let account = s.accounts.find(a => !a.demo && a.email === c.email && a.role === c.role);
         if (!account) { account = { id: randomUUID(), email: c.email, role: c.role, onboarded: false, createdAt: new Date(current).toISOString() }; s.accounts.push(account); }
         if (c.purpose === 'family_join') account.requestedAdminEmail = c.adminEmail;
         s.authSessions = s.authSessions.filter(session => session.expiresAt > current);

@@ -27,10 +27,16 @@ Para correo real configurar `AUTH_SECRET`, `RESEND_API_KEY` y `AUTH_EMAIL_FROM` 
 
 La tablet Samsung SM-X820 con Android 16 se conectó después a esta Mac por USB y autorizó depuración. Se instaló la APK compilada, se abrió la bienvenida nativa y se verificó la conexión con `adb reverse` y el chat contra la API real.
 
+## Acceso de jueces sin onboarding
+
+Activar `TINO_JUDGES_DEMO=1` en el backend (`TINO_DEMO_EMAIL=test@labitconf.com`). Desde **Ya tengo cuenta → Usuario**, ingresar **test@labitconf.com**, escribir la contraseña **0000** y tocar **Ingresar a la demo**. La app abre directamente el asistente con un perfil de prueba completo. No se solicita un código ni se envía correo. El onboarding sigue disponible para cuentas nuevas.
+
+`POST /api/auth/demo/login { email, password }` devuelve una sesión real de API para una identidad de demostración. Su cuenta y dispositivo son distintos de cualquier cuenta real con el mismo correo. La contraseña pública de prueba no otorga permisos de Android, familiares ni institucionales. Varios jueces pueden ingresar a la vez y cerrar sesión de forma independiente. Desactivar `TINO_JUDGES_DEMO` deshabilita también las sesiones demo existentes. La clave 0000 solo es válida en este endpoint de demo habilitado explícitamente.
+
 ## Verificación actual
 
-Las 34 pruebas de API y los 7 tests unitarios Android pasan. Gradle completó `assembleDebug` y `testDebugUnitTest`. APK en `apps/android/app/build/outputs/apk/debug/app-debug.apk` (aproximadamente 11 MB), instalada correctamente en la tablet física.
+Pasan 39 pruebas de API y 10 tests unitarios Android. La API cubre acceso de demo con test@labitconf.com / 0000, omisión del onboarding, sesiones concurrentes y aislamiento frente a cuentas reales. La verificación de instalación de cada APK nueva se informa por separado: la última revisión del formulario se probó en el emulador, y su instalación en la Samsung sigue pendiente de recuperar el canal de depuración USB.
 
-Verificación física realizada: bienvenida, conexión USB al backend, registro de instalación, ingreso de una consulta por teclado y respuesta de la API visible en la app. Todavía deben verificarse en la tablet el login por correo con proveedor real, los otros roles completos, micrófono, permisos de Accesibilidad y el recorrido real sobre WhatsApp. OpenARG no tiene una clave configurada en esta Mac; no se acreditan datos públicos en vivo.
+Verificación física anterior: bienvenida, conexión USB al backend, registro de instalación, ingreso de una consulta por teclado y respuesta visible de la API. Todavía deben verificarse en la tablet el nuevo acceso demo, micrófono, permisos de Accesibilidad y el recorrido real sobre WhatsApp. OpenARG no tiene una clave configurada en esta Mac; no se acreditan datos públicos en vivo.
 
 `scripts/android-viewer.mjs` muestra imágenes en vivo de Android y transfiere toques/teclado al dispositivo seleccionado con `ANDROID_SERIAL`; por defecto usa `emulator-5554`. Solo escucha en loopback y exige origen y nonce para cada acción. En dispositivos físicos no permite cambiar resolución/densidad. Fue validado con la tablet: la orientación de los toques se calcula con las dimensiones de la captura real, no con la orientación natural del dispositivo. No recrea la app con HTML ni usa el frontend React.

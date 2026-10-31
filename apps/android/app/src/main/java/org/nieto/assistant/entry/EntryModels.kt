@@ -1,5 +1,7 @@
 package org.nieto.assistant.entry
 
+const val DEMO_ACCOUNT_EMAIL = "test@labitconf.com"
+
 enum class AccountRole(val label: String, val wire: String, val subtitle: String) {
     USER("Usuario", "user", "Quiero ayuda con mi teléfono"),
     FAMILY("Grupo Familiar", "family", "Quiero acompañar a alguien"),

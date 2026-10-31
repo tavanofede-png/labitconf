@@ -39,6 +39,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -133,10 +135,14 @@ private val Background = Color(0xFFF3F6F6)
                         Primary("Solicitar código de acceso", !s.busy, vm::requestCode)
                     }
                     EntryPage.LOGIN -> {
-                        Title("Volvé a tu espacio.", "Ingresá con un código de un solo uso. No necesitás contraseña.")
+                        val demo = s.role == AccountRole.USER && s.field("email").trim().equals(DEMO_ACCOUNT_EMAIL, ignoreCase = true)
+                        Title("Volvé a tu espacio.", if (demo) "Ingresá con la cuenta de prueba. Tu perfil ya está listo para usar TINO." else "Ingresá con un código de un solo uso. No necesitás contraseña.")
                         Column(Modifier.selectableGroup()) { AccountRole.entries.forEach { role -> RadioRow(role.label, role == s.role, { vm.loginRole(role) }, !s.busy) } }
                         EntryField("Tu correo", s.field("email"), { vm.field("email", it) }, KeyboardType.Email, enabled = !s.busy)
-                        Primary("Enviar código", !s.busy, vm::requestCode)
+                        if (demo) {
+                            EntryField("Contraseña de prueba", s.demoPassword, vm::demoPassword, KeyboardType.NumberPassword, enabled = !s.busy, secret = true)
+                            Primary("Ingresar a la demo", !s.busy && s.demoPassword.length == 4, vm::signInDemo)
+                        } else Primary("Enviar código", !s.busy, vm::requestCode)
                     }
                     EntryPage.CODE -> {
                         Title("Un código.\nSin contraseña.", if (s.delivery == "operator") "Modo de prueba local: pedile al equipo el código que aparece en la terminal del servidor. No se envió un correo." else "Ingresá el código enviado a ${s.field("email")}.")
@@ -226,7 +232,7 @@ private val Background = Color(0xFFF3F6F6)
     TextButton(onClick = { url = "http://10.0.2.2:8787" }) { Text("Usar emulador Android") }
 }
 @Composable private fun Title(title: String, detail: String) { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { Text(title, fontSize = 32.sp, lineHeight = 38.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.semantics { heading() }); Text(detail, fontSize = 18.sp, lineHeight = 27.sp, color = Muted) } }
-@Composable private fun EntryField(label: String, value: String, onChange: (String) -> Unit, keyboard: KeyboardType = KeyboardType.Text, enabled: Boolean = true) { OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), enabled = enabled, label = { Text(label, fontSize = 16.sp) }, keyboardOptions = KeyboardOptions(keyboardType = keyboard), singleLine = true, shape = RoundedCornerShape(16.dp)) }
+@Composable private fun EntryField(label: String, value: String, onChange: (String) -> Unit, keyboard: KeyboardType = KeyboardType.Text, enabled: Boolean = true, secret: Boolean = false) { OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), enabled = enabled, label = { Text(label, fontSize = 16.sp) }, keyboardOptions = KeyboardOptions(keyboardType = keyboard), visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None, singleLine = true, shape = RoundedCornerShape(16.dp)) }
 @Composable private fun Primary(label: String, enabled: Boolean = true, action: () -> Unit) { Button(action, Modifier.fillMaxWidth().heightIn(min = 58.dp), enabled = enabled, shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(18.dp)) { Text(label, fontSize = 18.sp, fontWeight = FontWeight.SemiBold) } }
 @Composable private fun Banner(text: String, error: Boolean = false) { Surface(color = if (error) Color(0xFFFFEDEA) else Mint, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite }) { Text(text, Modifier.padding(16.dp), color = if (error) Color(0xFF8B2525) else Teal, fontSize = 16.sp, lineHeight = 24.sp) } }
 @Composable private fun ChoiceCard(title: String, detail: String, action: () -> Unit) { Surface(onClick = action, color = Color.White, shape = RoundedCornerShape(20.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFDCE5E4)), modifier = Modifier.fillMaxWidth()) { Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(title, color = Ink, fontWeight = FontWeight.Bold, fontSize = 22.sp); Text(detail, color = Muted, fontSize = 17.sp, lineHeight = 25.sp) } } }

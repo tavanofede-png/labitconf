@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from '../src/server.mjs';
 import { OpenArgClient } from '../src/openarg.mjs';
+import { createAccounts } from '../src/accounts.mjs';
+import { JsonStore } from '../src/store.mjs';
 
 async function fixture(t, overrides = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'tino-accounts-')); const file = join(dir, 'state.json');
@@ -135,4 +137,49 @@ test('two simultaneous signups cannot save the same username', async t => {
   assert.deepEqual(result.map(r => r.status).sort(), [200, 409]);
   const stored = JSON.parse(await readFile(f.file, 'utf8'));
   assert.equal(stored.accounts.filter(a => a.profile?.username === 'same.name').length, 1);
+});
+
+
+
+test('judges log in with test@labitconf.com / 0000 without email or onboarding', async t => {
+  let deliveries = 0;
+  const f = await fixture(t, { judgesDemo: true, demoEmail: 'test@labitconf.com', sendCode: () => { deliveries++; } });
+  const login = (password = '0000', email = 'test@labitconf.com') => f.request('/auth/demo/login', { method: 'POST', body: { email, password } });
+  assert.equal((await login('1111')).status, 401);
+  assert.equal((await login('0000', 'other@example.com')).status, 401);
+  const before = await readFile(f.file, 'utf8').catch(error => { if (error.code === 'ENOENT') return '{}'; throw error; });
+  assert.equal(JSON.parse(before).accounts?.length ?? 0, 0);
+  const logins = await Promise.all([login(), login('0000', 'TEST@LABITCONF.COM')]);
+  for (const result of logins) {
+    assert.equal(result.status, 200); assert.equal(result.body.demo, true); assert.equal(result.body.onboardingRequired, false); assert.ok(result.body.deviceToken);
+    const me = await f.request('/accounts/me', { token: result.body.sessionToken });
+    assert.equal(me.body.profile.username, 'labitconf.demo'); assert.equal(me.body.profile.email, 'test@labitconf.com');
+    const message = await f.request('/assistant/message', { token: result.body.sessionToken, method: 'POST', body: { text: 'quiero compartir mi ubicación' } });
+    assert.equal(message.status, 200); assert.equal(message.body.flowId, 'whatsapp-location');
+    assert.notEqual((await f.request('/institution/analytics', { token: result.body.sessionToken })).status, 200);
+  }
+  assert.equal(deliveries, 0);
+  const disk = JSON.parse(await readFile(f.file, 'utf8'));
+  assert.equal(disk.accounts.filter(a => a.demo).length, 1); assert.equal(disk.users.filter(u => u.demo).length, 1);
+  assert.equal(disk.authChallenges.length, 0); assert.equal(disk.accounts.some(a => 'password' in a), false);
+  const disabled = createAccounts({ store: new JsonStore(f.file), judgesDemo: false });
+  assert.equal(await disabled.principal(logins[0].body.sessionToken), null);
+  assert.equal((await f.request('/accounts/session', { method: 'DELETE', token: logins[0].body.sessionToken })).status, 200);
+  assert.equal((await f.request('/assistant/history', { token: logins[0].body.sessionToken })).status, 401);
+  assert.equal((await f.request('/assistant/history', { token: logins[1].body.sessionToken })).status, 200);
+});
+
+test('demo password is opt-in and never authenticates the real account with the same email or grants another role', async t => {
+  const off = await fixture(t, { judgesDemo: false });
+  const body = { email: 'test@labitconf.com', password: '0000' };
+  assert.equal((await off.request('/auth/demo/login', { method: 'POST', body })).status, 404);
+  const f = await fixture(t, { judgesDemo: true, demoEmail: 'test@labitconf.com' });
+  const real = await f.login('test@labitconf.com'); await f.onboard(real, 'test@labitconf.com');
+  for (const role of ['institution', 'family']) assert.equal((await f.request('/auth/demo/login', { method: 'POST', body: { ...body, role } })).status, 400);
+  const demo = await f.request('/auth/demo/login', { method: 'POST', body });
+  const realMe = await f.request('/accounts/me', { token: real });
+  assert.equal(demo.status, 200); assert.notEqual(demo.body.deviceId, realMe.body.deviceId); assert.equal(realMe.body.demo, false);
+  f.advance(61_000);
+  const realAgain = await f.login('test@labitconf.com');
+  assert.equal((await f.request('/accounts/me', { token: realAgain })).body.deviceId, realMe.body.deviceId);
 });
