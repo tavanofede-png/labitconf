@@ -276,7 +276,7 @@ class WakeWordService : Service() {
             return
         }
         val now = SystemClock.elapsedRealtime()
-        if (!microphoneGranted() || !policy.accept(event.phrase, conditions(app.state.value), now)) { event.invocation?.pcm24k?.fill(0); return }
+        if (event.invocation == null || !microphoneGranted() || !policy.acceptVerifiedWake(conditions(app.state.value), now)) { event.invocation?.pcm24k?.fill(0); return }
         publishStatus("Preparando la consulta…")
         handoffCount++
         try { app.startVoiceFromWake(event.invocation) }
@@ -346,7 +346,7 @@ class WakeWordService : Service() {
         val ending = Recognizer(currentModel, SAMPLE_RATE)
         val ring = WakePcmRingBuffer()
         var wakeProof: WakePrefixProof? = null
-        var pendingFreeFinal: Pair<String, List<WakeTimedWord>?>? = null
+        var pendingFreeFinal: Triple<String, List<WakeTimedWord>?, Long>? = null
         var recorder: AudioRecord? = null
         var echo: AcousticEchoCanceler? = null
         val wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TINO:LocalWakeRecognition")
@@ -421,13 +421,13 @@ class WakeWordService : Service() {
                         state.voice.phase == VoicePhase.SPEAKING, state.voice.partialText.ifBlank { state.answer })) return CaptureResult(text, true)
                     if (mode != CaptureMode.END_ONLY) {
                         // Either decoder can finalize first; replace metadata with the latest free utterance.
-                        pendingFreeFinal = text to timed(json)
+                        pendingFreeFinal = Triple(text, timed(json), ring.totalSamples)
                     }
                 }
                 if (mode != CaptureMode.END_ONLY && (wakeFinal || endFinal)) {
-                    pendingFreeFinal?.let { (text, words) ->
-                        // Retry the complete free utterance after either final, never the shorter wake prefix.
-                        val invocation = ring.extractInvocation(true, text, words, wakeProof)
+                    pendingFreeFinal?.let { (text, words, finalSample) ->
+                        // Keep the full endpoint's PCM; do not require the general ASR to spell the proper name again.
+                        val invocation = wakeProof?.let { ring.extractVerifiedInvocation(it, finalSample, words) }
                         if (invocation != null) { invocationCount++; return CaptureResult(text, false, invocation) }
                     }
                 }

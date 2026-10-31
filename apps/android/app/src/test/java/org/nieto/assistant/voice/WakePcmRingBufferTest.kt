@@ -4,6 +4,41 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WakePcmRingBufferTest {
+    @Test fun `a verified wake exports the complete real utterance even when free ASR spells the name differently`() {
+        val ring = WakePcmRingBuffer()
+        ring.append(ShortArray(48_000) { if (it < 16_000) (-12345).toShort() else 4321 }, 48_000)
+        val proof = ring.verifyWakePrefix(true, "hola tino", words(1.0, 2.0).take(2))!!
+        val free = words().mapIndexed { index, word -> if (index == 1) word.copy(word = "chino", confidence = .3) else word }
+        assertNull(ring.extractInvocation(true, "hola chino estas ahi", free, proof))
+        val invocation = ring.extractVerifiedInvocation(proof, 40_000, free)!!
+        assertEquals(16_000L, invocation.startSample16k)
+        assertEquals(40_000L, invocation.endSample16k)
+        assertTrue(shorts(invocation.pcm24k).all { it == 4321 })
+        assertNull(ring.extractVerifiedInvocation(proof, 40_000, free))
+    }
+
+    @Test fun `free recognition can omit words but cannot authorize audio before or beyond the verified endpoint`() {
+        val ring = WakePcmRingBuffer().apply { append(ShortArray(48_000), 48_000) }
+        val proof = ring.verifyWakePrefix(true, "hola tino", words().take(2))!!
+        assertNull(ring.extractVerifiedInvocation(proof, 20_000, null))
+        assertNull(ring.extractVerifiedInvocation(proof, 48_001, null))
+        assertNull(ring.extractVerifiedInvocation(proof, -1, null))
+        assertNotNull(ring.extractVerifiedInvocation(proof, 40_000, null))
+    }
+
+    @Test fun `endpoint extraction still rejects foreign reset overwritten and low confidence wake evidence`() {
+        val ring = WakePcmRingBuffer().apply { append(ShortArray(48_000), 48_000) }
+        assertNull(ring.verifyWakePrefix(true, "hola tino", words().take(2).map { it.copy(confidence = .849) }))
+        val proof = ring.verifyWakePrefix(true, "hola tino", words().take(2))!!
+        val other = WakePcmRingBuffer().apply { append(ShortArray(48_000), 48_000) }
+        assertNull(other.extractVerifiedInvocation(proof, 40_000))
+        ring.clear(); ring.append(ShortArray(48_000), 48_000)
+        assertNull(ring.extractVerifiedInvocation(proof, 40_000))
+        val fresh = ring.verifyWakePrefix(true, "hola tino", words().take(2))!!
+        ring.append(ShortArray(160_000), 160_000)
+        assertNull(ring.extractVerifiedInvocation(fresh, ring.totalSamples))
+    }
+
     private fun pcm(vararg samples: Int) = ByteArray(samples.size * 2).apply { samples.forEachIndexed { index, value ->
         this[index * 2] = value.toByte(); this[index * 2 + 1] = (value shr 8).toByte()
     } }

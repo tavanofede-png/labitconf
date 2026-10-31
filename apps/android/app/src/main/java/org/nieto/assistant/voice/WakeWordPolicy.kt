@@ -36,7 +36,13 @@ class WakeWordPolicy {
             handoffStartedAt == null && now >= resumeAfter
 
     fun accept(text: String, conditions: WakeWordConditions, now: Long): Boolean {
-        if (!canListen(conditions, now) || !matches(text)) return false
+        if (!matches(text)) return false
+        return acceptVerifiedWake(conditions, now)
+    }
+
+    /** Called only with PCM authorized by the constrained wake recognizer, independent of free-ASR spelling. */
+    fun acceptVerifiedWake(conditions: WakeWordConditions, now: Long): Boolean {
+        if (!canListen(conditions, now)) return false
         beginHandoff(now)
         return true
     }

@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class WakeWordPolicyTest {
+    @Test fun `verified audio hands off independently of free ASR spelling without bypassing readiness or cooldown`() {
+        val policy = WakeWordPolicy()
+        assertFalse(policy.accept("hola chino estas ahi", ready, 0))
+        assertFalse(policy.acceptVerifiedWake(ready.copy(accessibilityConnected = false), 0))
+        assertTrue(policy.acceptVerifiedWake(ready, 0))
+        assertFalse(policy.acceptVerifiedWake(ready, 1))
+        policy.updateVoice(true, 10); policy.updateVoice(false, 20)
+        assertFalse(policy.acceptVerifiedWake(ready, 2019))
+        assertTrue(policy.acceptVerifiedWake(ready, 2020))
+    }
     @Test fun `ending a conversation releases the old wake handoff without disabling new activation`() {
         val policy = WakeWordPolicy()
         assertTrue(policy.accept("hola tino", ready, 0))

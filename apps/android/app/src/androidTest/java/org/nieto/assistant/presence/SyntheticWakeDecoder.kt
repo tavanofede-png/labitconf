@@ -13,7 +13,7 @@ internal data class SyntheticWakeUtterance(val text: String, val words: List<Wak
 
 /** Mirrors the production dual-decoder clock using bundled synthetic PCM only; never opens a microphone. */
 internal fun decodeSyntheticWake(model: Model, input: InputStream): List<SyntheticWakeUtterance> {
-    data class Candidate(val text: String, val words: List<WakeTimedWord>?, var invocation: WakeInvocationPCM? = null)
+    data class Candidate(val text: String, val words: List<WakeTimedWord>?, val finalSample: Long, var invocation: WakeInvocationPCM? = null)
     val ring = WakePcmRingBuffer()
     val candidates = mutableListOf<Candidate>()
     var wakeProof: WakePrefixProof? = null
@@ -28,7 +28,7 @@ internal fun decodeSyntheticWake(model: Model, input: InputStream): List<Synthet
     fun attachVerifiedAudio() {
         val proof = wakeProof ?: return
         candidates.filter { it.invocation == null }.forEach { candidate ->
-            candidate.invocation = ring.extractInvocation(true, candidate.text, candidate.words, proof)
+            candidate.invocation = ring.extractVerifiedInvocation(proof, candidate.finalSample, candidate.words)
         }
     }
     fun constrainedFinal(raw: String) {
@@ -40,7 +40,7 @@ internal fun decodeSyntheticWake(model: Model, input: InputStream): List<Synthet
     }
     fun freeFinal(raw: String) {
         val json = JSONObject(raw)
-        candidates += Candidate(json.optString("text"), words(json))
+        candidates += Candidate(json.optString("text"), words(json), ring.totalSamples)
         attachVerifiedAudio()
     }
     try {

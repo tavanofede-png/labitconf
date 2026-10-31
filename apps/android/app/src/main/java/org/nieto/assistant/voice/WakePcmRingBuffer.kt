@@ -82,10 +82,26 @@ class WakePcmRingBuffer(private val capacitySamples: Int = MAX_SAMPLES) {
         // Round forward and respect both starts, so no sample precedes either reported Hola.
         val start = maxOf(ranges.first().first, wakeProof?.ranges?.first()?.first ?: 0L)
         val speechEnd = ranges.last().second
-        if (speechEnd <= start) return null
-        if (start < oldestSample || speechEnd - start > capacitySamples) return null
-        if (deliveredSpeechEnd?.let { start < it || speechEnd <= it } == true) return null
         val end = minOf(totalSamples, speechEnd + POST_PADDING_SAMPLES)
+        return extractRange(start, speechEnd, end)
+    }
+
+    /** The wake decoder authorizes capture; the free decoder supplies only its actual endpoint clock. */
+    @Synchronized fun extractVerifiedInvocation(proof: WakePrefixProof, finalSample: Long, freeWords: List<WakeTimedWord>? = null): WakeInvocationPCM? {
+        if (proof.generation !== generation || proof.ranges.size != 2 || stored == 0) return null
+        val verifiedStart = proof.ranges.first().first
+        val verifiedEnd = proof.ranges.last().second
+        if (verifiedStart < oldestSample || finalSample < verifiedEnd || finalSample > totalSamples) return null
+        // An aligned free timestamp may trim more conservatively, but its spelling/confidence never vetoes the wake.
+        val freeStart = freeWords?.firstOrNull()?.startSeconds?.takeIf { it.isFinite() && it >= 0 }
+            ?.let { ceil(it * SAMPLE_RATE).toLong() }
+            ?.takeIf { it >= verifiedStart && it - verifiedStart <= PREFIX_ALIGNMENT_SAMPLES }
+        return extractRange(maxOf(verifiedStart, freeStart ?: verifiedStart), finalSample, finalSample)
+    }
+
+    private fun extractRange(start: Long, speechEnd: Long, end: Long): WakeInvocationPCM? {
+        if (start < oldestSample || speechEnd <= start || end < speechEnd || end > totalSamples) return null
+        if (deliveredSpeechEnd?.let { start < it || speechEnd <= it } == true) return null
         val size = end - start
         if (size <= 0 || size > capacitySamples) return null
         val pcm16 = ByteArray(size.toInt() * 2)
